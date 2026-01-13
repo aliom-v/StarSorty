@@ -1,0 +1,69 @@
+version: 1
+categories:
+  - name: network
+    subcategories: [proxy, vpn]
+  - name: media
+    subcategories: [downloader, storage, server, cloud-drive, video, audio, image, streaming]
+  - name: ai
+    subcategories: [openai, llm, generation, devtools]
+  - name: productivity
+    subcategories: [notes, reader, blog]
+  - name: devops
+    subcategories: [container, webserver, cloud-provider, monitor]
+  - name: dev
+    subcategories: [community, frontend, language, sql, nosql, ide, editor, api-tools, android, cross-platform]
+  - name: security
+    subcategories: [hacking, privacy]
+  - name: os
+    subcategories: [linux, terminal, platform]
+  - name: learning
+    subcategories: [algorithm, academic, course]
+  - name: info
+    subcategories: [social, video]
+  - name: uncategorized
+    subcategories: [other]
+tags:
+  - tool
+  - framework
+  - cli
+  - sdk
+  - template
+  - plugin
+  - monitoring
+  - proxy
+  - vpn
+  - download
+  - nas
+  - media-server
+  - cloud-drive
+  - ai
+  - chatgpt
+  - llm
+  - ai-art
+  - ai-dev
+  - notes
+  - rss
+  - blog
+  - docker
+  - nginx
+  - vps
+  - monitor
+  - dev-community
+  - frontend
+  - programming
+  - security
+  - privacy
+  - linux
+  - terminal
+  - os
+  - database
+  - api-debug
+  - tools
+  - editor
+  - algorithm
+  - paper
+  - course
+  - android
+  - mobile-dev
+  - social
+  - video

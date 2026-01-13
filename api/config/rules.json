@@ -1,0 +1,713 @@
+{
+  "rules": [
+    {
+      "keywords": [
+        "clash",
+        "v2ray",
+        "xray",
+        "sing-box",
+        "shadowsocks",
+        "ssr",
+        "trojan",
+        "vless",
+        "reality",
+        "hysteria",
+        "tuic",
+        "surge",
+        "quantumult",
+        "loon",
+        "shadowrocket",
+        "stash",
+        "subconverter"
+      ],
+      "category": "network",
+      "subcategory": "proxy",
+      "tags": [
+        "proxy"
+      ]
+    },
+    {
+      "keywords": [
+        "vpn",
+        "wireguard",
+        "tailscale",
+        "zerotier",
+        "openvpn",
+        "cloudflare",
+        "warp",
+        "1.1.1.1",
+        "ipsec",
+        "protonvpn"
+      ],
+      "category": "network",
+      "subcategory": "vpn",
+      "tags": [
+        "vpn"
+      ]
+    },
+    {
+      "keywords": [
+        "aria2",
+        "motrix",
+        "qbittorrent",
+        "transmission",
+        "idm",
+        "thunder",
+        "xunlei",
+        "yt-dlp",
+        "youtube-dl",
+        "lux",
+        "downie"
+      ],
+      "category": "media",
+      "subcategory": "downloader",
+      "tags": [
+        "download"
+      ]
+    },
+    {
+      "keywords": [
+        "nas",
+        "synology",
+        "qnap",
+        "unraid",
+        "truenas",
+        "alist",
+        "rclone",
+        "webdav",
+        "smb",
+        "nfs",
+        "filebrowser",
+        "nextcloud",
+        "owncloud"
+      ],
+      "category": "media",
+      "subcategory": "storage",
+      "tags": [
+        "nas"
+      ]
+    },
+    {
+      "keywords": [
+        "emby",
+        "jellyfin",
+        "plex",
+        "kodi",
+        "infuse",
+        "tmm",
+        "tinymediamanager",
+        "sonarr",
+        "radarr",
+        "jackett",
+        "prowlarr"
+      ],
+      "category": "media",
+      "subcategory": "server",
+      "tags": [
+        "media-server"
+      ]
+    },
+    {
+      "keywords": [
+        "baidunetdisk",
+        "115",
+        "quark",
+        "aliyundrive",
+        "googledrive",
+        "onedrive",
+        "dropbox",
+        "mega",
+        "pikpak",
+        "terabox"
+      ],
+      "category": "media",
+      "subcategory": "cloud-drive",
+      "tags": [
+        "cloud-drive"
+      ]
+    },
+    {
+      "keywords": [
+        "chatgpt",
+        "openai",
+        "gpt-4",
+        "gpt-3.5",
+        "dall-e",
+        "sora",
+        "whisper",
+        "api-key",
+        "sam altman"
+      ],
+      "category": "ai",
+      "subcategory": "openai",
+      "tags": [
+        "ai",
+        "chatgpt"
+      ]
+    },
+    {
+      "keywords": [
+        "claude",
+        "anthropic",
+        "gemini",
+        "bard",
+        "google-ai",
+        "copilot",
+        "bing-chat",
+        "deepseek",
+        "qwen",
+        "yi-34b",
+        "chatglm",
+        "llama",
+        "mistral"
+      ],
+      "category": "ai",
+      "subcategory": "llm",
+      "tags": [
+        "ai",
+        "llm"
+      ]
+    },
+    {
+      "keywords": [
+        "midjourney",
+        "stable-diffusion",
+        "comfyui",
+        "webui",
+        "civitai",
+        "lora",
+        "controlnet",
+        "huggingface",
+        "replicate",
+        "runway",
+        "pika"
+      ],
+      "category": "ai",
+      "subcategory": "generation",
+      "tags": [
+        "ai",
+        "ai-art"
+      ]
+    },
+    {
+      "keywords": [
+        "langchain",
+        "flowise",
+        "dify",
+        "coze",
+        "fastgpt",
+        "autogpt",
+        "babyagi",
+        "agent",
+        "rag",
+        "vector-db",
+        "pinecone",
+        "milvus"
+      ],
+      "category": "ai",
+      "subcategory": "devtools",
+      "tags": [
+        "ai",
+        "ai-dev"
+      ]
+    },
+    {
+      "keywords": [
+        "obsidian",
+        "logseq",
+        "notion",
+        "heptabase",
+        "roam",
+        "typora",
+        "joplin",
+        "evernote",
+        "onenote",
+        "wolai",
+        "siyuan"
+      ],
+      "category": "productivity",
+      "subcategory": "notes",
+      "tags": [
+        "notes"
+      ]
+    },
+    {
+      "keywords": [
+        "rss",
+        "feedly",
+        "inoreader",
+        "freshrss",
+        "miniflux",
+        "qireader",
+        "follow",
+        "readwise",
+        "omnivore",
+        "pocket",
+        "instapaper"
+      ],
+      "category": "productivity",
+      "subcategory": "reader",
+      "tags": [
+        "rss"
+      ]
+    },
+    {
+      "keywords": [
+        "hexo",
+        "hugo",
+        "jekyll",
+        "wordpress",
+        "typecho",
+        "ghost",
+        "vitepress",
+        "vuepress",
+        "docusaurus",
+        "vercel",
+        "netlify",
+        "zeabur"
+      ],
+      "category": "productivity",
+      "subcategory": "blog",
+      "tags": [
+        "blog"
+      ]
+    },
+    {
+      "keywords": [
+        "docker",
+        "kubernetes",
+        "k8s",
+        "docker-compose",
+        "podman",
+        "portainer",
+        "registry",
+        "image",
+        "container"
+      ],
+      "category": "devops",
+      "subcategory": "container",
+      "tags": [
+        "docker"
+      ]
+    },
+    {
+      "keywords": [
+        "nginx",
+        "caddy",
+        "traefik",
+        "apache",
+        "openresty",
+        "haproxy",
+        "nginx-proxy-manager"
+      ],
+      "category": "devops",
+      "subcategory": "webserver",
+      "tags": [
+        "nginx"
+      ]
+    },
+    {
+      "keywords": [
+        "vps",
+        "racknerd",
+        "bandwagon",
+        "dmit",
+        "aws",
+        "ec2",
+        "lightsail",
+        "aliyun",
+        "tencent",
+        "digitalocean",
+        "linode",
+        "vultr",
+        "hetzner",
+        "cloudcone"
+      ],
+      "category": "devops",
+      "subcategory": "cloud-provider",
+      "tags": [
+        "vps"
+      ]
+    },
+    {
+      "keywords": [
+        "1panel",
+        "bt.cn",
+        "pagoda",
+        "aa_panel",
+        "casaos",
+        "uptime-kuma",
+        "grafana",
+        "prometheus",
+        "zabbix",
+        "probe",
+        "nezha"
+      ],
+      "category": "devops",
+      "subcategory": "monitor",
+      "tags": [
+        "monitor"
+      ]
+    },
+    {
+      "keywords": [
+        "kali",
+        "metasploit",
+        "burpsuite",
+        "wireshark",
+        "nmap",
+        "sqlmap",
+        "ctf",
+        "exploit",
+        "cve",
+        "pentest"
+      ],
+      "category": "security",
+      "subcategory": "hacking",
+      "tags": [
+        "security"
+      ]
+    },
+    {
+      "keywords": [
+        "tor",
+        "duckduckgo",
+        "startpage",
+        "privacy",
+        "encrypt",
+        "pgp",
+        "gpg",
+        "bitwarden",
+        "1password",
+        "keepass",
+        "vaultwarden"
+      ],
+      "category": "security",
+      "subcategory": "privacy",
+      "tags": [
+        "privacy"
+      ]
+    },
+    {
+      "keywords": [
+        "linux",
+        "ubuntu",
+        "debian",
+        "centos",
+        "archlinux",
+        "alpine",
+        "fedora",
+        "redhat",
+        "wsl",
+        "wsl2"
+      ],
+      "category": "os",
+      "subcategory": "linux",
+      "tags": [
+        "linux"
+      ]
+    },
+    {
+      "keywords": [
+        "shell",
+        "bash",
+        "zsh",
+        "powershell",
+        "terminal",
+        "ssh",
+        "termux",
+        "oh-my-zsh",
+        "fish-shell",
+        "tmux"
+      ],
+      "category": "os",
+      "subcategory": "terminal",
+      "tags": [
+        "terminal"
+      ]
+    },
+    {
+      "keywords": [
+        "windows",
+        "macos",
+        "hackintosh",
+        "ios",
+        "android",
+        "harmonyos",
+        "firmware",
+        "bios",
+        "uefi"
+      ],
+      "category": "os",
+      "subcategory": "platform",
+      "tags": [
+        "os"
+      ]
+    },
+    {
+      "keywords": [
+        "leetcode",
+        "codeforces",
+        "atcoder",
+        "niuke",
+        "luogu",
+        "algorithm",
+        "data structure"
+      ],
+      "category": "learning",
+      "subcategory": "algorithm",
+      "tags": [
+        "algorithm"
+      ]
+    },
+    {
+      "keywords": [
+        "arxiv",
+        "ieee",
+        "acm",
+        "springer",
+        "researchgate",
+        "scihub",
+        "google scholar",
+        "overleaf",
+        "latex"
+      ],
+      "category": "learning",
+      "subcategory": "academic",
+      "tags": [
+        "paper"
+      ]
+    },
+    {
+      "keywords": [
+        "coursera",
+        "udemy",
+        "edx",
+        "khan academy",
+        "runoob",
+        "geeksforgeeks",
+        "freecodecamp",
+        "mooc"
+      ],
+      "category": "learning",
+      "subcategory": "course",
+      "tags": [
+        "course"
+      ]
+    },
+    {
+      "keywords": [
+        "github",
+        "gitlab",
+        "gitee",
+        "bitbucket",
+        "gist",
+        "stackoverflow",
+        "csdn",
+        "juejin",
+        "zhihu",
+        "segmentfault"
+      ],
+      "category": "dev",
+      "subcategory": "community",
+      "tags": [
+        "dev-community"
+      ]
+    },
+    {
+      "keywords": [
+        "react",
+        "vue",
+        "angular",
+        "svelte",
+        "nextjs",
+        "nuxt",
+        "astro",
+        "tailwind",
+        "bootstrap",
+        "element-ui",
+        "antd",
+        "shadcn"
+      ],
+      "category": "dev",
+      "subcategory": "frontend",
+      "tags": [
+        "frontend"
+      ]
+    },
+    {
+      "keywords": [
+        "vscode",
+        "visual studio",
+        "jetbrains",
+        "intellij",
+        "idea",
+        "pycharm",
+        "clion",
+        "goland",
+        "webstorm",
+        "cursor",
+        "zed",
+        "fleet"
+      ],
+      "category": "dev",
+      "subcategory": "ide",
+      "tags": [
+        "tools"
+      ]
+    },
+    {
+      "keywords": [
+        "vim",
+        "neovim",
+        "emacs",
+        "sublime",
+        "atom",
+        "notepad++",
+        "hbuilder"
+      ],
+      "category": "dev",
+      "subcategory": "editor",
+      "tags": [
+        "editor"
+      ]
+    },
+    {
+      "keywords": [
+        "postman",
+        "apifox",
+        "swagger",
+        "charles",
+        "fiddler",
+        "insomnia"
+      ],
+      "category": "dev",
+      "subcategory": "api-tools",
+      "tags": [
+        "api-debug"
+      ]
+    },
+    {
+      "keywords": [
+        "android studio",
+        "gradle",
+        "apk",
+        "adb",
+        "xposed",
+        "magisk",
+        "frida",
+        "ndk",
+        "sdk"
+      ],
+      "category": "dev",
+      "subcategory": "android",
+      "tags": [
+        "android"
+      ]
+    },
+    {
+      "keywords": [
+        "xcode",
+        "swift",
+        "objective-c",
+        "flutter",
+        "react native",
+        "uniapp",
+        "taro"
+      ],
+      "category": "dev",
+      "subcategory": "cross-platform",
+      "tags": [
+        "mobile-dev"
+      ]
+    },
+    {
+      "keywords": [
+        "mysql",
+        "postgresql",
+        "mariadb",
+        "sqlite",
+        "oracle",
+        "mssql",
+        "sql"
+      ],
+      "category": "dev",
+      "subcategory": "sql",
+      "tags": [
+        "database"
+      ]
+    },
+    {
+      "keywords": [
+        "redis",
+        "mongodb",
+        "cassandra",
+        "elasticsearch",
+        "kafka",
+        "rabbitmq",
+        "activemq",
+        "rocketmq",
+        "neo4j"
+      ],
+      "category": "dev",
+      "subcategory": "nosql",
+      "tags": [
+        "database"
+      ]
+    },
+    {
+      "keywords": [
+        "python",
+        "javascript",
+        "typescript",
+        "golang",
+        "rust",
+        "java",
+        "c++",
+        "php",
+        "nodejs",
+        "deno",
+        "bun",
+        "pypi",
+        "npm",
+        "yarn"
+      ],
+      "category": "dev",
+      "subcategory": "language",
+      "tags": [
+        "programming"
+      ]
+    },
+    {
+      "keywords": [
+        "twitter",
+        "x.com",
+        "reddit",
+        "hacker news",
+        "product hunt",
+        "discord",
+        "telegram",
+        "slack"
+      ],
+      "category": "info",
+      "subcategory": "social",
+      "tags": [
+        "social"
+      ]
+    },
+    {
+      "keywords": [
+        "bilibili",
+        "youtube",
+        "twitch",
+        "tiktok",
+        "douyin"
+      ],
+      "category": "info",
+      "subcategory": "video",
+      "tags": [
+        "video"
+      ]
+    }
+  ]
+}
