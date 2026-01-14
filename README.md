@@ -2,7 +2,15 @@
 
 Starred repo organizer with a simple API, a static web UI, and a scheduler.
 
-## Quick start
+## Features
+
+- Sync starred repos from GitHub (single or multi-user, merged or grouped)
+- AI + rules classification with optional README summaries
+- Manual overrides with history and stats
+- Web UI with filters, repo detail, and quick actions
+- Background classification loop + scheduler for periodic sync
+
+## Quick start (Docker)
 
 1) Copy env file
 
@@ -20,6 +28,13 @@ docker compose up -d --build
 
 - Web: http://localhost:3000
 - API: http://localhost:8000
+
+4) Sync once (PowerShell)
+
+```
+Invoke-RestMethod -Method Post http://localhost:8000/sync
+Invoke-RestMethod http://localhost:8000/repos
+```
 
 ## Local dev (Windows)
 
@@ -46,7 +61,7 @@ cd ..
 npm run dev
 ```
 
-## Start/stop/status helpers
+4) Start/stop/status helpers
 
 ```
 npm run start   # start API + Web if not running
@@ -54,20 +69,22 @@ npm run status  # check listening ports
 npm run stop    # stop API + Web
 ```
 
-4) Sync data
+## Environment
 
-```
-Invoke-RestMethod -Method Post http://localhost:8000/sync
-Invoke-RestMethod http://localhost:8000/repos
-```
-
-Notes:
+Core GitHub sync:
 - Set `GITHUB_USERNAME` or `GITHUB_TOKEN` in `.env` before syncing.
 - Use `GITHUB_TARGET_USERNAME` to sync another user's public stars (token optional).
-- Use `GITHUB_USERNAMES` (comma separated) for multiple users and `GITHUB_MODE=group` to show grouped view.
-- Configure AI env vars before running `/classify`.
+- Use `GITHUB_USERNAMES` (comma separated) and `GITHUB_MODE=group` to show grouped view.
+
+Admin token:
 - If `ADMIN_TOKEN` is set, write endpoints require `X-Admin-Token`.
-- Background classification defaults can be tuned with `CLASSIFY_BATCH_SIZE`, `CLASSIFY_CONCURRENCY`, `CLASSIFY_CONCURRENCY_MAX`, and `CLASSIFY_BATCH_DELAY_MS`.
+- The web Settings page stores the token in localStorage and sends it automatically.
+
+Web/API:
+- `NEXT_PUBLIC_API_BASE_URL` configures the web UI to reach the API.
+
+Background classification defaults:
+- `CLASSIFY_BATCH_SIZE`, `CLASSIFY_CONCURRENCY`, `CLASSIFY_CONCURRENCY_MAX`, `CLASSIFY_BATCH_DELAY_MS`.
 
 ## AI classification
 
@@ -92,10 +109,18 @@ AI_BASE_URL=https://your-host/v1
 AI_HEADERS_JSON={"X-Custom-Header":"value"}
 ```
 
-Run classification:
+Run classification (foreground):
 
 ```
 Invoke-RestMethod -Method Post http://localhost:8000/classify -Body '{}' -ContentType 'application/json'
+```
+
+Run classification (background):
+
+```
+Invoke-RestMethod -Method Post http://localhost:8000/classify/background -Body '{"limit":50,"concurrency":3}' -ContentType 'application/json'
+Invoke-RestMethod http://localhost:8000/classify/status
+Invoke-RestMethod -Method Post http://localhost:8000/classify/stop
 ```
 
 Taxonomy file:
@@ -124,6 +149,11 @@ Rules (optional JSON, stored via Settings):
 }
 ```
 
+## Web UI
+
+- Repo detail page: `/repo?full_name=owner/name`
+- Set the admin token in Settings if write actions are protected.
+
 ## Services
 
 - api: FastAPI service for sync, status, and data
@@ -131,6 +161,8 @@ Rules (optional JSON, stored via Settings):
 - scheduler: cron-like runner that calls /sync
 
 ## API endpoints
+
+Write endpoints require `X-Admin-Token` when `ADMIN_TOKEN` is set.
 
 - `POST /sync`: pull starred repos from GitHub
 - `GET /repos`: list repos (q, language, min_stars, category, tag, limit, offset)
@@ -148,5 +180,5 @@ Rules (optional JSON, stored via Settings):
 
 ## Notes
 
-- SQLite file lives in ./data/app.db by default
-- Logs are written to ./logs/
+- SQLite file lives in `./data/app.db` by default.
+- Logs are written to `./logs/`.
