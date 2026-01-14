@@ -1,7 +1,7 @@
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Dict, List, Optional
@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from .config import get_settings
 from .db import (
     count_unclassified_repos,
+    count_repos_for_classification,
     get_repo_stats,
     get_repo,
     get_sync_status,
@@ -21,10 +22,10 @@ from .db import (
     list_repos,
     prune_star_user,
     prune_users_not_in,
+    record_readme_fetch,
     select_repos_for_classification,
     update_classification,
     update_override,
-    update_readme_summary,
     update_sync_status,
     upsert_repos,
 )
@@ -345,12 +346,19 @@ def repo_override(full_name: str, payload: OverrideRequest) -> OverrideResponse:
     fields = payload.model_fields_set
     updates: Dict[str, Optional[object]] = {}
     if "category" in fields:
+        if payload.category is not None and not str(payload.category).strip():
+            raise HTTPException(status_code=400, detail="category cannot be empty")
         updates["category"] = payload.category
     if "subcategory" in fields:
+        if payload.subcategory is not None and not str(payload.subcategory).strip():
+            raise HTTPException(status_code=400, detail="subcategory cannot be empty")
         updates["subcategory"] = payload.subcategory
     if "tags" in fields:
-        updates["tags"] = payload.tags
+        tags = payload.tags or []
+        updates["tags"] = [tag for tag in tags if str(tag).strip()]
     if "note" in fields:
+        if payload.note is not None and not str(payload.note).strip():
+            raise HTTPException(status_code=400, detail="note cannot be empty")
         updates["note"] = payload.note
 
     if not updates:
@@ -378,8 +386,12 @@ def repo_override_history(full_name: str) -> OverrideHistoryResponse:
 def repo_readme(full_name: str) -> ReadmeResponse:
     if not get_repo(full_name):
         raise HTTPException(status_code=404, detail="Repo not found")
-    summary = fetch_readme_summary(full_name)
-    update_readme_summary(full_name, summary)
+    try:
+        summary = fetch_readme_summary(full_name)
+    except Exception as exc:
+        record_readme_fetch(full_name, None, False)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    record_readme_fetch(full_name, summary, True)
     return ReadmeResponse(updated=bool(summary), summary=summary)
 
 
@@ -400,6 +412,35 @@ def _get_classification_state() -> dict:
         return dict(classification_state)
 
 
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    except ValueError:
+        return None
+
+
+def _should_fetch_readme(repo_data: dict) -> bool:
+    description = (repo_data.get("description") or "").strip()
+    if len(description) >= 20:
+        return False
+    if repo_data.get("readme_summary"):
+        return False
+    failures = int(repo_data.get("readme_failures") or 0)
+    if failures >= 3:
+        return False
+    last_attempt = _parse_timestamp(repo_data.get("readme_last_attempt_at"))
+    if last_attempt:
+        now = datetime.now(timezone.utc)
+        if now - last_attempt < timedelta(minutes=1):
+            return False
+    return True
+
+
 def _classify_repo_once(
     repo: dict,
     data: dict,
@@ -409,14 +450,13 @@ def _classify_repo_once(
 ) -> bool:
     repo_data = dict(repo)
     if include_readme:
-        description = (repo_data.get("description") or "").strip()
-        already_attempted = repo_data.get("readme_fetched_at")
-        if len(description) < 20 and not repo_data.get("readme_summary") and not already_attempted:
+        if _should_fetch_readme(repo_data):
             try:
                 summary = fetch_readme_summary(repo_data["full_name"])
+                record_readme_fetch(repo_data["full_name"], summary, True)
             except Exception:
+                record_readme_fetch(repo_data["full_name"], None, False)
                 summary = ""
-            update_readme_summary(repo_data["full_name"], summary)
             if summary:
                 repo_data["readme_summary"] = summary
     rule = match_rule(repo_data, rules)
@@ -515,6 +555,13 @@ def _background_classify_loop(payload: BackgroundClassifyRequest) -> None:
         batch_size = payload.limit if payload.limit and payload.limit > 0 else DEFAULT_CLASSIFY_BATCH_SIZE
         concurrency_value = payload.concurrency if payload.concurrency and payload.concurrency > 0 else DEFAULT_CLASSIFY_CONCURRENCY
         concurrency = _clamp_concurrency(concurrency_value)
+        force_mode = bool(payload.force)
+        snapshot_repos = None
+        if force_mode:
+            snapshot_repos = select_repos_for_classification(0, True)
+            remaining = len(snapshot_repos)
+        else:
+            remaining = count_repos_for_classification(False)
 
         _update_classification_state(
             running=True,
@@ -522,15 +569,22 @@ def _background_classify_loop(payload: BackgroundClassifyRequest) -> None:
             finished_at=None,
             processed=0,
             failed=0,
-            remaining=count_unclassified_repos(),
+            remaining=remaining,
             last_error=None,
             batch_size=batch_size,
             concurrency=concurrency,
         )
 
         previous_remaining = None
+        snapshot_index = 0
         while not classification_stop.is_set():
-            repos_to_classify = select_repos_for_classification(batch_size, payload.force)
+            if force_mode:
+                if not snapshot_repos:
+                    break
+                repos_to_classify = snapshot_repos[snapshot_index : snapshot_index + batch_size]
+                snapshot_index += len(repos_to_classify)
+            else:
+                repos_to_classify = select_repos_for_classification(batch_size, False)
             if not repos_to_classify:
                 break
 
@@ -543,7 +597,10 @@ def _background_classify_loop(payload: BackgroundClassifyRequest) -> None:
                 concurrency,
             )
             processed = batch_classified + batch_failed
-            remaining = count_unclassified_repos()
+            if force_mode:
+                remaining = max(0, (len(snapshot_repos or []) - snapshot_index))
+            else:
+                remaining = count_repos_for_classification(False)
             state = _get_classification_state()
             _update_classification_state(
                 processed=state["processed"] + processed,
@@ -553,7 +610,7 @@ def _background_classify_loop(payload: BackgroundClassifyRequest) -> None:
 
             if processed == 0:
                 break
-            if previous_remaining is not None and remaining >= previous_remaining:
+            if not force_mode and previous_remaining is not None and remaining >= previous_remaining:
                 break
             previous_remaining = remaining
             if CLASSIFY_BATCH_DELAY_MS > 0:

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { buildAdminHeaders } from "./lib/admin";
 import { useI18n } from "./lib/i18n";
 import { useTheme } from "./lib/theme";
@@ -126,7 +126,7 @@ export default function Home() {
   const [groupMode, setGroupMode] = useState(false);
   const unknownErrorMessage = t("unknownError");
 
-  const loadStatus = async () => {
+  const loadStatus = useCallback(async () => {
     try {
       const statusRes = await fetch(`${API_BASE_URL}/status`);
       const statusData = statusRes.ok ? await statusRes.json() : null;
@@ -135,9 +135,9 @@ export default function Home() {
       const message = err instanceof Error ? err.message : unknownErrorMessage;
       setError(message);
     }
-  };
+  }, [unknownErrorMessage]);
 
-  const loadStats = async () => {
+  const loadStats = useCallback(async () => {
     try {
       const statsRes = await fetch(`${API_BASE_URL}/stats`);
       if (!statsRes.ok) {
@@ -148,9 +148,9 @@ export default function Home() {
     } catch {
       setStats(null);
     }
-  };
+  }, []);
 
-  const loadBackgroundStatus = async () => {
+  const loadBackgroundStatus = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/classify/status`);
       if (!res.ok) {
@@ -161,9 +161,9 @@ export default function Home() {
     } catch {
       setBackgroundStatus(null);
     }
-  };
+  }, []);
 
-  const loadRepos = async (append = false) => {
+  const loadRepos = useCallback(async (append = false, offsetOverride?: number) => {
     if (append) {
       setLoadingMore(true);
     } else {
@@ -173,7 +173,7 @@ export default function Home() {
       setHasMore(false);
     }
     try {
-      const offset = append ? repos.length : 0;
+      const offset = append && typeof offsetOverride === "number" ? offsetOverride : 0;
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
         offset: String(offset),
@@ -202,7 +202,7 @@ export default function Home() {
       setLoading(false);
       setLoadingMore(false);
     }
-  };
+  }, [category, minStars, query, sourceUser, tag, unknownErrorMessage]);
 
   useEffect(() => {
     const load = async () => {
@@ -220,7 +220,7 @@ export default function Home() {
       }
     };
     load();
-  }, []);
+  }, [loadBackgroundStatus, loadStats, loadStatus]);
 
   useEffect(() => {
     if (!backgroundStatus?.running) return;
@@ -228,7 +228,7 @@ export default function Home() {
       loadBackgroundStatus();
     }, 4000);
     return () => clearInterval(timer);
-  }, [backgroundStatus?.running]);
+  }, [backgroundStatus?.running, loadBackgroundStatus]);
 
   useEffect(() => {
     const running = backgroundStatus?.running ?? false;
@@ -248,11 +248,18 @@ export default function Home() {
       }
     }
     setWasBackgroundRunning(running);
-  }, [backgroundStatus?.running, backgroundStatus?.last_error, wasBackgroundRunning]);
+  }, [
+    backgroundStatus?.running,
+    backgroundStatus?.last_error,
+    loadRepos,
+    loadStats,
+    t,
+    wasBackgroundRunning,
+  ]);
 
   useEffect(() => {
     loadRepos(false);
-  }, [query, category, tag, minStars, sourceUser]);
+  }, [category, loadRepos, minStars, query, sourceUser, tag]);
 
   useEffect(() => {
     if (!actionMessage) return;
@@ -1171,7 +1178,7 @@ export default function Home() {
               <div className="flex justify-center">
                 <button
                   type="button"
-                  onClick={() => loadRepos(true)}
+                  onClick={() => loadRepos(true, repos.length)}
                   disabled={loadingMore}
                   className="rounded-full border border-ink/10 bg-surface px-5 py-2 text-sm font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
                 >

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { buildAdminHeaders } from "../lib/admin";
 import { useI18n } from "../lib/i18n";
@@ -78,7 +78,7 @@ export default function RepoDetailClient() {
     [fullName]
   );
 
-  const loadRepo = async () => {
+  const loadRepo = useCallback(async () => {
     if (!fullName) return;
     setLoading(true);
     setError(null);
@@ -95,9 +95,9 @@ export default function RepoDetailClient() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [encodedFullName, fullName, t]);
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
     if (!fullName) return;
     try {
       const res = await fetch(`${API_BASE_URL}/repos/${encodedFullName}/overrides`);
@@ -109,7 +109,7 @@ export default function RepoDetailClient() {
     } catch {
       setHistory([]);
     }
-  };
+  }, [encodedFullName, fullName]);
 
   useEffect(() => {
     if (!fullName) {
@@ -118,7 +118,7 @@ export default function RepoDetailClient() {
     }
     loadRepo();
     loadHistory();
-  }, [fullName]);
+  }, [fullName, loadHistory, loadRepo]);
 
   const handleFetchReadme = async () => {
     if (!fullName) return;

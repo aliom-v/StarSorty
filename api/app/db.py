@@ -76,7 +76,9 @@ def init_db() -> None:
                 override_tags TEXT,
                 override_note TEXT,
                 readme_summary TEXT,
-                readme_fetched_at TEXT
+                readme_fetched_at TEXT,
+                readme_last_attempt_at TEXT,
+                readme_failures INTEGER
             )
             """
         )
@@ -175,6 +177,8 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         ("override_note", "override_note TEXT"),
         ("readme_summary", "readme_summary TEXT"),
         ("readme_fetched_at", "readme_fetched_at TEXT"),
+        ("readme_last_attempt_at", "readme_last_attempt_at TEXT"),
+        ("readme_failures", "readme_failures INTEGER"),
     ]
     for name, ddl in columns:
         if name not in existing:
@@ -246,7 +250,7 @@ def _load_json_list(value: Optional[str]) -> List[str]:
 
 
 def _load_json_list_optional(value: Optional[str]) -> Optional[List[str]]:
-    if value is None:
+    if value is None or value == "":
         return None
     return _load_json_list(value)
 
@@ -267,7 +271,7 @@ def _load_star_users(repos: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     return existing
 
 
-def _row_to_repo(row: sqlite3.Row) -> Dict[str, Any]:
+def _row_to_repo(row: sqlite3.Row, include_internal: bool = False) -> Dict[str, Any]:
     topics = _load_json_list(row["topics"])
     star_users = _load_json_list(row["star_users"])
     ai_tags = _load_json_list(row["ai_tags"])
@@ -275,7 +279,7 @@ def _row_to_repo(row: sqlite3.Row) -> Dict[str, Any]:
     effective_category = row["override_category"] or row["category"]
     effective_subcategory = row["override_subcategory"] or row["subcategory"]
     effective_tags = ai_tags if override_tags is None else override_tags
-    return {
+    repo = {
         "full_name": row["full_name"],
         "name": row["name"],
         "owner": row["owner"],
@@ -306,6 +310,10 @@ def _row_to_repo(row: sqlite3.Row) -> Dict[str, Any]:
         "updated_at": row["updated_at"],
         "starred_at": row["starred_at"],
     }
+    if include_internal:
+        repo["readme_last_attempt_at"] = row["readme_last_attempt_at"]
+        repo["readme_failures"] = row["readme_failures"] or 0
+    return repo
 
 
 def prune_star_user(
@@ -403,15 +411,11 @@ def list_repos(
         params.append(min_stars)
 
     if category:
-        clauses.append(
-            "COALESCE(override_category, category) = ?"
-        )
+        clauses.append("COALESCE(NULLIF(override_category, ''), category) = ?")
         params.append(category)
 
     if tag:
-        clauses.append(
-            "COALESCE(override_tags, ai_tags) LIKE ?"
-        )
+        clauses.append("COALESCE(NULLIF(override_tags, ''), ai_tags) LIKE ?")
         params.append(f"%\"{tag}\"%")
 
     if star_user:
@@ -560,23 +564,34 @@ def update_classification(
         conn.commit()
 
 
-def update_readme_summary(full_name: str, summary: Optional[str]) -> None:
+def record_readme_fetch(full_name: str, summary: Optional[str], success: bool) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
-    stored_summary = summary if summary else None
     with get_connection() as conn:
-        conn.execute(
-            """
-            UPDATE repos
-            SET readme_summary = ?, readme_fetched_at = ?
-            WHERE full_name = ?
-            """,
-            (stored_summary, timestamp, full_name),
-        )
+        if success:
+            stored_summary = summary if summary else None
+            conn.execute(
+                """
+                UPDATE repos
+                SET readme_summary = ?, readme_fetched_at = ?, readme_last_attempt_at = ?,
+                    readme_failures = 0
+                WHERE full_name = ?
+                """,
+                (stored_summary, timestamp, timestamp, full_name),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE repos
+                SET readme_last_attempt_at = ?, readme_failures = COALESCE(readme_failures, 0) + 1
+                WHERE full_name = ?
+                """,
+                (timestamp, full_name),
+            )
         conn.commit()
 
 
 def select_repos_for_classification(limit: int, force: bool) -> List[Dict[str, Any]]:
-    where = "WHERE override_category IS NULL"
+    where = "WHERE NULLIF(override_category, '') IS NULL"
     if not force:
         where += " AND (category IS NULL OR ai_updated_at IS NULL OR ai_updated_at < pushed_at)"
     effective_limit = limit if limit and limit > 0 else -1
@@ -589,7 +604,8 @@ def select_repos_for_classification(limit: int, force: bool) -> List[Dict[str, A
                 star_users,
                 category, subcategory, ai_confidence, ai_tags, ai_provider, ai_model,
                 ai_updated_at, override_category, override_subcategory, override_tags,
-                override_note, readme_summary, readme_fetched_at
+                override_note, readme_summary, readme_fetched_at, readme_last_attempt_at,
+                readme_failures
             FROM repos
             {where}
             ORDER BY
@@ -602,11 +618,20 @@ def select_repos_for_classification(limit: int, force: bool) -> List[Dict[str, A
             """,
             (effective_limit,),
         ).fetchall()
-    return [_row_to_repo(row) for row in rows]
+    return [_row_to_repo(row, include_internal=True) for row in rows]
 
 
 def count_unclassified_repos() -> int:
-    where = "WHERE override_category IS NULL AND category IS NULL"
+    where = "WHERE NULLIF(override_category, '') IS NULL AND category IS NULL"
+    with get_connection() as conn:
+        row = conn.execute(f"SELECT COUNT(*) FROM repos {where}").fetchone()
+    return int(row[0] or 0)
+
+
+def count_repos_for_classification(force: bool) -> int:
+    where = "WHERE NULLIF(override_category, '') IS NULL"
+    if not force:
+        where += " AND (category IS NULL OR ai_updated_at IS NULL OR ai_updated_at < pushed_at)"
     with get_connection() as conn:
         row = conn.execute(f"SELECT COUNT(*) FROM repos {where}").fetchone()
     return int(row[0] or 0)

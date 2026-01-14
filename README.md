@@ -9,6 +9,7 @@ Starred repo organizer with a simple API, a static web UI, and a scheduler.
 - Manual overrides with history and stats
 - Web UI with filters, repo detail, and quick actions
 - Background classification loop + scheduler for periodic sync
+- README summaries retry (1-minute backoff, up to 3 attempts)
 
 ## Quick start (Docker)
 
@@ -167,7 +168,7 @@ Write endpoints require `X-Admin-Token` when `ADMIN_TOKEN` is set.
 - `POST /sync`: pull starred repos from GitHub
 - `GET /repos`: list repos (q, language, min_stars, category, tag, limit, offset)
 - `GET /repos/{full_name}`: repo detail
-- `PATCH /repos/{full_name}/override`: manual override (category/subcategory/tags/note)
+- `PATCH /repos/{full_name}/override`: manual override (category/subcategory/tags/note), empty strings are rejected
 - `GET /repos/{full_name}/overrides`: override history
 - `POST /repos/{full_name}/readme`: fetch README summary
 - `GET /taxonomy`: current taxonomy
@@ -182,3 +183,4 @@ Write endpoints require `X-Admin-Token` when `ADMIN_TOKEN` is set.
 
 - SQLite file lives in `./data/app.db` by default.
 - Logs are written to `./logs/`.
+- README summary fetches back off for 1 minute and stop after 3 failed attempts per repo.
