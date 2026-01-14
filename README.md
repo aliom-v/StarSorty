@@ -11,30 +11,42 @@ Starred repo organizer with a simple API, a static web UI, and a scheduler.
 - Background classification loop + scheduler for periodic sync
 - README summaries retry (1-minute backoff, up to 3 attempts)
 
-## Quick start (Docker)
+## Deployment (Docker)
 
-1) Copy env file
+1) Clone the repo on the server
+
+```
+git clone <your-repo-url> starsorty
+cd starsorty
+```
+
+2) Copy and edit env file
 
 ```
 cp .env.example .env
 ```
 
-2) Build and run
+Set at least:
+- `GITHUB_USERNAME` or `GITHUB_TOKEN`
+- `ADMIN_TOKEN` (recommended for write endpoints)
+- AI settings if you plan to use classification
+
+3) Build and run
 
 ```
 docker compose up -d --build
 ```
 
-3) Open
+4) Access
 
-- Web: http://localhost:3000
-- API: http://localhost:8000
+- Web: http://<server-ip>:3000
+- API: http://<server-ip>:8000
 
-4) Sync once (PowerShell)
+5) Sync once
 
 ```
-Invoke-RestMethod -Method Post http://localhost:8000/sync
-Invoke-RestMethod http://localhost:8000/repos
+curl -X POST http://<server-ip>:8000/sync -H "X-Admin-Token: <ADMIN_TOKEN>"
+curl http://<server-ip>:8000/repos
 ```
 
 ## Local dev (Windows)
