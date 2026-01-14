@@ -16,8 +16,8 @@ Starred repo organizer with a simple API, a static web UI, and a scheduler.
 1) Clone the repo on the server
 
 ```
-git clone <your-repo-url> starsorty
-cd starsorty
+git clone https://github.com/aliom-v/StarSorty.git
+cd StarSorty
 ```
 
 2) Copy and edit env file
@@ -39,14 +39,14 @@ docker compose up -d --build
 
 4) Access
 
-- Web: http://<server-ip>:3000
-- API: http://<server-ip>:8000
+- Web: http://localhost:1234
+- API: http://localhost:4321
 
 5) Sync once
 
 ```
-curl -X POST http://<server-ip>:8000/sync -H "X-Admin-Token: <ADMIN_TOKEN>"
-curl http://<server-ip>:8000/repos
+curl -X POST http://localhost:4321/sync -H "X-Admin-Token: <ADMIN_TOKEN>"
+curl http://localhost:4321/repos
 ```
 
 ## Local dev (Windows)
@@ -125,15 +125,15 @@ AI_HEADERS_JSON={"X-Custom-Header":"value"}
 Run classification (foreground):
 
 ```
-Invoke-RestMethod -Method Post http://localhost:8000/classify -Body '{}' -ContentType 'application/json'
+Invoke-RestMethod -Method Post http://localhost:4321/classify -Body '{}' -ContentType 'application/json'
 ```
 
 Run classification (background):
 
 ```
-Invoke-RestMethod -Method Post http://localhost:8000/classify/background -Body '{"limit":50,"concurrency":3}' -ContentType 'application/json'
-Invoke-RestMethod http://localhost:8000/classify/status
-Invoke-RestMethod -Method Post http://localhost:8000/classify/stop
+Invoke-RestMethod -Method Post http://localhost:4321/classify/background -Body '{"limit":50,"concurrency":3}' -ContentType 'application/json'
+Invoke-RestMethod http://localhost:4321/classify/status
+Invoke-RestMethod -Method Post http://localhost:4321/classify/stop
 ```
 
 Taxonomy file:
