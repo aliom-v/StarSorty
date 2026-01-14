@@ -66,6 +66,8 @@ Notes:
 - Use `GITHUB_TARGET_USERNAME` to sync another user's public stars (token optional).
 - Use `GITHUB_USERNAMES` (comma separated) for multiple users and `GITHUB_MODE=group` to show grouped view.
 - Configure AI env vars before running `/classify`.
+- If `ADMIN_TOKEN` is set, write endpoints require `X-Admin-Token`.
+- Background classification defaults can be tuned with `CLASSIFY_BATCH_SIZE`, `CLASSIFY_CONCURRENCY`, `CLASSIFY_CONCURRENCY_MAX`, and `CLASSIFY_BATCH_DELAY_MS`.
 
 ## AI classification
 
@@ -134,10 +136,15 @@ Rules (optional JSON, stored via Settings):
 - `GET /repos`: list repos (q, language, min_stars, category, tag, limit, offset)
 - `GET /repos/{full_name}`: repo detail
 - `PATCH /repos/{full_name}/override`: manual override (category/subcategory/tags/note)
+- `GET /repos/{full_name}/overrides`: override history
 - `POST /repos/{full_name}/readme`: fetch README summary
 - `GET /taxonomy`: current taxonomy
 - `POST /classify`: AI classification batch
+- `POST /classify/background`: background classification loop
+- `GET /classify/status`: background classification status
+- `POST /classify/stop`: stop background classification
 - `GET /settings` / `PATCH /settings`: non-secret runtime settings
+- `GET /stats`: repo totals + category/tag/user counts
 
 ## Notes
 

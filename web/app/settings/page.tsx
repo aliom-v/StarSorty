@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { buildAdminHeaders, getAdminToken, setAdminToken } from "../lib/admin";
 
 type Settings = {
   github_username: string;
@@ -30,6 +31,7 @@ export default function SettingsPage() {
   const [form, setForm] = useState<Settings | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [adminTokenValue, setAdminTokenValue] = useState("");
 
   useEffect(() => {
     const load = async () => {
@@ -42,6 +44,7 @@ export default function SettingsPage() {
       setForm(data);
     };
     load();
+    setAdminTokenValue(getAdminToken());
   }, []);
 
   const updateField = (key: keyof Settings, value: string | number | boolean) => {
@@ -75,7 +78,7 @@ export default function SettingsPage() {
 
       const res = await fetch(`${API_BASE_URL}/settings`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: buildAdminHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
 
@@ -121,6 +124,24 @@ export default function SettingsPage() {
           <div className="mt-4 text-xs text-ink/60">
             GitHub token: {form.github_token_set ? "set" : "missing"} / AI key:{" "}
             {form.ai_api_key_set ? "set" : "missing"}
+          </div>
+          <div className="mt-4 grid gap-2">
+            <label className="text-sm">
+              Admin token (local only)
+              <input
+                className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
+                value={adminTokenValue}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setAdminTokenValue(value);
+                  setAdminToken(value);
+                }}
+                placeholder="X-Admin-Token"
+              />
+            </label>
+            <p className="text-xs text-ink/60">
+              Stored locally for demo writes.
+            </p>
           </div>
         </header>
 

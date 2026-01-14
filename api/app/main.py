@@ -1,18 +1,26 @@
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event, Lock, Thread
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .config import get_settings
 from .db import (
     count_unclassified_repos,
+    get_repo_stats,
     get_repo,
     get_sync_status,
     init_db,
+    list_override_history,
     list_repos,
+    prune_star_user,
+    prune_users_not_in,
     select_repos_for_classification,
     update_classification,
     update_override,
@@ -28,6 +36,10 @@ from .settings_store import write_settings
 
 app = FastAPI(title="StarSorty API", version="0.1.0")
 settings = get_settings()
+DEFAULT_CLASSIFY_BATCH_SIZE = int(os.getenv("CLASSIFY_BATCH_SIZE", "50"))
+DEFAULT_CLASSIFY_CONCURRENCY = int(os.getenv("CLASSIFY_CONCURRENCY", "3"))
+CLASSIFY_CONCURRENCY_MAX = int(os.getenv("CLASSIFY_CONCURRENCY_MAX", "10"))
+CLASSIFY_BATCH_DELAY_MS = int(os.getenv("CLASSIFY_BATCH_DELAY_MS", "0"))
 
 origins: List[str] = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
 
@@ -38,6 +50,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+classification_lock = Lock()
+classification_stop = Event()
+classification_state = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "processed": 0,
+    "failed": 0,
+    "remaining": 0,
+    "last_error": None,
+    "batch_size": 0,
+    "concurrency": 0,
+}
+
+
+def require_admin(x_admin_token: str | None = Header(default=None, alias="X-Admin-Token")) -> None:
+    admin_token = os.getenv("ADMIN_TOKEN", "").strip()
+    if not admin_token:
+        return
+    if x_admin_token != admin_token:
+        raise HTTPException(status_code=401, detail="Admin token required")
 
 
 class SyncResponse(BaseModel):
@@ -100,6 +134,18 @@ class OverrideResponse(BaseModel):
     updated: bool
 
 
+class OverrideHistoryItem(BaseModel):
+    category: str | None
+    subcategory: str | None
+    tags: List[str]
+    note: str | None
+    updated_at: str | None
+
+
+class OverrideHistoryResponse(BaseModel):
+    items: List[OverrideHistoryItem]
+
+
 class ClassifyRequest(BaseModel):
     limit: int = 20
     force: bool = False
@@ -111,6 +157,28 @@ class ClassifyResponse(BaseModel):
     classified: int
     failed: int
     remaining_unclassified: int
+
+
+class BackgroundClassifyRequest(ClassifyRequest):
+    concurrency: Optional[int] = None
+
+
+class BackgroundClassifyResponse(BaseModel):
+    started: bool
+    running: bool
+    message: str
+
+
+class BackgroundClassifyStatusResponse(BaseModel):
+    running: bool
+    started_at: str | None
+    finished_at: str | None
+    processed: int
+    failed: int
+    remaining: int
+    last_error: str | None
+    batch_size: int
+    concurrency: int
 
 
 class ReadmeResponse(BaseModel):
@@ -168,6 +236,19 @@ class SettingsRequest(BaseModel):
     sync_timeout: Optional[int] = None
 
 
+class StatsItem(BaseModel):
+    name: str
+    count: int
+
+
+class StatsResponse(BaseModel):
+    total: int
+    unclassified: int
+    categories: List[StatsItem]
+    tags: List[StatsItem]
+    users: List[StatsItem]
+
+
 @app.on_event("startup")
 def startup_event() -> None:
     init_db()
@@ -184,7 +265,7 @@ def status() -> StatusResponse:
     return StatusResponse(**status_data)
 
 
-@app.post("/sync", response_model=SyncResponse)
+@app.post("/sync", response_model=SyncResponse, dependencies=[Depends(require_admin)])
 def sync() -> SyncResponse:
     try:
         targets = resolve_targets()
@@ -193,6 +274,8 @@ def sync() -> SyncResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     total = 0
+    removed_total = 0
+    deleted_total = 0
     for username, use_auth in targets:
         try:
             repos = fetch_starred_repos_for_user(username, use_auth)
@@ -203,8 +286,21 @@ def sync() -> SyncResponse:
         for repo in repos:
             repo["star_users"] = [username]
         total += upsert_repos(repos)
+        keep_names = [repo.get("full_name") for repo in repos if repo.get("full_name")]
+        removed, deleted = prune_star_user(username, keep_names)
+        removed_total += removed
+        deleted_total += deleted
 
-    timestamp = update_sync_status("ok", f"synced {total} repos")
+    allowed_users = [name for name, _ in targets]
+    cleaned_total, cleaned_deleted = prune_users_not_in(allowed_users)
+
+    timestamp = update_sync_status(
+        "ok",
+        (
+            f"synced {total} repos, pruned {removed_total} stars, removed {deleted_total} repos, "
+            f"cleaned {cleaned_total} repos, removed {cleaned_deleted} repos"
+        ),
+    )
     return SyncResponse(status="ok", queued_at=timestamp, count=total)
 
 
@@ -240,7 +336,11 @@ def repo_detail(full_name: str) -> RepoOut:
     return RepoOut(**repo)
 
 
-@app.patch("/repos/{full_name:path}/override", response_model=OverrideResponse)
+@app.patch(
+    "/repos/{full_name:path}/override",
+    response_model=OverrideResponse,
+    dependencies=[Depends(require_admin)],
+)
 def repo_override(full_name: str, payload: OverrideRequest) -> OverrideResponse:
     fields = payload.model_fields_set
     updates: Dict[str, Optional[object]] = {}
@@ -262,13 +362,24 @@ def repo_override(full_name: str, payload: OverrideRequest) -> OverrideResponse:
     return OverrideResponse(updated=True)
 
 
-@app.post("/repos/{full_name:path}/readme", response_model=ReadmeResponse)
+@app.get("/repos/{full_name:path}/overrides", response_model=OverrideHistoryResponse)
+def repo_override_history(full_name: str) -> OverrideHistoryResponse:
+    if not get_repo(full_name):
+        raise HTTPException(status_code=404, detail="Repo not found")
+    items = list_override_history(full_name)
+    return OverrideHistoryResponse(items=items)
+
+
+@app.post(
+    "/repos/{full_name:path}/readme",
+    response_model=ReadmeResponse,
+    dependencies=[Depends(require_admin)],
+)
 def repo_readme(full_name: str) -> ReadmeResponse:
     if not get_repo(full_name):
         raise HTTPException(status_code=404, detail="Repo not found")
     summary = fetch_readme_summary(full_name)
-    if summary:
-        update_readme_summary(full_name, summary)
+    update_readme_summary(full_name, summary)
     return ReadmeResponse(updated=bool(summary), summary=summary)
 
 
@@ -279,7 +390,188 @@ def taxonomy() -> TaxonomyResponse:
     return TaxonomyResponse(categories=data.get("categories", []), tags=data.get("tags", []))
 
 
-@app.post("/classify", response_model=ClassifyResponse)
+def _update_classification_state(**updates: object) -> None:
+    with classification_lock:
+        classification_state.update(updates)
+
+
+def _get_classification_state() -> dict:
+    with classification_lock:
+        return dict(classification_state)
+
+
+def _classify_repo_once(
+    repo: dict,
+    data: dict,
+    rules: list,
+    use_ai: bool,
+    include_readme: bool,
+) -> bool:
+    repo_data = dict(repo)
+    if include_readme:
+        description = (repo_data.get("description") or "").strip()
+        already_attempted = repo_data.get("readme_fetched_at")
+        if len(description) < 20 and not repo_data.get("readme_summary") and not already_attempted:
+            try:
+                summary = fetch_readme_summary(repo_data["full_name"])
+            except Exception:
+                summary = ""
+            update_readme_summary(repo_data["full_name"], summary)
+            if summary:
+                repo_data["readme_summary"] = summary
+    rule = match_rule(repo_data, rules)
+    if rule:
+        validated = validate_classification(
+            {
+                "category": rule.get("category"),
+                "subcategory": rule.get("subcategory"),
+                "tags": rule.get("tags") or [],
+                "confidence": 1.0,
+            },
+            data,
+        )
+        update_classification(
+            repo_data["full_name"],
+            validated["category"],
+            validated["subcategory"],
+            validated["confidence"],
+            validated["tags"],
+            "rules",
+            "rules",
+        )
+        return True
+    if not use_ai:
+        return False
+    result = classify_repo_with_retry(repo_data, data, retries=2)
+    update_classification(
+        repo_data["full_name"],
+        result["category"],
+        result["subcategory"],
+        result["confidence"],
+        result["tags"],
+        result["provider"],
+        result["model"],
+    )
+    return True
+
+
+def _classify_repos_concurrent(
+    repos_to_classify: list,
+    data: dict,
+    rules: list,
+    use_ai: bool,
+    include_readme: bool,
+    concurrency: int,
+) -> tuple[int, int]:
+    if concurrency <= 1 or len(repos_to_classify) <= 1:
+        classified = 0
+        failed = 0
+        for repo in repos_to_classify:
+            try:
+                if _classify_repo_once(repo, data, rules, use_ai, include_readme):
+                    classified += 1
+                else:
+                    failed += 1
+            except Exception:
+                failed += 1
+        return (classified, failed)
+
+    classified = 0
+    failed = 0
+
+    def classify_single(repo: dict) -> tuple[int, int]:
+        try:
+            return (1, 0) if _classify_repo_once(repo, data, rules, use_ai, include_readme) else (0, 1)
+        except Exception:
+            return (0, 1)
+
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = [executor.submit(classify_single, repo) for repo in repos_to_classify]
+        for future in as_completed(futures):
+            item_classified, item_failed = future.result()
+            classified += item_classified
+            failed += item_failed
+    return (classified, failed)
+
+
+def _clamp_concurrency(value: int) -> int:
+    if value < 1:
+        return 1
+    if value > CLASSIFY_CONCURRENCY_MAX:
+        return CLASSIFY_CONCURRENCY_MAX
+    return value
+
+
+def _background_classify_loop(payload: BackgroundClassifyRequest) -> None:
+    try:
+        current = get_settings()
+        data = load_taxonomy(current.ai_taxonomy_path)
+        rules_path = Path(__file__).resolve().parents[1] / "config" / "rules.json"
+        rules = load_rules(current.rules_json, fallback_path=rules_path)
+        use_ai = current.ai_provider.lower() not in ("", "none")
+        if not use_ai and not rules:
+            raise ValueError("AI_PROVIDER or RULES_JSON is required")
+
+        batch_size = payload.limit if payload.limit and payload.limit > 0 else DEFAULT_CLASSIFY_BATCH_SIZE
+        concurrency_value = payload.concurrency if payload.concurrency and payload.concurrency > 0 else DEFAULT_CLASSIFY_CONCURRENCY
+        concurrency = _clamp_concurrency(concurrency_value)
+
+        _update_classification_state(
+            running=True,
+            started_at=datetime.now(timezone.utc).isoformat(),
+            finished_at=None,
+            processed=0,
+            failed=0,
+            remaining=count_unclassified_repos(),
+            last_error=None,
+            batch_size=batch_size,
+            concurrency=concurrency,
+        )
+
+        previous_remaining = None
+        while not classification_stop.is_set():
+            repos_to_classify = select_repos_for_classification(batch_size, payload.force)
+            if not repos_to_classify:
+                break
+
+            batch_classified, batch_failed = _classify_repos_concurrent(
+                repos_to_classify,
+                data,
+                rules,
+                use_ai,
+                payload.include_readme,
+                concurrency,
+            )
+            processed = batch_classified + batch_failed
+            remaining = count_unclassified_repos()
+            state = _get_classification_state()
+            _update_classification_state(
+                processed=state["processed"] + processed,
+                failed=state["failed"] + batch_failed,
+                remaining=remaining,
+            )
+
+            if processed == 0:
+                break
+            if previous_remaining is not None and remaining >= previous_remaining:
+                break
+            previous_remaining = remaining
+            if CLASSIFY_BATCH_DELAY_MS > 0:
+                time.sleep(CLASSIFY_BATCH_DELAY_MS / 1000)
+
+        _update_classification_state(
+            running=False,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except Exception as exc:
+        _update_classification_state(
+            running=False,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            last_error=str(exc),
+        )
+
+
+@app.post("/classify", response_model=ClassifyResponse, dependencies=[Depends(require_admin)])
 def classify(payload: ClassifyRequest) -> ClassifyResponse:
     current = get_settings()
     try:
@@ -294,59 +586,14 @@ def classify(payload: ClassifyRequest) -> ClassifyResponse:
     if not use_ai and not rules:
         raise HTTPException(status_code=400, detail="AI_PROVIDER or RULES_JSON is required")
 
-    classified = 0
-    failed = 0
-    for repo in repos_to_classify:
-        repo_data = dict(repo)
-        if payload.include_readme:
-            description = (repo_data.get("description") or "").strip()
-            if len(description) < 20 and not repo_data.get("readme_summary"):
-                try:
-                    summary = fetch_readme_summary(repo_data["full_name"])
-                except Exception:
-                    summary = ""
-                if summary:
-                    update_readme_summary(repo_data["full_name"], summary)
-                    repo_data["readme_summary"] = summary
-        rule = match_rule(repo_data, rules)
-        if rule:
-            validated = validate_classification(
-                {
-                    "category": rule.get("category"),
-                    "subcategory": rule.get("subcategory"),
-                    "tags": rule.get("tags") or [],
-                    "confidence": 1.0,
-                },
-                data,
-            )
-            update_classification(
-                repo_data["full_name"],
-                validated["category"],
-                validated["subcategory"],
-                validated["confidence"],
-                validated["tags"],
-                "rules",
-                "rules",
-            )
-            classified += 1
-            continue
-        if not use_ai:
-            failed += 1
-            continue
-        try:
-            result = classify_repo_with_retry(repo_data, data, retries=2)
-            update_classification(
-                repo_data["full_name"],
-                result["category"],
-                result["subcategory"],
-                result["confidence"],
-                result["tags"],
-                result["provider"],
-                result["model"],
-            )
-            classified += 1
-        except Exception:
-            failed += 1
+    classified, failed = _classify_repos_concurrent(
+        repos_to_classify,
+        data,
+        rules,
+        use_ai,
+        payload.include_readme,
+        concurrency=1,
+    )
 
     return ClassifyResponse(
         total=len(repos_to_classify),
@@ -354,6 +601,46 @@ def classify(payload: ClassifyRequest) -> ClassifyResponse:
         failed=failed,
         remaining_unclassified=count_unclassified_repos(),
     )
+
+
+@app.post(
+    "/classify/background",
+    response_model=BackgroundClassifyResponse,
+    dependencies=[Depends(require_admin)],
+)
+def classify_background(payload: BackgroundClassifyRequest) -> BackgroundClassifyResponse:
+    with classification_lock:
+        if classification_state["running"]:
+            return BackgroundClassifyResponse(
+                started=False, running=True, message="Classification already running"
+            )
+        classification_stop.clear()
+        classification_state["running"] = True
+        thread = Thread(target=_background_classify_loop, args=(payload,), daemon=True)
+        thread.start()
+
+    return BackgroundClassifyResponse(
+        started=True, running=True, message="Background classification started"
+    )
+
+
+@app.get("/classify/status", response_model=BackgroundClassifyStatusResponse)
+def classify_status() -> BackgroundClassifyStatusResponse:
+    state = _get_classification_state()
+    return BackgroundClassifyStatusResponse(**state)
+
+
+@app.post("/classify/stop", dependencies=[Depends(require_admin)])
+def classify_stop() -> dict:
+    classification_stop.set()
+    _update_classification_state(last_error="Stopped by user")
+    return {"stopped": True}
+
+
+@app.get("/stats", response_model=StatsResponse)
+def stats() -> StatsResponse:
+    data = get_repo_stats()
+    return StatsResponse(**data)
 
 
 @app.get("/settings", response_model=SettingsResponse)
@@ -381,7 +668,7 @@ def settings() -> SettingsResponse:
     )
 
 
-@app.patch("/settings", response_model=SettingsResponse)
+@app.patch("/settings", response_model=SettingsResponse, dependencies=[Depends(require_admin)])
 def update_settings(payload: SettingsRequest) -> SettingsResponse:
     fields = payload.model_fields_set
     updates: Dict[str, Optional[object]] = {}

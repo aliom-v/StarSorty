@@ -10,6 +10,7 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://api:8000")
 SYNC_CRON = os.getenv("SYNC_CRON", "0 */6 * * *")
 SYNC_TIMEOUT = float(os.getenv("SYNC_TIMEOUT", "30"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("scheduler")
@@ -19,7 +20,8 @@ def trigger_sync() -> None:
     url = f"{API_BASE_URL.rstrip('/')}/sync"
     try:
         logger.info("Triggering sync: %s", url)
-        response = requests.post(url, timeout=SYNC_TIMEOUT)
+        headers = {"X-Admin-Token": ADMIN_TOKEN} if ADMIN_TOKEN else None
+        response = requests.post(url, timeout=SYNC_TIMEOUT, headers=headers)
         logger.info("Sync response %s: %s", response.status_code, response.text[:500])
     except Exception as exc:
         logger.error("Sync failed: %s", exc)

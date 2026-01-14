@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from typing import Any, Dict, List, Optional
 
@@ -6,6 +7,8 @@ import requests
 
 from .config import get_settings
 from .taxonomy import format_taxonomy_for_prompt, validate_classification
+
+logger = logging.getLogger("starsorty.ai")
 
 
 def _default_base_url(provider: str) -> str:
@@ -168,6 +171,19 @@ def classify_repo_with_retry(
             return classify_repo(repo, taxonomy)
         except Exception as exc:
             if attempt >= retries:
+                logger.warning(
+                    "AI classify failed after %s attempts: %s",
+                    attempt + 1,
+                    exc,
+                )
                 raise exc
-            time.sleep(2 ** attempt)
+            wait = 2 ** attempt
+            logger.warning(
+                "AI classify failed on attempt %s/%s: %s. Retrying in %ss",
+                attempt + 1,
+                retries + 1,
+                exc,
+                wait,
+            )
+            time.sleep(wait)
             attempt += 1

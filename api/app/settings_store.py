@@ -29,7 +29,7 @@ def read_settings() -> Dict[str, Any]:
     if not Path(db_path).exists():
         return {}
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
     except sqlite3.Error:
@@ -55,7 +55,7 @@ def write_settings(values: Dict[str, Any]) -> None:
         return
     db_path = _get_db_path()
     _ensure_parent_dir(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
     try:
         conn.execute(
             """

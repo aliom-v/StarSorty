@@ -1,9 +1,13 @@
 from datetime import datetime, timezone
+import logging
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
 from .config import get_settings
+
+logger = logging.getLogger("starsorty.github")
 
 
 def _next_link(link_header: Optional[str]) -> Optional[str]:
@@ -63,6 +67,60 @@ def _default_headers() -> Dict[str, str]:
     return headers
 
 
+def _request_with_retry(
+    method: str,
+    url: str,
+    headers: Dict[str, str],
+    params: Optional[Dict[str, Any]] = None,
+    timeout: int = 30,
+    retries: int = 2,
+) -> requests.Response:
+    for attempt in range(retries + 1):
+        try:
+            response = requests.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            if attempt >= retries:
+                raise exc
+            wait = 2 ** attempt
+            logger.warning(
+                "GitHub request error on attempt %s/%s: %s. Retrying in %ss",
+                attempt + 1,
+                retries + 1,
+                exc,
+                wait,
+            )
+            time.sleep(wait)
+            continue
+
+        rate_limited = (
+            response.status_code == 403
+            and response.headers.get("X-RateLimit-Remaining") == "0"
+        )
+        retryable = response.status_code in (429, 500, 502, 503, 504) or rate_limited
+
+        if retryable and attempt < retries:
+            wait = 2 ** attempt
+            logger.warning(
+                "GitHub request status %s on attempt %s/%s. Retrying in %ss",
+                response.status_code,
+                attempt + 1,
+                retries + 1,
+                wait,
+            )
+            time.sleep(wait)
+            continue
+
+        return response
+
+    raise RuntimeError("GitHub request retry loop exceeded")
+
+
 def _parse_usernames(raw: str) -> List[str]:
     if not raw:
         return []
@@ -74,7 +132,8 @@ def fetch_authenticated_login() -> str:
     settings = get_settings()
     if not settings.github_token:
         raise ValueError("GITHUB_TOKEN is required to fetch the authenticated user")
-    response = requests.get(
+    response = _request_with_retry(
+        "GET",
         "https://api.github.com/user",
         headers=_default_headers(),
         timeout=30,
@@ -133,7 +192,8 @@ def fetch_starred_repos_for_user(username: str, use_auth: bool) -> List[Dict[str
     results: List[Dict[str, Any]] = []
 
     while next_url:
-        response = requests.get(
+        response = _request_with_retry(
+            "GET",
             next_url,
             headers=_default_headers(),
             params=params if is_first else None,
@@ -171,7 +231,7 @@ def fetch_readme_summary(full_name: str, max_chars: int = 1500) -> str:
         headers["Authorization"] = f"Bearer {settings.github_token}"
 
     url = f"https://api.github.com/repos/{full_name}/readme"
-    response = requests.get(url, headers=headers, timeout=30)
+    response = _request_with_retry("GET", url, headers=headers, timeout=30)
     if response.status_code == 404:
         return ""
     if response.status_code == 401:

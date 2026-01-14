@@ -27,7 +27,7 @@ def get_connection():
     settings = get_settings()
     db_path = _sqlite_path(settings.database_url)
     _ensure_parent_dir(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -89,6 +89,19 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS override_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                full_name TEXT NOT NULL,
+                category TEXT,
+                subcategory TEXT,
+                tags TEXT,
+                note TEXT,
+                updated_at TEXT
+            )
+            """
+        )
         _ensure_columns(conn)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_full_name ON repos(full_name)"
@@ -101,6 +114,9 @@ def init_db() -> None:
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_override_category ON repos(override_category)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_override_history_full_name ON override_history(full_name)"
         )
         conn.execute(
             """
@@ -229,6 +245,12 @@ def _load_json_list(value: Optional[str]) -> List[str]:
     return []
 
 
+def _load_json_list_optional(value: Optional[str]) -> Optional[List[str]]:
+    if value is None:
+        return None
+    return _load_json_list(value)
+
+
 def _load_star_users(repos: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     names = [repo.get("full_name") for repo in repos if repo.get("full_name")]
     if not names:
@@ -249,10 +271,10 @@ def _row_to_repo(row: sqlite3.Row) -> Dict[str, Any]:
     topics = _load_json_list(row["topics"])
     star_users = _load_json_list(row["star_users"])
     ai_tags = _load_json_list(row["ai_tags"])
-    override_tags = _load_json_list(row["override_tags"])
+    override_tags = _load_json_list_optional(row["override_tags"])
     effective_category = row["override_category"] or row["category"]
     effective_subcategory = row["override_subcategory"] or row["subcategory"]
-    effective_tags = override_tags or ai_tags
+    effective_tags = ai_tags if override_tags is None else override_tags
     return {
         "full_name": row["full_name"],
         "name": row["name"],
@@ -276,7 +298,7 @@ def _row_to_repo(row: sqlite3.Row) -> Dict[str, Any]:
         "ai_updated_at": row["ai_updated_at"],
         "override_category": row["override_category"],
         "override_subcategory": row["override_subcategory"],
-        "override_tags": override_tags,
+        "override_tags": override_tags or [],
         "override_note": row["override_note"],
         "readme_summary": row["readme_summary"],
         "readme_fetched_at": row["readme_fetched_at"],
@@ -284,6 +306,68 @@ def _row_to_repo(row: sqlite3.Row) -> Dict[str, Any]:
         "updated_at": row["updated_at"],
         "starred_at": row["starred_at"],
     }
+
+
+def prune_star_user(
+    username: str, keep_full_names: List[str], delete_orphans: bool = True
+) -> Tuple[int, int]:
+    if not username:
+        return (0, 0)
+    keep_set = set(keep_full_names)
+    removed = 0
+    deleted = 0
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT full_name, star_users FROM repos WHERE star_users LIKE ?",
+            (f"%\"{username}\"%",),
+        ).fetchall()
+        for row in rows:
+            full_name = row["full_name"]
+            if full_name in keep_set:
+                continue
+            users = _load_json_list(row["star_users"])
+            if username not in users:
+                continue
+            users = [user for user in users if user != username]
+            if not users and delete_orphans:
+                conn.execute("DELETE FROM repos WHERE full_name = ?", (full_name,))
+                deleted += 1
+            else:
+                conn.execute(
+                    "UPDATE repos SET star_users = ? WHERE full_name = ?",
+                    (json.dumps(users), full_name),
+                )
+                removed += 1
+        conn.commit()
+    return (removed, deleted)
+
+
+def prune_users_not_in(
+    allowed_users: List[str], delete_orphans: bool = True
+) -> Tuple[int, int]:
+    allowed_set = {user for user in allowed_users if user}
+    if not allowed_set:
+        return (0, 0)
+    updated = 0
+    deleted = 0
+    with get_connection() as conn:
+        rows = conn.execute("SELECT full_name, star_users FROM repos").fetchall()
+        for row in rows:
+            users = _load_json_list(row["star_users"])
+            filtered = [user for user in users if user in allowed_set]
+            if filtered == users:
+                continue
+            if not filtered and delete_orphans:
+                conn.execute("DELETE FROM repos WHERE full_name = ?", (row["full_name"],))
+                deleted += 1
+            else:
+                conn.execute(
+                    "UPDATE repos SET star_users = ? WHERE full_name = ?",
+                    (json.dumps(filtered), row["full_name"]),
+                )
+                updated += 1
+        conn.commit()
+    return (updated, deleted)
 
 
 def list_repos(
@@ -414,6 +498,32 @@ def update_override(full_name: str, updates: Dict[str, Any]) -> bool:
             f"UPDATE repos SET {', '.join(sets)} WHERE full_name = ?",
             params,
         )
+        if cur.rowcount > 0:
+            timestamp = datetime.now(timezone.utc).isoformat()
+            row = conn.execute(
+                """
+                SELECT override_category, override_subcategory, override_tags, override_note
+                FROM repos
+                WHERE full_name = ?
+                """,
+                (full_name,),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    """
+                    INSERT INTO override_history
+                        (full_name, category, subcategory, tags, note, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        full_name,
+                        row["override_category"],
+                        row["override_subcategory"],
+                        row["override_tags"],
+                        row["override_note"],
+                        timestamp,
+                    ),
+                )
         conn.commit()
         return cur.rowcount > 0
 
@@ -450,8 +560,9 @@ def update_classification(
         conn.commit()
 
 
-def update_readme_summary(full_name: str, summary: str) -> None:
+def update_readme_summary(full_name: str, summary: Optional[str]) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
+    stored_summary = summary if summary else None
     with get_connection() as conn:
         conn.execute(
             """
@@ -459,7 +570,7 @@ def update_readme_summary(full_name: str, summary: str) -> None:
             SET readme_summary = ?, readme_fetched_at = ?
             WHERE full_name = ?
             """,
-            (summary, timestamp, full_name),
+            (stored_summary, timestamp, full_name),
         )
         conn.commit()
 
@@ -499,3 +610,86 @@ def count_unclassified_repos() -> int:
     with get_connection() as conn:
         row = conn.execute(f"SELECT COUNT(*) FROM repos {where}").fetchone()
     return int(row[0] or 0)
+
+
+def list_override_history(full_name: str) -> List[Dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT category, subcategory, tags, note, updated_at
+            FROM override_history
+            WHERE full_name = ?
+            ORDER BY updated_at DESC, id DESC
+            """,
+            (full_name,),
+        ).fetchall()
+    results: List[Dict[str, Any]] = []
+    for row in rows:
+        results.append(
+            {
+                "category": row["category"],
+                "subcategory": row["subcategory"],
+                "tags": _load_json_list(row["tags"]),
+                "note": row["note"],
+                "updated_at": row["updated_at"],
+            }
+        )
+    return results
+
+
+def get_repo_stats() -> Dict[str, Any]:
+    with get_connection() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM repos").fetchone()[0]
+        unclassified = conn.execute(
+            "SELECT COUNT(*) FROM repos WHERE override_category IS NULL AND category IS NULL"
+        ).fetchone()[0]
+        category_rows = conn.execute(
+            """
+            SELECT
+                COALESCE(NULLIF(override_category, ''), NULLIF(category, ''), 'uncategorized') AS name,
+                COUNT(*) AS count
+            FROM repos
+            GROUP BY
+                COALESCE(NULLIF(override_category, ''), NULLIF(category, ''), 'uncategorized')
+            ORDER BY count DESC, name ASC
+            """
+        ).fetchall()
+        tag_rows = conn.execute(
+            "SELECT override_tags, ai_tags FROM repos"
+        ).fetchall()
+        user_rows = conn.execute("SELECT star_users FROM repos").fetchall()
+
+    category_counts = [
+        {"name": row["name"], "count": int(row["count"] or 0)}
+        for row in category_rows
+    ]
+
+    tag_map: Dict[str, int] = {}
+    for row in tag_rows:
+        override_tags = _load_json_list_optional(row["override_tags"])
+        ai_tags = _load_json_list(row["ai_tags"])
+        effective_tags = ai_tags if override_tags is None else override_tags
+        for tag in effective_tags:
+            tag_map[tag] = tag_map.get(tag, 0) + 1
+    tag_counts = sorted(
+        ({"name": name, "count": count} for name, count in tag_map.items()),
+        key=lambda item: (-item["count"], item["name"]),
+    )
+
+    user_map: Dict[str, int] = {}
+    for row in user_rows:
+        users = _load_json_list(row["star_users"])
+        for user in users:
+            user_map[user] = user_map.get(user, 0) + 1
+    user_counts = sorted(
+        ({"name": name, "count": count} for name, count in user_map.items()),
+        key=lambda item: (-item["count"], item["name"]),
+    )
+
+    return {
+        "total": int(total or 0),
+        "unclassified": int(unclassified or 0),
+        "categories": category_counts,
+        "tags": tag_counts,
+        "users": user_counts,
+    }
