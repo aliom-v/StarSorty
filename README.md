@@ -53,8 +53,8 @@ StarSorty 采用经典的前后端分离架构，通过 Docker Compose 一键编
 
 ```mermaid
 graph TD
-    User((User)) -->|Browser| Web[Web UI (Next.js)]
-    Web -->|API Req| API[Backend API (FastAPI)]
+    User((User)) -->|Browser| Web["Web UI (Next.js)"]
+    Web -->|API Req| API["Backend API (FastAPI)"]
 
     subgraph "Core Services"
         API -->|Read/Write| DB[(SQLite)]
@@ -204,15 +204,6 @@ npm install
 npm run dev
 # 访问 http://localhost:3000
 ```
-
----
-
-## 🗺️ Roadmap
-
-- [ ] 支持浏览器插件一键收藏并打标签
-- [ ] 支持导出数据为 Markdown / Notion / Obsidian 格式
-- [ ] 增加本地向量数据库支持，实现语义搜索
-- [ ] 增加用户登录系统，支持多用户隔离
 
 ---
 
