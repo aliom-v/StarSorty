@@ -25,6 +25,13 @@ env/
 .ruff_cache/
 .coverage
 coverage/
+tests/
+**/tests/
+test_*
+pytest.ini
+*-dev.*
+*.draft
+*.draft.*
 dist/
 build/
 *.egg-info/
