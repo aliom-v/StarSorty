@@ -1,6 +1,6 @@
 $root = Split-Path -Parent $PSScriptRoot
-$apiPort = 8000
-$webPort = 3000
+$apiPort = 4321
+$webPort = 1234
 
 function Get-ListeningPids($port) {
   return (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
@@ -41,6 +41,6 @@ if (-not (Test-Path $webNodeModules)) {
   exit 1
 }
 
-Ensure-Started "API" $apiPort "cd `"$root\\api`"; `"$apiPython`" -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000" "http://127.0.0.1:8000"
+Ensure-Started "API" $apiPort "cd `"$root\\api`"; `"$apiPython`" -m uvicorn app.main:app --reload --host 127.0.0.1 --port 4321" "http://127.0.0.1:4321"
 
-Ensure-Started "Web" $webPort "cd `"$root\\web`"; npm run dev" "http://localhost:3000"
+Ensure-Started "Web" $webPort "cd `"$root\\web`"; npm run dev" "http://localhost:1234"

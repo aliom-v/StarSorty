@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -37,6 +38,7 @@ from .settings_store import write_settings
 
 app = FastAPI(title="StarSorty API", version="0.1.0")
 settings = get_settings()
+logger = logging.getLogger("starsorty.api")
 DEFAULT_CLASSIFY_BATCH_SIZE = int(os.getenv("CLASSIFY_BATCH_SIZE", "50"))
 DEFAULT_CLASSIFY_CONCURRENCY = int(os.getenv("CLASSIFY_CONCURRENCY", "3"))
 CLASSIFY_CONCURRENCY_MAX = int(os.getenv("CLASSIFY_CONCURRENCY_MAX", "10"))
@@ -73,6 +75,78 @@ def require_admin(x_admin_token: str | None = Header(default=None, alias="X-Admi
         return
     if x_admin_token != admin_token:
         raise HTTPException(status_code=401, detail="Admin token required")
+
+
+def _normalize_provider(value: str) -> str:
+    return str(value or "").strip().lower()
+
+
+def _validate_ai_settings(current: "Settings") -> tuple[bool, str]:
+    provider = _normalize_provider(current.ai_provider)
+    if provider in ("", "none"):
+        return False, "AI_PROVIDER is not configured"
+    if not str(current.ai_model or "").strip():
+        return False, "AI_MODEL is required for AI classification"
+    if provider in ("openai", "anthropic") and not str(current.ai_api_key or "").strip():
+        return False, f"AI_API_KEY is required for provider {provider}"
+    if provider not in ("openai", "anthropic") and not str(current.ai_base_url or "").strip():
+        return False, f"AI_BASE_URL is required for provider {provider or 'custom'}"
+    return True, ""
+
+
+def _resolve_classify_context(
+    current: "Settings",
+    rules: list,
+    allow_fallback: bool,
+) -> tuple[str, bool, str | None]:
+    classify_mode = current.classify_mode
+    rules_available = bool(rules)
+    ai_ok, ai_reason = _validate_ai_settings(current)
+
+    if classify_mode == "ai_only":
+        if ai_ok:
+            return classify_mode, True, None
+        if allow_fallback and rules_available:
+            return "rules_only", False, f"{ai_reason}. Falling back to rules_only."
+        if allow_fallback:
+            return classify_mode, False, f"{ai_reason}. Skipping classification."
+        raise ValueError(ai_reason)
+
+    if classify_mode == "rules_only":
+        if rules_available:
+            return classify_mode, False, None
+        if allow_fallback and ai_ok:
+            return "ai_only", True, "RULES_JSON is required for classify_mode=rules_only. Falling back to ai_only."
+        if allow_fallback:
+            return classify_mode, False, "RULES_JSON is required for classify_mode=rules_only."
+        raise ValueError("RULES_JSON is required for classify_mode=rules_only")
+
+    if rules_available or ai_ok:
+        if not ai_ok and rules_available and allow_fallback:
+            return "rules_only", False, f"{ai_reason}. Falling back to rules_only."
+        return classify_mode, ai_ok, None
+
+    if allow_fallback:
+        return classify_mode, False, "AI_PROVIDER or RULES_JSON is required"
+    raise ValueError("AI_PROVIDER or RULES_JSON is required")
+
+
+def _start_background_classify(
+    payload: "BackgroundClassifyRequest",
+    allow_fallback: bool = False,
+) -> bool:
+    with classification_lock:
+        if classification_state["running"]:
+            return False
+        classification_stop.clear()
+        classification_state["running"] = True
+        thread = Thread(
+            target=_background_classify_loop,
+            args=(payload, allow_fallback),
+            daemon=True,
+        )
+        thread.start()
+    return True
 
 
 class SyncResponse(BaseModel):
@@ -203,14 +277,8 @@ class SettingsResponse(BaseModel):
     github_usernames: str
     github_include_self: bool
     github_mode: str
-    ai_provider: str
-    ai_model: str
-    ai_base_url: str
-    ai_headers_json: str
-    ai_temperature: float
-    ai_max_tokens: int
-    ai_timeout: int
-    ai_taxonomy_path: str
+    classify_mode: str
+    auto_classify_after_sync: bool
     rules_json: str
     sync_cron: str
     sync_timeout: int
@@ -224,17 +292,17 @@ class SettingsRequest(BaseModel):
     github_usernames: Optional[str] = None
     github_include_self: Optional[bool] = None
     github_mode: Optional[str] = None
-    ai_provider: Optional[str] = None
-    ai_model: Optional[str] = None
-    ai_base_url: Optional[str] = None
-    ai_headers_json: Optional[str] = None
-    ai_temperature: Optional[float] = None
-    ai_max_tokens: Optional[int] = None
-    ai_timeout: Optional[int] = None
-    ai_taxonomy_path: Optional[str] = None
+    classify_mode: Optional[str] = None
+    auto_classify_after_sync: Optional[bool] = None
     rules_json: Optional[str] = None
     sync_cron: Optional[str] = None
     sync_timeout: Optional[int] = None
+
+
+class ClientSettingsResponse(BaseModel):
+    github_mode: str
+    classify_mode: str
+    auto_classify_after_sync: bool
 
 
 class StatsItem(BaseModel):
@@ -268,6 +336,7 @@ def status() -> StatusResponse:
 
 @app.post("/sync", response_model=SyncResponse, dependencies=[Depends(require_admin)])
 def sync() -> SyncResponse:
+    current = get_settings()
     try:
         targets = resolve_targets()
     except Exception as exc:
@@ -302,6 +371,16 @@ def sync() -> SyncResponse:
             f"cleaned {cleaned_total} repos, removed {cleaned_deleted} repos"
         ),
     )
+    if current.auto_classify_after_sync:
+        _start_background_classify(
+            BackgroundClassifyRequest(
+                limit=DEFAULT_CLASSIFY_BATCH_SIZE,
+                force=False,
+                include_readme=True,
+                concurrency=DEFAULT_CLASSIFY_CONCURRENCY,
+            ),
+            allow_fallback=True,
+        )
     return SyncResponse(status="ok", queued_at=timestamp, count=total)
 
 
@@ -445,6 +524,7 @@ def _classify_repo_once(
     repo: dict,
     data: dict,
     rules: list,
+    classify_mode: str,
     use_ai: bool,
     include_readme: bool,
 ) -> bool:
@@ -459,27 +539,29 @@ def _classify_repo_once(
                 summary = ""
             if summary:
                 repo_data["readme_summary"] = summary
-    rule = match_rule(repo_data, rules)
-    if rule:
-        validated = validate_classification(
-            {
-                "category": rule.get("category"),
-                "subcategory": rule.get("subcategory"),
-                "tags": rule.get("tags") or [],
-                "confidence": 1.0,
-            },
-            data,
-        )
-        update_classification(
-            repo_data["full_name"],
-            validated["category"],
-            validated["subcategory"],
-            validated["confidence"],
-            validated["tags"],
-            "rules",
-            "rules",
-        )
-        return True
+    use_rules = classify_mode != "ai_only"
+    if use_rules:
+        rule = match_rule(repo_data, rules)
+        if rule:
+            validated = validate_classification(
+                {
+                    "category": rule.get("category"),
+                    "subcategory": rule.get("subcategory"),
+                    "tags": rule.get("tags") or [],
+                    "confidence": 1.0,
+                },
+                data,
+            )
+            update_classification(
+                repo_data["full_name"],
+                validated["category"],
+                validated["subcategory"],
+                validated["confidence"],
+                validated["tags"],
+                "rules",
+                "rules",
+            )
+            return True
     if not use_ai:
         return False
     result = classify_repo_with_retry(repo_data, data, retries=2)
@@ -499,6 +581,7 @@ def _classify_repos_concurrent(
     repos_to_classify: list,
     data: dict,
     rules: list,
+    classify_mode: str,
     use_ai: bool,
     include_readme: bool,
     concurrency: int,
@@ -508,7 +591,7 @@ def _classify_repos_concurrent(
         failed = 0
         for repo in repos_to_classify:
             try:
-                if _classify_repo_once(repo, data, rules, use_ai, include_readme):
+                if _classify_repo_once(repo, data, rules, classify_mode, use_ai, include_readme):
                     classified += 1
                 else:
                     failed += 1
@@ -521,7 +604,7 @@ def _classify_repos_concurrent(
 
     def classify_single(repo: dict) -> tuple[int, int]:
         try:
-            return (1, 0) if _classify_repo_once(repo, data, rules, use_ai, include_readme) else (0, 1)
+            return (1, 0) if _classify_repo_once(repo, data, rules, classify_mode, use_ai, include_readme) else (0, 1)
         except Exception:
             return (0, 1)
 
@@ -542,15 +625,29 @@ def _clamp_concurrency(value: int) -> int:
     return value
 
 
-def _background_classify_loop(payload: BackgroundClassifyRequest) -> None:
+def _background_classify_loop(payload: BackgroundClassifyRequest, allow_fallback: bool) -> None:
     try:
         current = get_settings()
-        data = load_taxonomy(current.ai_taxonomy_path)
         rules_path = Path(__file__).resolve().parents[1] / "config" / "rules.json"
         rules = load_rules(current.rules_json, fallback_path=rules_path)
-        use_ai = current.ai_provider.lower() not in ("", "none")
-        if not use_ai and not rules:
-            raise ValueError("AI_PROVIDER or RULES_JSON is required")
+        classify_mode, use_ai, warning = _resolve_classify_context(
+            current,
+            rules,
+            allow_fallback,
+        )
+        if warning:
+            logger.warning("Background classification: %s", warning)
+
+        should_run = use_ai or (classify_mode != "ai_only" and bool(rules))
+        if not should_run:
+            _update_classification_state(
+                running=False,
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                last_error=warning or "No classification sources available",
+            )
+            return
+
+        data = load_taxonomy(current.ai_taxonomy_path)
 
         batch_size = payload.limit if payload.limit and payload.limit > 0 else DEFAULT_CLASSIFY_BATCH_SIZE
         concurrency_value = payload.concurrency if payload.concurrency and payload.concurrency > 0 else DEFAULT_CLASSIFY_CONCURRENCY
@@ -592,6 +689,7 @@ def _background_classify_loop(payload: BackgroundClassifyRequest) -> None:
                 repos_to_classify,
                 data,
                 rules,
+                classify_mode,
                 use_ai,
                 payload.include_readme,
                 concurrency,
@@ -639,14 +737,22 @@ def classify(payload: ClassifyRequest) -> ClassifyResponse:
     repos_to_classify = select_repos_for_classification(payload.limit, payload.force)
     rules_path = Path(__file__).resolve().parents[1] / "config" / "rules.json"
     rules = load_rules(current.rules_json, fallback_path=rules_path)
-    use_ai = current.ai_provider.lower() not in ("", "none")
-    if not use_ai and not rules:
-        raise HTTPException(status_code=400, detail="AI_PROVIDER or RULES_JSON is required")
+    try:
+        classify_mode, use_ai, warning = _resolve_classify_context(
+            current,
+            rules,
+            allow_fallback=False,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if warning:
+        logger.warning("Classification request: %s", warning)
 
     classified, failed = _classify_repos_concurrent(
         repos_to_classify,
         data,
         rules,
+        classify_mode,
         use_ai,
         payload.include_readme,
         concurrency=1,
@@ -666,15 +772,11 @@ def classify(payload: ClassifyRequest) -> ClassifyResponse:
     dependencies=[Depends(require_admin)],
 )
 def classify_background(payload: BackgroundClassifyRequest) -> BackgroundClassifyResponse:
-    with classification_lock:
-        if classification_state["running"]:
-            return BackgroundClassifyResponse(
-                started=False, running=True, message="Classification already running"
-            )
-        classification_stop.clear()
-        classification_state["running"] = True
-        thread = Thread(target=_background_classify_loop, args=(payload,), daemon=True)
-        thread.start()
+    started = _start_background_classify(payload, allow_fallback=False)
+    if not started:
+        return BackgroundClassifyResponse(
+            started=False, running=True, message="Classification already running"
+        )
 
     return BackgroundClassifyResponse(
         started=True, running=True, message="Background classification started"
@@ -700,6 +802,25 @@ def stats() -> StatsResponse:
     return StatsResponse(**data)
 
 
+@app.get("/api/config/client-settings", response_model=ClientSettingsResponse)
+def client_settings() -> ClientSettingsResponse:
+    current = get_settings()
+    rules_path = Path(__file__).resolve().parents[1] / "config" / "rules.json"
+    rules = load_rules(current.rules_json, fallback_path=rules_path)
+    try:
+        _resolve_classify_context(current, rules, allow_fallback=False)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Server configuration error: {exc}. Check server .env settings.",
+        ) from exc
+    return ClientSettingsResponse(
+        github_mode=current.github_mode,
+        classify_mode=current.classify_mode,
+        auto_classify_after_sync=current.auto_classify_after_sync,
+    )
+
+
 @app.get("/settings", response_model=SettingsResponse)
 def settings() -> SettingsResponse:
     current = get_settings()
@@ -709,14 +830,8 @@ def settings() -> SettingsResponse:
         github_usernames=current.github_usernames,
         github_include_self=current.github_include_self,
         github_mode=current.github_mode,
-        ai_provider=current.ai_provider,
-        ai_model=current.ai_model,
-        ai_base_url=current.ai_base_url,
-        ai_headers_json=current.ai_headers_json,
-        ai_temperature=current.ai_temperature,
-        ai_max_tokens=current.ai_max_tokens,
-        ai_timeout=current.ai_timeout,
-        ai_taxonomy_path=current.ai_taxonomy_path,
+        classify_mode=current.classify_mode,
+        auto_classify_after_sync=current.auto_classify_after_sync,
         rules_json=current.rules_json,
         sync_cron=current.sync_cron,
         sync_timeout=current.sync_timeout,
@@ -744,14 +859,8 @@ def update_settings(payload: SettingsRequest) -> SettingsResponse:
         github_usernames=current.github_usernames,
         github_include_self=current.github_include_self,
         github_mode=current.github_mode,
-        ai_provider=current.ai_provider,
-        ai_model=current.ai_model,
-        ai_base_url=current.ai_base_url,
-        ai_headers_json=current.ai_headers_json,
-        ai_temperature=current.ai_temperature,
-        ai_max_tokens=current.ai_max_tokens,
-        ai_timeout=current.ai_timeout,
-        ai_taxonomy_path=current.ai_taxonomy_path,
+        classify_mode=current.classify_mode,
+        auto_classify_after_sync=current.auto_classify_after_sync,
         rules_json=current.rules_json,
         sync_cron=current.sync_cron,
         sync_timeout=current.sync_timeout,

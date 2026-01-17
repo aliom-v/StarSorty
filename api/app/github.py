@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -8,6 +9,7 @@ import requests
 from .config import get_settings
 
 logger = logging.getLogger("starsorty.github")
+GITHUB_API_BASE_URL = os.getenv("GITHUB_API_BASE_URL", "https://api.github.com").rstrip("/")
 
 
 def _next_link(link_header: Optional[str]) -> Optional[str]:
@@ -134,7 +136,7 @@ def fetch_authenticated_login() -> str:
         raise ValueError("GITHUB_TOKEN is required to fetch the authenticated user")
     response = _request_with_retry(
         "GET",
-        "https://api.github.com/user",
+        f"{GITHUB_API_BASE_URL}/user",
         headers=_default_headers(),
         timeout=30,
     )
@@ -182,9 +184,9 @@ def fetch_starred_repos_for_user(username: str, use_auth: bool) -> List[Dict[str
         raise ValueError("GITHUB_TOKEN is required for authenticated sync")
 
     if use_auth:
-        url = "https://api.github.com/user/starred"
+        url = f"{GITHUB_API_BASE_URL}/user/starred"
     else:
-        url = f"https://api.github.com/users/{username}/starred"
+        url = f"{GITHUB_API_BASE_URL}/users/{username}/starred"
 
     params = {"per_page": 100}
     next_url = url
@@ -230,7 +232,7 @@ def fetch_readme_summary(full_name: str, max_chars: int = 1500) -> str:
     if settings.github_token:
         headers["Authorization"] = f"Bearer {settings.github_token}"
 
-    url = f"https://api.github.com/repos/{full_name}/readme"
+    url = f"{GITHUB_API_BASE_URL}/repos/{full_name}/readme"
     response = _request_with_retry("GET", url, headers=headers, timeout=30)
     if response.status_code == 404:
         return ""

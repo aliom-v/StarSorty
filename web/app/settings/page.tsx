@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { buildAdminHeaders, getAdminToken, setAdminToken } from "../lib/admin";
+import { API_BASE_URL } from "../lib/apiBase";
+import { getErrorMessage, readApiError } from "../lib/apiError";
 
 type Settings = {
   github_username: string;
@@ -9,14 +11,8 @@ type Settings = {
   github_usernames: string;
   github_include_self: boolean;
   github_mode: string;
-  ai_provider: string;
-  ai_model: string;
-  ai_base_url: string;
-  ai_headers_json: string;
-  ai_temperature: number;
-  ai_max_tokens: number;
-  ai_timeout: number;
-  ai_taxonomy_path: string;
+  classify_mode: string;
+  auto_classify_after_sync: boolean;
   rules_json: string;
   sync_cron: string;
   sync_timeout: number;
@@ -24,26 +20,39 @@ type Settings = {
   ai_api_key_set: boolean;
 };
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
-
 export default function SettingsPage() {
   const [form, setForm] = useState<Settings | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [adminTokenValue, setAdminTokenValue] = useState("");
+  const hasAdminToken = adminTokenValue.trim().length > 0;
 
-  useEffect(() => {
-    const load = async () => {
+  const loadSettings = useCallback(async () => {
+    setLoading(true);
+    setMessage(null);
+    try {
       const res = await fetch(`${API_BASE_URL}/settings`);
       if (!res.ok) {
-        setMessage("Failed to load settings.");
-        return;
+        const detail = await readApiError(res, "Failed to load settings.");
+        throw new Error(detail);
       }
       const data = await res.json();
       setForm(data);
-    };
-    load();
+    } catch (err) {
+      const error = getErrorMessage(err, "Failed to load settings.");
+      setForm(null);
+      setMessage(error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
+
+  useEffect(() => {
     setAdminTokenValue(getAdminToken());
   }, []);
 
@@ -63,14 +72,8 @@ export default function SettingsPage() {
         github_usernames: form.github_usernames,
         github_include_self: form.github_include_self,
         github_mode: form.github_mode,
-        ai_provider: form.ai_provider,
-        ai_model: form.ai_model,
-        ai_base_url: form.ai_base_url,
-        ai_headers_json: form.ai_headers_json,
-        ai_temperature: form.ai_temperature,
-        ai_max_tokens: form.ai_max_tokens,
-        ai_timeout: form.ai_timeout,
-        ai_taxonomy_path: form.ai_taxonomy_path,
+        classify_mode: form.classify_mode,
+        auto_classify_after_sync: form.auto_classify_after_sync,
         rules_json: form.rules_json,
         sync_cron: form.sync_cron,
         sync_timeout: form.sync_timeout,
@@ -83,14 +86,14 @@ export default function SettingsPage() {
       });
 
       if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(detail || "Save failed.");
+        const detail = await readApiError(res, "Save failed.");
+        throw new Error(detail);
       }
       const data = await res.json();
       setForm(data);
       setMessage("Settings saved.");
     } catch (err) {
-      const error = err instanceof Error ? err.message : "Save failed.";
+      const error = getErrorMessage(err, "Save failed.");
       setMessage(error);
     } finally {
       setSaving(false);
@@ -101,7 +104,21 @@ export default function SettingsPage() {
     return (
       <main className="min-h-screen px-6 py-10 lg:px-12">
         <section className="mx-auto max-w-4xl rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
-          <p className="text-sm text-ink/70">Loading settings...</p>
+          <p className="text-sm text-ink/70">
+            {loading ? "Loading settings..." : message || "Failed to load settings."}
+          </p>
+          {!loading && (
+            <button
+              type="button"
+              onClick={loadSettings}
+              className="mt-4 rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink"
+            >
+              Retry
+            </button>
+          )}
+          {!loading && (
+            <p className="mt-3 text-xs text-ink/60">API: {API_BASE_URL}</p>
+          )}
         </section>
       </main>
     );
@@ -122,28 +139,40 @@ export default function SettingsPage() {
             controls non-sensitive values only.
           </p>
           <div className="mt-4 text-xs text-ink/60">
-            GitHub token: {form.github_token_set ? "set" : "missing"} / AI key:{" "}
+            Admin token (local): {hasAdminToken ? "set" : "missing"} / GitHub token:{" "}
+            {form.github_token_set ? "set" : "missing"} / AI key:{" "}
             {form.ai_api_key_set ? "set" : "missing"}
           </div>
-          <div className="mt-4 grid gap-2">
-            <label className="text-sm">
-              Admin token (local only)
-              <input
-                className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
-                value={adminTokenValue}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setAdminTokenValue(value);
-                  setAdminToken(value);
-                }}
-                placeholder="X-Admin-Token"
-              />
-            </label>
-            <p className="text-xs text-ink/60">
-              Stored locally for demo writes.
-            </p>
-          </div>
         </header>
+
+        <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
+          <h2 className="font-display text-lg font-semibold">Admin access</h2>
+          <p className="mt-2 text-xs text-ink/60">
+            Paste the <code className="rounded bg-clay px-2">ADMIN_TOKEN</code> from
+            your server env to enable write actions. Stored locally in this browser.
+          </p>
+          {!hasAdminToken && (
+            <div className="mt-3 rounded-2xl border border-copper/30 bg-surface px-3 py-2 text-xs text-copper">
+              Admin token is missing. Saves may fail with 401 until it is set.
+            </div>
+          )}
+          <label className="mt-4 block text-sm">
+            Admin token (local only)
+            <input
+              className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
+              value={adminTokenValue}
+              onChange={(event) => {
+                const value = event.target.value;
+                setAdminTokenValue(value);
+                setAdminToken(value);
+              }}
+              placeholder="X-Admin-Token"
+            />
+          </label>
+          <p className="mt-2 text-xs text-ink/60">
+            Clear the field to remove the token from local storage.
+          </p>
+        </div>
 
         <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
           <h2 className="font-display text-lg font-semibold">GitHub</h2>
@@ -209,86 +238,24 @@ export default function SettingsPage() {
         <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
           <h2 className="font-display text-lg font-semibold">AI</h2>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <label className="text-sm">
-              Provider
-              <input
-                className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
-                value={form.ai_provider || ""}
-                onChange={(event) => updateField("ai_provider", event.target.value)}
-                placeholder="openai / anthropic / custom"
-              />
-            </label>
-            <label className="text-sm">
-              Model
-              <input
-                className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
-                value={form.ai_model || ""}
-                onChange={(event) => updateField("ai_model", event.target.value)}
-                placeholder="gpt-4o-mini / glm-4.7"
-              />
-            </label>
+            <p className="text-xs text-ink/60 md:col-span-2">
+              AI provider, model, base URL, and keys are configured in the server{" "}
+              <code className="rounded bg-clay px-2">.env</code> only.
+            </p>
             <label className="text-sm md:col-span-2">
-              Base URL
-              <input
+              Classification mode
+              <select
                 className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
-                value={form.ai_base_url || ""}
-                onChange={(event) => updateField("ai_base_url", event.target.value)}
-                placeholder="https://your-host/v1"
-              />
-            </label>
-            <label className="text-sm md:col-span-2">
-              Extra headers (JSON)
-              <input
-                className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
-                value={form.ai_headers_json || ""}
-                onChange={(event) => updateField("ai_headers_json", event.target.value)}
-                placeholder='{"X-Header":"value"}'
-              />
-            </label>
-            <label className="text-sm">
-              Temperature
-              <input
-                className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
-                type="number"
-                step="0.1"
-                value={form.ai_temperature}
-                onChange={(event) =>
-                  updateField("ai_temperature", Number(event.target.value))
-                }
-              />
-            </label>
-            <label className="text-sm">
-              Max tokens
-              <input
-                className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
-                type="number"
-                value={form.ai_max_tokens}
-                onChange={(event) =>
-                  updateField("ai_max_tokens", Number(event.target.value))
-                }
-              />
-            </label>
-            <label className="text-sm">
-              Timeout (seconds)
-              <input
-                className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
-                type="number"
-                value={form.ai_timeout}
-                onChange={(event) =>
-                  updateField("ai_timeout", Number(event.target.value))
-                }
-              />
-            </label>
-            <label className="text-sm md:col-span-2">
-              Taxonomy path
-              <input
-                className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
-                value={form.ai_taxonomy_path || ""}
-                onChange={(event) =>
-                  updateField("ai_taxonomy_path", event.target.value)
-                }
-                placeholder="api/config/taxonomy.yaml"
-              />
+                value={form.classify_mode || "ai_only"}
+                onChange={(event) => updateField("classify_mode", event.target.value)}
+              >
+                <option value="rules_then_ai">Rules then AI</option>
+                <option value="ai_only">AI only</option>
+                <option value="rules_only">Rules only</option>
+              </select>
+              <p className="mt-2 text-xs text-ink/60">
+                Choose AI for full coverage or rules for fast keyword matching.
+              </p>
             </label>
             <label className="text-sm md:col-span-2">
               Rules (JSON)
@@ -326,6 +293,21 @@ export default function SettingsPage() {
                 }
               />
             </label>
+            <label className="text-sm md:col-span-2">
+              Auto classify after sync
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={!!form.auto_classify_after_sync}
+                  onChange={(event) =>
+                    updateField("auto_classify_after_sync", event.target.checked)
+                  }
+                />
+                <span className="text-xs text-ink/60">
+                  Runs background classification right after syncing.
+                </span>
+              </div>
+            </label>
           </div>
         </div>
 
@@ -338,6 +320,11 @@ export default function SettingsPage() {
           >
             {saving ? "Saving..." : "Save settings"}
           </button>
+          {!hasAdminToken && (
+            <span className="text-xs text-copper">
+              Admin token missing; writes may fail if the API requires it.
+            </span>
+          )}
           <a
             href="/"
             className="rounded-full border border-ink/10 bg-surface px-5 py-2 text-sm font-semibold text-ink"

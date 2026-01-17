@@ -1,5 +1,5 @@
-$apiPort = 8000
-$webPort = 3000
+$apiPort = 4321
+$webPort = 1234
 
 function Get-ListeningPids($port) {
   return (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |

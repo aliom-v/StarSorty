@@ -13,10 +13,10 @@ if (-not (Test-Path $webNodeModules)) {
   exit 1
 }
 
-$apiCmd = "cd `"$root\\api`"; `"$apiPython`" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+$apiCmd = "cd `"$root\\api`"; `"$apiPython`" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 4321"
 $webCmd = "cd `"$root\\web`"; npm run dev"
 
 Start-Process powershell -ArgumentList "-NoExit", "-Command", $apiCmd | Out-Null
 Start-Process powershell -ArgumentList "-NoExit", "-Command", $webCmd | Out-Null
 
-Write-Host "Started API (http://localhost:8000) and Web (http://localhost:3000)."
+Write-Host "Started API (http://localhost:4321) and Web (http://localhost:1234)."

@@ -6,7 +6,7 @@ import requests
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://api:8000")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://api:4321")
 SYNC_CRON = os.getenv("SYNC_CRON", "0 */6 * * *")
 SYNC_TIMEOUT = float(os.getenv("SYNC_TIMEOUT", "30"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()

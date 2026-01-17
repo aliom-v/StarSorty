@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { buildAdminHeaders } from "../lib/admin";
+import { API_BASE_URL } from "../lib/apiBase";
+import { getErrorMessage, readApiError } from "../lib/apiError";
 import { useI18n } from "../lib/i18n";
 
 type RepoDetail = {
@@ -45,9 +47,6 @@ type OverrideHistoryItem = {
   updated_at?: string | null;
 };
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
-
 const formatDate = (value?: string | null) => {
   if (!value) return "n/a";
   const date = new Date(value);
@@ -85,12 +84,13 @@ export default function RepoDetailClient() {
     try {
       const res = await fetch(`${API_BASE_URL}/repos/${encodedFullName}`);
       if (!res.ok) {
-        throw new Error(`Repo fetch failed (${res.status})`);
+        const detail = await readApiError(res, `Repo fetch failed (${res.status})`);
+        throw new Error(detail);
       }
       const data = await res.json();
       setRepo(data);
     } catch (err) {
-      const messageText = err instanceof Error ? err.message : t("unknownError");
+      const messageText = getErrorMessage(err, t("unknownError"));
       setError(messageText);
     } finally {
       setLoading(false);
@@ -130,13 +130,13 @@ export default function RepoDetailClient() {
         headers: buildAdminHeaders(),
       });
       if (!res.ok) {
-        throw new Error(t("readmeUpdateFailed"));
+        const detail = await readApiError(res, t("readmeUpdateFailed"));
+        throw new Error(detail);
       }
       setMessage(t("readmeUpdated"));
       await loadRepo();
     } catch (err) {
-      const messageText =
-        err instanceof Error ? err.message : t("readmeUpdateFailed");
+      const messageText = getErrorMessage(err, t("readmeUpdateFailed"));
       setMessage(messageText);
     } finally {
       setFetchingReadme(false);

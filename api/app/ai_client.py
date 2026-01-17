@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -37,6 +38,82 @@ def _headers(provider: str) -> Dict[str, str]:
         except json.JSONDecodeError:
             pass
     return headers
+
+
+_SENSITIVE_KEYS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "access_token",
+    "token",
+    "secret",
+    "password",
+    "x-api-key",
+}
+
+
+def _mask_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if len(value) <= 4:
+            return "****"
+        return f"{value[:2]}***{value[-2:]}"
+    return "***"
+
+
+def _mask_sensitive_payload(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        masked: Dict[str, Any] = {}
+        for key, value in payload.items():
+            if str(key).lower() in _SENSITIVE_KEYS:
+                masked[key] = _mask_value(value)
+            else:
+                masked[key] = _mask_sensitive_payload(value)
+        return masked
+    if isinstance(payload, list):
+        return [_mask_sensitive_payload(item) for item in payload]
+    return payload
+
+
+def _mask_secrets_in_text(text: str) -> str:
+    masked = text
+    masked = re.sub(r"(?i)(authorization\\s*[:=]\\s*bearer\\s+)[^\\s\"']+", r"\\1***", masked)
+    masked = re.sub(r"(?i)(x-api-key\\s*[:=]\\s*)[^\\s\"']+", r"\\1***", masked)
+    masked = re.sub(r"(?i)(api_key\\s*[:=]\\s*)[^\\s\"']+", r"\\1***", masked)
+    masked = re.sub(r"\\bsk-[A-Za-z0-9\\-]{8,}\\b", "sk-***", masked)
+    return masked
+
+
+def _sanitize_response_body(text: str) -> str:
+    if not text:
+        return ""
+    trimmed = text.strip()
+    if not trimmed:
+        return ""
+    try:
+        parsed = json.loads(trimmed)
+    except json.JSONDecodeError:
+        return _mask_secrets_in_text(trimmed)
+    masked = _mask_sensitive_payload(parsed)
+    try:
+        return json.dumps(masked, ensure_ascii=True)
+    except (TypeError, ValueError):
+        return _mask_secrets_in_text(trimmed)
+
+
+def _raise_for_status_with_detail(response: requests.Response, url: str) -> None:
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        detail = _sanitize_response_body(response.text)
+        if detail:
+            if len(detail) > 800:
+                detail = detail[:800] + "..."
+            raise requests.HTTPError(
+                f"{exc} | url={url} | body={detail}"
+            ) from exc
+        raise requests.HTTPError(f"{exc} | url={url}") from exc
 
 
 def _extract_json(text: str) -> Optional[Dict[str, Any]]:
@@ -139,9 +216,17 @@ def classify_repo(repo: Dict[str, Any], taxonomy: Dict[str, List[Dict[str, List[
         json=payload,
         timeout=settings.ai_timeout,
     )
-    response.raise_for_status()
+    _raise_for_status_with_detail(response, url)
 
-    data = response.json()
+    try:
+        data = response.json()
+    except ValueError as exc:
+        detail = _sanitize_response_body(response.text)
+        if len(detail) > 800:
+            detail = detail[:800] + "..."
+        raise ValueError(
+            f"AI response JSON decode failed (status {response.status_code}) | url={url} | body={detail}"
+        ) from exc
     if provider == "anthropic":
         content = data.get("content") or []
         text = ""

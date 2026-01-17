@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { buildAdminHeaders } from "./lib/admin";
+import { API_BASE_URL } from "./lib/apiBase";
+import { getErrorMessage, readApiError } from "./lib/apiError";
 import { useI18n } from "./lib/i18n";
 import { useTheme } from "./lib/theme";
 
@@ -64,8 +66,11 @@ type ForegroundProgress = {
   lastBatch: number;
 };
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+type ClientSettings = {
+  github_mode: string;
+  classify_mode: string;
+  auto_classify_after_sync: boolean;
+};
 
 const PAGE_SIZE = 60;
 const STAR_FILTERS = [100, 500, 1000, 5000];
@@ -96,6 +101,7 @@ export default function Home() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionStatus, setActionStatus] = useState<"success" | "error" | null>(
     null
@@ -124,23 +130,34 @@ export default function Home() {
   const [minStars, setMinStars] = useState<number | null>(null);
   const [sourceUser, setSourceUser] = useState<string | null>(null);
   const [groupMode, setGroupMode] = useState(false);
+  const activeError = configError || error;
   const unknownErrorMessage = t("unknownError");
 
   const loadStatus = useCallback(async () => {
+    setError(null);
     try {
       const statusRes = await fetch(`${API_BASE_URL}/status`);
-      const statusData = statusRes.ok ? await statusRes.json() : null;
+      if (!statusRes.ok) {
+        const detail = await readApiError(statusRes, unknownErrorMessage);
+        setError(detail);
+        setStatus(null);
+        return;
+      }
+      const statusData = await statusRes.json();
       setStatus(statusData);
     } catch (err) {
-      const message = err instanceof Error ? err.message : unknownErrorMessage;
+      const message = getErrorMessage(err, unknownErrorMessage);
       setError(message);
     }
   }, [unknownErrorMessage]);
 
   const loadStats = useCallback(async () => {
+    setError(null);
     try {
       const statsRes = await fetch(`${API_BASE_URL}/stats`);
       if (!statsRes.ok) {
+        const detail = await readApiError(statsRes, unknownErrorMessage);
+        setError(detail);
         return;
       }
       const statsData = await statsRes.json();
@@ -148,18 +165,40 @@ export default function Home() {
     } catch {
       setStats(null);
     }
-  }, []);
+  }, [unknownErrorMessage]);
 
   const loadBackgroundStatus = useCallback(async () => {
+    setError(null);
     try {
       const res = await fetch(`${API_BASE_URL}/classify/status`);
       if (!res.ok) {
+        const detail = await readApiError(res, unknownErrorMessage);
+        setError(detail);
         return;
       }
       const data = await res.json();
       setBackgroundStatus(data);
     } catch {
       setBackgroundStatus(null);
+    }
+  }, [unknownErrorMessage]);
+
+  const loadClientSettings = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/config/client-settings`);
+      if (!res.ok) {
+        const detail = await readApiError(res, "Failed to load server config.");
+        setConfigError(detail);
+        setGroupMode(false);
+        return;
+      }
+      const data = (await res.json()) as ClientSettings;
+      setGroupMode(String(data.github_mode || "merge") === "group");
+      setConfigError(null);
+    } catch (err) {
+      const message = getErrorMessage(err, "Failed to load server config.");
+      setConfigError(message);
+      setGroupMode(false);
     }
   }, []);
 
@@ -186,7 +225,8 @@ export default function Home() {
 
       const res = await fetch(`${API_BASE_URL}/repos?${params}`);
       if (!res.ok) {
-        throw new Error(`Repos fetch failed (${res.status})`);
+        const detail = await readApiError(res, `Repos fetch failed (${res.status})`);
+        throw new Error(detail);
       }
       const data = await res.json();
       const total = Number(data.total || 0);
@@ -196,7 +236,7 @@ export default function Home() {
       setRepos((prev) => (append ? [...prev, ...items] : items));
       setHasMore(offset + items.length < total);
     } catch (err) {
-      const message = err instanceof Error ? err.message : unknownErrorMessage;
+      const message = getErrorMessage(err, unknownErrorMessage);
       setError(message);
     } finally {
       setLoading(false);
@@ -209,18 +249,10 @@ export default function Home() {
       await loadStatus();
       await loadStats();
       await loadBackgroundStatus();
-      try {
-        const settingsRes = await fetch(`${API_BASE_URL}/settings`);
-        if (settingsRes.ok) {
-          const settingsData = await settingsRes.json();
-          setGroupMode(String(settingsData.github_mode || "merge") === "group");
-        }
-      } catch {
-        setGroupMode(false);
-      }
+      await loadClientSettings();
     };
     load();
-  }, [loadBackgroundStatus, loadStats, loadStatus]);
+  }, [loadBackgroundStatus, loadClientSettings, loadStats, loadStatus]);
 
   useEffect(() => {
     if (!backgroundStatus?.running) return;
@@ -280,8 +312,8 @@ export default function Home() {
         headers: buildAdminHeaders(),
       });
       if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(detail || t("syncFailed"));
+        const detail = await readApiError(response, t("syncFailed"));
+        throw new Error(detail);
       }
       const data = await response.json();
       setActionMessage(t("syncedWithValue", { count: data.count }));
@@ -291,7 +323,7 @@ export default function Home() {
       setSourceUser(null);
       await loadRepos(false);
     } catch (err) {
-      const message = err instanceof Error ? err.message : t("syncFailed");
+      const message = getErrorMessage(err, t("syncFailed"));
       setActionMessage(message);
       setActionStatus("error");
     } finally {
@@ -369,8 +401,8 @@ export default function Home() {
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(detail || t("classifyFailed"));
+      const detail = await readApiError(response, t("classifyFailed"));
+      throw new Error(detail);
     }
     return response.json();
   };
@@ -415,7 +447,7 @@ export default function Home() {
       await loadRepos(false);
       await loadStats();
     } catch (err) {
-      const message = err instanceof Error ? err.message : t("classifyFailed");
+      const message = getErrorMessage(err, t("classifyFailed"));
       setActionMessage(message);
       setActionStatus("error");
     } finally {
@@ -454,7 +486,7 @@ export default function Home() {
       await loadRepos(false);
       await loadStats();
     } catch (err) {
-      const message = err instanceof Error ? err.message : t("classifyFailed");
+      const message = getErrorMessage(err, t("classifyFailed"));
       setActionMessage(message);
       setActionStatus("error");
     } finally {
@@ -489,14 +521,14 @@ export default function Home() {
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(detail || t("classifyFailed"));
+        const detail = await readApiError(res, t("classifyFailed"));
+        throw new Error(detail);
       }
       await loadBackgroundStatus();
       setActionMessage(t("backgroundClassify"));
       setActionStatus("success");
     } catch (err) {
-      const message = err instanceof Error ? err.message : t("classifyFailed");
+      const message = getErrorMessage(err, t("classifyFailed"));
       setActionMessage(message);
       setActionStatus("error");
     }
@@ -511,14 +543,14 @@ export default function Home() {
         headers: buildAdminHeaders(),
       });
       if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(detail || t("classifyFailed"));
+        const detail = await readApiError(res, t("classifyFailed"));
+        throw new Error(detail);
       }
       await loadBackgroundStatus();
       setActionMessage(t("stop"));
       setActionStatus("success");
     } catch (err) {
-      const message = err instanceof Error ? err.message : t("classifyFailed");
+      const message = getErrorMessage(err, t("classifyFailed"));
       setActionMessage(message);
       setActionStatus("error");
     }
@@ -1053,9 +1085,9 @@ export default function Home() {
                   {t("search")}
                 </button>
               </div>
-              {error && (
+              {activeError && (
                 <p className="mt-3 text-xs text-copper">
-                  {t("apiErrorWithValue", { message: error })}
+                  {t("apiErrorWithValue", { message: activeError })}
                 </p>
               )}
               {loading && (

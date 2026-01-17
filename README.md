@@ -107,9 +107,14 @@ GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxx
 
 # 管理员 Token (用于保护手动触发同步等写操作接口)
 ADMIN_TOKEN=your_secure_password
+
+# (可选) GitHub Enterprise 或代理地址
+GITHUB_API_BASE_URL=https://api.github.com
 ```
 
 ### 3. 配置 AI 模型（三选一）
+
+> 说明：AI Provider / Model / Base URL / API Key 仅从后端 `.env` 读取，前端不会保存或下发这些敏感配置。
 
 **方案 A: OpenAI**
 
@@ -152,6 +157,8 @@ docker compose up -d
 
 ## 🛠️ 使用指南
 
+> 提示：Web 页面中的写操作需要 Admin token。请在 Settings 页面输入该 token（仅保存在浏览器本地）。
+
 ### 1. 首次数据同步
 
 服务启动后，后台调度器会根据 `CRON_SCHEDULE` 自动运行。若需立即同步：
@@ -191,7 +198,7 @@ python -m venv .venv
 pip install -r requirements.txt
 
 # 启动开发服务器
-uvicorn main:app --reload --port 4321
+uvicorn app.main:app --reload --port 4321
 ```
 
 ### 前端 (Next.js)
@@ -202,7 +209,7 @@ npm install
 
 # 启动开发服务器
 npm run dev
-# 访问 http://localhost:3000
+# 访问 http://localhost:1234
 ```
 
 ---

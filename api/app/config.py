@@ -17,6 +17,8 @@ class Settings:
     github_include_self: bool
     github_mode: str
     github_token: str
+    classify_mode: str
+    auto_classify_after_sync: bool
     ai_provider: str
     ai_api_key: str
     ai_model: str
@@ -52,6 +54,33 @@ def get_settings() -> Settings:
     def pick_nonempty(key: str, default: str) -> str:
         value = pick(key, default)
         return value if str(value).strip() else default
+
+    def pick_env(key: str, default: str) -> str:
+        return os.getenv(key, default)
+
+    def pick_env_nonempty(key: str, default: str) -> str:
+        value = os.getenv(key)
+        if value is None or not str(value).strip():
+            return default
+        return value
+
+    def pick_env_int(key: str, default: int) -> int:
+        raw = os.getenv(key)
+        if raw is None:
+            return default
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return default
+
+    def pick_env_float(key: str, default: float) -> float:
+        raw = os.getenv(key)
+        if raw is None:
+            return default
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return default
 
     def pick_int(key: str, default: int) -> int:
         if key in overrides:
@@ -91,6 +120,12 @@ def get_settings() -> Settings:
             return str(value).lower() in ("1", "true", "yes", "on")
         return os.getenv(key, str(default)).lower() in ("1", "true", "yes", "on")
 
+    def pick_classify_mode(default: str = "rules_then_ai") -> str:
+        value = str(pick("CLASSIFY_MODE", default)).strip().lower()
+        if value in ("rules_then_ai", "ai_only", "rules_only"):
+            return value
+        return default
+
     return Settings(
         github_username=pick("GITHUB_USERNAME", ""),
         github_target_username=pick("GITHUB_TARGET_USERNAME", ""),
@@ -98,21 +133,23 @@ def get_settings() -> Settings:
         github_include_self=pick_bool("GITHUB_INCLUDE_SELF", False),
         github_mode=pick("GITHUB_MODE", "merge"),
         github_token=os.getenv("GITHUB_TOKEN", ""),
-        ai_provider=pick("AI_PROVIDER", "none"),
+        classify_mode=pick_classify_mode(default="ai_only"),
+        auto_classify_after_sync=pick_bool("AUTO_CLASSIFY_AFTER_SYNC", True),
+        ai_provider=pick_env_nonempty("AI_PROVIDER", "none"),
         ai_api_key=os.getenv("AI_API_KEY", ""),
-        ai_model=pick("AI_MODEL", ""),
-        ai_base_url=pick("AI_BASE_URL", ""),
-        ai_headers_json=pick("AI_HEADERS_JSON", ""),
-        ai_temperature=pick_float("AI_TEMPERATURE", 0.2),
-        ai_max_tokens=pick_int("AI_MAX_TOKENS", 500),
-        ai_timeout=pick_int("AI_TIMEOUT", 30),
-        ai_taxonomy_path=pick_nonempty(
+        ai_model=pick_env("AI_MODEL", ""),
+        ai_base_url=pick_env("AI_BASE_URL", ""),
+        ai_headers_json=pick_env("AI_HEADERS_JSON", ""),
+        ai_temperature=pick_env_float("AI_TEMPERATURE", 0.2),
+        ai_max_tokens=pick_env_int("AI_MAX_TOKENS", 500),
+        ai_timeout=pick_env_int("AI_TIMEOUT", 30),
+        ai_taxonomy_path=pick_env_nonempty(
             "AI_TAXONOMY_PATH", str(API_ROOT / "config" / "taxonomy.yaml")
         ),
         rules_json=pick("RULES_JSON", ""),
         sync_cron=pick("SYNC_CRON", "0 */6 * * *"),
         sync_timeout=pick_int("SYNC_TIMEOUT", 30),
         database_url=os.getenv("DATABASE_URL", "sqlite:////data/app.db"),
-        cors_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000"),
+        cors_origins=os.getenv("CORS_ORIGINS", "http://localhost:1234"),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
     )
