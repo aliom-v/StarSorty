@@ -1,12 +1,49 @@
+import asyncio
+import functools
 import json
+import logging
 import os
+import random
 import sqlite3
-from contextlib import contextmanager
-from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from .config import get_settings
+import aiosqlite
 
+from .config import get_settings
+from .models import RepoBase
+
+logger = logging.getLogger("starsorty.db")
+_pool: "SQLitePool | None" = None
+
+
+def _retry_on_lock(
+    max_attempts: int = 5,
+    base_delay: float = 0.05,
+    max_delay: float = 0.5,
+) -> callable:
+    def decorator(func: callable) -> callable:
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            attempt = 0
+            while True:
+                try:
+                    return await func(*args, **kwargs)
+                except sqlite3.OperationalError as exc:
+                    message = str(exc).lower()
+                    if "database is locked" not in message and "database table is locked" not in message:
+                        raise
+                    if attempt >= max_attempts - 1:
+                        raise
+                    delay = min(max_delay, base_delay * (2**attempt))
+                    jitter = random.uniform(0, delay)
+                    logger.warning("SQLite locked, retrying in %.2fs", delay + jitter)
+                    await asyncio.sleep(delay + jitter)
+                    attempt += 1
+        return wrapper
+
+    return decorator
 
 def _sqlite_path(database_url: str) -> str:
     if database_url.startswith("sqlite:////"):
@@ -22,22 +59,72 @@ def _ensure_parent_dir(path: str) -> None:
         os.makedirs(parent, exist_ok=True)
 
 
-@contextmanager
-def get_connection():
+class SQLitePool:
+    def __init__(self, db_path: str, size: int) -> None:
+        self._db_path = db_path
+        self._size = max(1, size)
+        self._pool: asyncio.Queue[aiosqlite.Connection] = asyncio.Queue(maxsize=self._size)
+
+    async def init(self) -> None:
+        for _ in range(self._size):
+            conn = await aiosqlite.connect(self._db_path, timeout=30)
+            conn.row_factory = aiosqlite.Row
+            await self._pool.put(conn)
+
+    async def close(self) -> None:
+        while not self._pool.empty():
+            conn = await self._pool.get()
+            await conn.close()
+
+    @asynccontextmanager
+    async def connection(self) -> aiosqlite.Connection:
+        conn = await self._pool.get()
+        try:
+            yield conn
+        finally:
+            await self._pool.put(conn)
+
+
+async def init_db_pool(pool_size: Optional[int] = None) -> None:
+    global _pool
+    if pool_size is None:
+        pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
     settings = get_settings()
     db_path = _sqlite_path(settings.database_url)
     _ensure_parent_dir(db_path)
-    conn = sqlite3.connect(db_path, timeout=30)
-    conn.row_factory = sqlite3.Row
-    try:
+    pool = SQLitePool(db_path, pool_size)
+    await pool.init()
+    _pool = pool
+
+
+async def close_db_pool() -> None:
+    global _pool
+    if _pool:
+        await _pool.close()
+    _pool = None
+
+
+@asynccontextmanager
+async def get_connection() -> aiosqlite.Connection:
+    if _pool is None:
+        settings = get_settings()
+        db_path = _sqlite_path(settings.database_url)
+        _ensure_parent_dir(db_path)
+        conn = await aiosqlite.connect(db_path, timeout=30)
+        conn.row_factory = aiosqlite.Row
+        try:
+            yield conn
+        finally:
+            await conn.close()
+        return
+    async with _pool.connection() as conn:
         yield conn
-    finally:
-        conn.close()
 
 
-def init_db() -> None:
-    with get_connection() as conn:
-        conn.execute(
+@_retry_on_lock()
+async def init_db() -> None:
+    async with get_connection() as conn:
+        await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS sync_status (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -47,7 +134,7 @@ def init_db() -> None:
             )
             """
         )
-        conn.execute(
+        await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS repos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,11 +165,12 @@ def init_db() -> None:
                 readme_summary TEXT,
                 readme_fetched_at TEXT,
                 readme_last_attempt_at TEXT,
-                readme_failures INTEGER
+                readme_failures INTEGER,
+                readme_empty INTEGER
             )
             """
         )
-        conn.execute(
+        await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS app_settings (
                 key TEXT PRIMARY KEY,
@@ -91,7 +179,7 @@ def init_db() -> None:
             )
             """
         )
-        conn.execute(
+        await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS override_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,36 +192,58 @@ def init_db() -> None:
             )
             """
         )
-        _ensure_columns(conn)
-        conn.execute(
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tasks (
+                task_id TEXT PRIMARY KEY,
+                task_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                message TEXT,
+                result TEXT,
+                cursor_full_name TEXT,
+                payload TEXT,
+                retry_from_task_id TEXT
+            )
+            """
+        )
+        await _ensure_columns(conn)
+        await _ensure_task_columns(conn)
+        await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_full_name ON repos(full_name)"
         )
-        conn.execute(
+        await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_language ON repos(language)"
         )
-        conn.execute(
+        await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_category ON repos(category)"
         )
-        conn.execute(
+        await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_override_category ON repos(override_category)"
         )
-        conn.execute(
+        await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_override_history_full_name ON override_history(full_name)"
         )
-        conn.execute(
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_status_updated_at ON tasks(status, updated_at)"
+        )
+        await conn.execute(
             """
             INSERT OR IGNORE INTO sync_status (id, last_sync_at, last_result, last_message)
             VALUES (1, NULL, NULL, NULL)
             """
         )
-        conn.commit()
+        await conn.commit()
 
 
-def get_sync_status() -> dict:
-    with get_connection() as conn:
-        row = conn.execute(
+async def get_sync_status() -> dict:
+    async with get_connection() as conn:
+        row = await (await conn.execute(
             "SELECT last_sync_at, last_result, last_message FROM sync_status WHERE id = 1"
-        ).fetchone()
+        )).fetchone()
         if row is None:
             return {"last_sync_at": None, "last_result": None, "last_message": None}
         return {
@@ -143,10 +253,11 @@ def get_sync_status() -> dict:
         }
 
 
-def update_sync_status(result: str, message: str) -> str:
+@_retry_on_lock()
+async def update_sync_status(result: str, message: str) -> str:
     timestamp = datetime.now(timezone.utc).isoformat()
-    with get_connection() as conn:
-        conn.execute(
+    async with get_connection() as conn:
+        await conn.execute(
             """
             UPDATE sync_status
             SET last_sync_at = ?, last_result = ?, last_message = ?
@@ -154,14 +265,167 @@ def update_sync_status(result: str, message: str) -> str:
             """,
             (timestamp, result, message),
         )
-        conn.commit()
+        await conn.commit()
     return timestamp
 
 
-def _ensure_columns(conn: sqlite3.Connection) -> None:
-    existing = {
-        row["name"] for row in conn.execute("PRAGMA table_info(repos)").fetchall()
+@_retry_on_lock()
+async def create_task(
+    task_id: str,
+    task_type: str,
+    status: str = "queued",
+    message: str | None = None,
+    payload: dict | None = None,
+    retry_from_task_id: str | None = None,
+) -> None:
+    timestamp = datetime.now(timezone.utc).isoformat()
+    payload_json = json.dumps(payload) if payload is not None else None
+    async with get_connection() as conn:
+        await conn.execute(
+            """
+            INSERT INTO tasks (
+                task_id,
+                task_type,
+                status,
+                created_at,
+                updated_at,
+                message,
+                payload,
+                retry_from_task_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_id,
+                task_type,
+                status,
+                timestamp,
+                timestamp,
+                message,
+                payload_json,
+                retry_from_task_id,
+            ),
+        )
+        await conn.commit()
+
+
+@_retry_on_lock()
+async def update_task(
+    task_id: str,
+    status: str,
+    *,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+    message: str | None = None,
+    result: dict | None = None,
+    cursor_full_name: str | None = None,
+) -> None:
+    fields = ["status = ?", "updated_at = ?"]
+    params: List[Any] = [status, datetime.now(timezone.utc).isoformat()]
+    if started_at is not None:
+        fields.append("started_at = ?")
+        params.append(started_at)
+    if finished_at is not None:
+        fields.append("finished_at = ?")
+        params.append(finished_at)
+    if message is not None:
+        fields.append("message = ?")
+        params.append(message)
+    if result is not None:
+        fields.append("result = ?")
+        params.append(json.dumps(result))
+    if cursor_full_name is not None:
+        fields.append("cursor_full_name = ?")
+        params.append(cursor_full_name)
+    if not fields:
+        return
+    params.append(task_id)
+    async with get_connection() as conn:
+        await conn.execute(
+            f"UPDATE tasks SET {', '.join(fields)} WHERE task_id = ?",
+            params,
+        )
+        await conn.commit()
+
+
+async def get_task(task_id: str) -> Dict[str, Any] | None:
+    async with get_connection() as conn:
+        row = await (await conn.execute(
+            """
+            SELECT
+                task_id,
+                task_type,
+                status,
+                created_at,
+                updated_at,
+                started_at,
+                finished_at,
+                message,
+                result,
+                cursor_full_name,
+                payload,
+                retry_from_task_id
+            FROM tasks
+            WHERE task_id = ?
+            """,
+            (task_id,),
+        )).fetchone()
+    if not row:
+        return None
+    result: dict | None = None
+    raw_result = row["result"]
+    if raw_result:
+        try:
+            parsed = json.loads(raw_result)
+            if isinstance(parsed, dict):
+                result = parsed
+        except json.JSONDecodeError:
+            result = None
+    return {
+        "task_id": row["task_id"],
+        "task_type": row["task_type"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "started_at": row["started_at"],
+        "finished_at": row["finished_at"],
+        "message": row["message"],
+        "result": result,
+        "cursor_full_name": row["cursor_full_name"],
+        "payload": _load_json_object(row["payload"]),
+        "retry_from_task_id": row["retry_from_task_id"],
     }
+
+
+@_retry_on_lock()
+async def reset_stale_tasks(max_age_minutes: int = 10) -> int:
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+    cutoff_iso = cutoff.isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
+    note = "stale task reset at startup"
+    async with get_connection() as conn:
+        cur = await conn.execute(
+            """
+            UPDATE tasks
+            SET status = ?,
+                finished_at = ?,
+                updated_at = ?,
+                message = CASE
+                    WHEN message IS NULL OR message = '' THEN ?
+                    ELSE message
+                END
+            WHERE status IN ('running', 'processing')
+              AND COALESCE(updated_at, created_at) < ?
+            """,
+            ("failed", timestamp, timestamp, note, cutoff_iso),
+        )
+        await conn.commit()
+        return int(cur.rowcount or 0)
+
+
+async def _ensure_columns(conn: aiosqlite.Connection) -> None:
+    cursor = await conn.execute("PRAGMA table_info(repos)")
+    rows = await cursor.fetchall()
+    existing = {row["name"] for row in rows}
     columns = [
         ("star_users", "star_users TEXT"),
         ("category", "category TEXT"),
@@ -179,16 +443,31 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         ("readme_fetched_at", "readme_fetched_at TEXT"),
         ("readme_last_attempt_at", "readme_last_attempt_at TEXT"),
         ("readme_failures", "readme_failures INTEGER"),
+        ("readme_empty", "readme_empty INTEGER"),
     ]
     for name, ddl in columns:
         if name not in existing:
-            conn.execute(f"ALTER TABLE repos ADD COLUMN {ddl}")
+            await conn.execute(f"ALTER TABLE repos ADD COLUMN {ddl}")
 
 
-def upsert_repos(repos: List[Dict[str, Any]]) -> int:
+async def _ensure_task_columns(conn: aiosqlite.Connection) -> None:
+    cursor = await conn.execute("PRAGMA table_info(tasks)")
+    rows = await cursor.fetchall()
+    existing = {row["name"] for row in rows}
+    columns = [
+        ("payload", "payload TEXT"),
+        ("retry_from_task_id", "retry_from_task_id TEXT"),
+    ]
+    for name, ddl in columns:
+        if name not in existing:
+            await conn.execute(f"ALTER TABLE tasks ADD COLUMN {ddl}")
+
+
+@_retry_on_lock()
+async def upsert_repos(repos: List[Dict[str, Any]]) -> int:
     if not repos:
         return 0
-    existing_users = _load_star_users(repos)
+    existing_users = await _load_star_users(repos)
 
     for repo in repos:
         full_name = repo.get("full_name")
@@ -198,8 +477,8 @@ def upsert_repos(repos: List[Dict[str, Any]]) -> int:
         new_users = set(repo.get("star_users") or [])
         merged = sorted(current_users | new_users)
         repo["star_users"] = merged
-    with get_connection() as conn:
-        conn.executemany(
+    async with get_connection() as conn:
+        await conn.executemany(
             """
             INSERT INTO repos (
                 full_name, name, owner, html_url, description, language,
@@ -233,7 +512,7 @@ def upsert_repos(repos: List[Dict[str, Any]]) -> int:
                 for repo in repos
             ],
         )
-        conn.commit()
+        await conn.commit()
     return len(repos)
 
 
@@ -255,23 +534,35 @@ def _load_json_list_optional(value: Optional[str]) -> Optional[List[str]]:
     return _load_json_list(value)
 
 
-def _load_star_users(repos: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+def _load_json_object(value: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not value:
+        return None
+    try:
+        loaded = json.loads(value)
+        if isinstance(loaded, dict):
+            return loaded
+    except json.JSONDecodeError:
+        return None
+    return None
+
+
+async def _load_star_users(repos: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     names = [repo.get("full_name") for repo in repos if repo.get("full_name")]
     if not names:
         return {}
     placeholders = ",".join("?" for _ in names)
-    with get_connection() as conn:
-        rows = conn.execute(
+    async with get_connection() as conn:
+        rows = await (await conn.execute(
             f"SELECT full_name, star_users FROM repos WHERE full_name IN ({placeholders})",
             names,
-        ).fetchall()
+        )).fetchall()
     existing: Dict[str, List[str]] = {}
     for row in rows:
         existing[row["full_name"]] = _load_json_list(row["star_users"])
     return existing
 
 
-def _row_to_repo(row: sqlite3.Row, include_internal: bool = False) -> Dict[str, Any]:
+def _row_to_repo(row: aiosqlite.Row, include_internal: bool = False) -> RepoBase:
     topics = _load_json_list(row["topics"])
     star_users = _load_json_list(row["star_users"])
     ai_tags = _load_json_list(row["ai_tags"])
@@ -279,44 +570,45 @@ def _row_to_repo(row: sqlite3.Row, include_internal: bool = False) -> Dict[str, 
     effective_category = row["override_category"] or row["category"]
     effective_subcategory = row["override_subcategory"] or row["subcategory"]
     effective_tags = ai_tags if override_tags is None else override_tags
-    repo = {
-        "full_name": row["full_name"],
-        "name": row["name"],
-        "owner": row["owner"],
-        "html_url": row["html_url"],
-        "description": row["description"],
-        "language": row["language"],
-        "stargazers_count": row["stargazers_count"],
-        "forks_count": row["forks_count"],
-        "topics": topics,
-        "star_users": star_users,
-        "category": effective_category,
-        "subcategory": effective_subcategory,
-        "tags": effective_tags,
-        "ai_category": row["category"],
-        "ai_subcategory": row["subcategory"],
-        "ai_confidence": row["ai_confidence"],
-        "ai_tags": ai_tags,
-        "ai_provider": row["ai_provider"],
-        "ai_model": row["ai_model"],
-        "ai_updated_at": row["ai_updated_at"],
-        "override_category": row["override_category"],
-        "override_subcategory": row["override_subcategory"],
-        "override_tags": override_tags or [],
-        "override_note": row["override_note"],
-        "readme_summary": row["readme_summary"],
-        "readme_fetched_at": row["readme_fetched_at"],
-        "pushed_at": row["pushed_at"],
-        "updated_at": row["updated_at"],
-        "starred_at": row["starred_at"],
-    }
-    if include_internal:
-        repo["readme_last_attempt_at"] = row["readme_last_attempt_at"]
-        repo["readme_failures"] = row["readme_failures"] or 0
+    repo = RepoBase(
+        full_name=row["full_name"],
+        name=row["name"],
+        owner=row["owner"],
+        html_url=row["html_url"],
+        description=row["description"],
+        language=row["language"],
+        stargazers_count=row["stargazers_count"],
+        forks_count=row["forks_count"],
+        topics=topics,
+        star_users=star_users,
+        category=effective_category,
+        subcategory=effective_subcategory,
+        tags=effective_tags,
+        ai_category=row["category"],
+        ai_subcategory=row["subcategory"],
+        ai_confidence=row["ai_confidence"],
+        ai_tags=ai_tags,
+        ai_provider=row["ai_provider"],
+        ai_model=row["ai_model"],
+        ai_updated_at=row["ai_updated_at"],
+        override_category=row["override_category"],
+        override_subcategory=row["override_subcategory"],
+        override_tags=override_tags or [],
+        override_note=row["override_note"],
+        readme_summary=row["readme_summary"],
+        readme_fetched_at=row["readme_fetched_at"],
+        pushed_at=row["pushed_at"],
+        updated_at=row["updated_at"],
+        starred_at=row["starred_at"],
+        readme_last_attempt_at=row["readme_last_attempt_at"] if include_internal else None,
+        readme_failures=(row["readme_failures"] or 0) if include_internal else None,
+        readme_empty=bool(row["readme_empty"] or 0) if include_internal else None,
+    )
     return repo
 
 
-def prune_star_user(
+@_retry_on_lock()
+async def prune_star_user(
     username: str, keep_full_names: List[str], delete_orphans: bool = True
 ) -> Tuple[int, int]:
     if not username:
@@ -324,11 +616,11 @@ def prune_star_user(
     keep_set = set(keep_full_names)
     removed = 0
     deleted = 0
-    with get_connection() as conn:
-        rows = conn.execute(
+    async with get_connection() as conn:
+        rows = await (await conn.execute(
             "SELECT full_name, star_users FROM repos WHERE star_users LIKE ?",
             (f"%\"{username}\"%",),
-        ).fetchall()
+        )).fetchall()
         for row in rows:
             full_name = row["full_name"]
             if full_name in keep_set:
@@ -338,19 +630,20 @@ def prune_star_user(
                 continue
             users = [user for user in users if user != username]
             if not users and delete_orphans:
-                conn.execute("DELETE FROM repos WHERE full_name = ?", (full_name,))
+                await conn.execute("DELETE FROM repos WHERE full_name = ?", (full_name,))
                 deleted += 1
             else:
-                conn.execute(
+                await conn.execute(
                     "UPDATE repos SET star_users = ? WHERE full_name = ?",
                     (json.dumps(users), full_name),
                 )
                 removed += 1
-        conn.commit()
+        await conn.commit()
     return (removed, deleted)
 
 
-def prune_users_not_in(
+@_retry_on_lock()
+async def prune_users_not_in(
     allowed_users: List[str], delete_orphans: bool = True
 ) -> Tuple[int, int]:
     allowed_set = {user for user in allowed_users if user}
@@ -358,27 +651,27 @@ def prune_users_not_in(
         return (0, 0)
     updated = 0
     deleted = 0
-    with get_connection() as conn:
-        rows = conn.execute("SELECT full_name, star_users FROM repos").fetchall()
+    async with get_connection() as conn:
+        rows = await (await conn.execute("SELECT full_name, star_users FROM repos")).fetchall()
         for row in rows:
             users = _load_json_list(row["star_users"])
             filtered = [user for user in users if user in allowed_set]
             if filtered == users:
                 continue
             if not filtered and delete_orphans:
-                conn.execute("DELETE FROM repos WHERE full_name = ?", (row["full_name"],))
+                await conn.execute("DELETE FROM repos WHERE full_name = ?", (row["full_name"],))
                 deleted += 1
             else:
-                conn.execute(
+                await conn.execute(
                     "UPDATE repos SET star_users = ? WHERE full_name = ?",
                     (json.dumps(filtered), row["full_name"]),
                 )
                 updated += 1
-        conn.commit()
+        await conn.commit()
     return (updated, deleted)
 
 
-def list_repos(
+async def list_repos(
     q: Optional[str] = None,
     language: Optional[str] = None,
     min_stars: Optional[int] = None,
@@ -387,7 +680,7 @@ def list_repos(
     star_user: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
-) -> Tuple[int, List[Dict[str, Any]]]:
+) -> Tuple[int, List[RepoBase]]:
     clauses = []
     params: List[Any] = []
 
@@ -426,11 +719,11 @@ def list_repos(
     if clauses:
         where_sql = "WHERE " + " AND ".join(clauses)
 
-    with get_connection() as conn:
-        total = conn.execute(
+    async with get_connection() as conn:
+        total = (await (await conn.execute(
             f"SELECT COUNT(*) FROM repos {where_sql}", params
-        ).fetchone()[0]
-        rows = conn.execute(
+        )).fetchone())[0]
+        rows = await (await conn.execute(
             f"""
             SELECT
                 full_name, name, owner, html_url, description, language,
@@ -445,13 +738,13 @@ def list_repos(
             LIMIT ? OFFSET ?
             """,
             params + [limit, offset],
-        ).fetchall()
+        )).fetchall()
     return total, [_row_to_repo(row) for row in rows]
 
 
-def get_repo(full_name: str) -> Optional[Dict[str, Any]]:
-    with get_connection() as conn:
-        row = conn.execute(
+async def get_repo(full_name: str) -> Optional[RepoBase]:
+    async with get_connection() as conn:
+        row = await (await conn.execute(
             """
             SELECT
                 full_name, name, owner, html_url, description, language,
@@ -464,13 +757,14 @@ def get_repo(full_name: str) -> Optional[Dict[str, Any]]:
             WHERE full_name = ?
             """,
             (full_name,),
-        ).fetchone()
+        )).fetchone()
         if not row:
             return None
     return _row_to_repo(row)
 
 
-def update_override(full_name: str, updates: Dict[str, Any]) -> bool:
+@_retry_on_lock()
+async def update_override(full_name: str, updates: Dict[str, Any]) -> bool:
     if not updates:
         return False
 
@@ -497,23 +791,23 @@ def update_override(full_name: str, updates: Dict[str, Any]) -> bool:
         return False
 
     params.append(full_name)
-    with get_connection() as conn:
-        cur = conn.execute(
+    async with get_connection() as conn:
+        cur = await conn.execute(
             f"UPDATE repos SET {', '.join(sets)} WHERE full_name = ?",
             params,
         )
         if cur.rowcount > 0:
             timestamp = datetime.now(timezone.utc).isoformat()
-            row = conn.execute(
+            row = await (await conn.execute(
                 """
                 SELECT override_category, override_subcategory, override_tags, override_note
                 FROM repos
                 WHERE full_name = ?
                 """,
                 (full_name,),
-            ).fetchone()
+            )).fetchone()
             if row:
-                conn.execute(
+                await conn.execute(
                     """
                     INSERT INTO override_history
                         (full_name, category, subcategory, tags, note, updated_at)
@@ -528,11 +822,12 @@ def update_override(full_name: str, updates: Dict[str, Any]) -> bool:
                         timestamp,
                     ),
                 )
-        conn.commit()
+        await conn.commit()
         return cur.rowcount > 0
 
 
-def update_classification(
+@_retry_on_lock()
+async def update_classification(
     full_name: str,
     category: str,
     subcategory: str,
@@ -542,8 +837,8 @@ def update_classification(
     model: str,
 ) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
-    with get_connection() as conn:
-        conn.execute(
+    async with get_connection() as conn:
+        await conn.execute(
             """
             UPDATE repos
             SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?,
@@ -561,25 +856,37 @@ def update_classification(
                 full_name,
             ),
         )
-        conn.commit()
+        await conn.commit()
 
 
-def record_readme_fetch(full_name: str, summary: Optional[str], success: bool) -> None:
+@_retry_on_lock()
+async def record_readme_fetch(full_name: str, summary: Optional[str], success: bool) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
-    with get_connection() as conn:
+    async with get_connection() as conn:
         if success:
-            stored_summary = summary if summary else None
-            conn.execute(
-                """
-                UPDATE repos
-                SET readme_summary = ?, readme_fetched_at = ?, readme_last_attempt_at = ?,
-                    readme_failures = 0
-                WHERE full_name = ?
-                """,
-                (stored_summary, timestamp, timestamp, full_name),
-            )
+            if summary:
+                await conn.execute(
+                    """
+                    UPDATE repos
+                    SET readme_summary = ?, readme_fetched_at = ?, readme_last_attempt_at = ?,
+                        readme_failures = 0, readme_empty = 0
+                    WHERE full_name = ?
+                    """,
+                    (summary, timestamp, timestamp, full_name),
+                )
+            else:
+                await conn.execute(
+                    """
+                    UPDATE repos
+                    SET readme_fetched_at = ?, readme_last_attempt_at = ?,
+                        readme_failures = 0, readme_empty = 1
+                    WHERE full_name = ?
+                      AND (readme_summary IS NULL OR readme_summary = '')
+                    """,
+                    (timestamp, timestamp, full_name),
+                )
         else:
-            conn.execute(
+            await conn.execute(
                 """
                 UPDATE repos
                 SET readme_last_attempt_at = ?, readme_failures = COALESCE(readme_failures, 0) + 1
@@ -587,16 +894,32 @@ def record_readme_fetch(full_name: str, summary: Optional[str], success: bool) -
                 """,
                 (timestamp, full_name),
             )
-        conn.commit()
+        await conn.commit()
 
 
-def select_repos_for_classification(limit: int, force: bool) -> List[Dict[str, Any]]:
+async def select_repos_for_classification(
+    limit: int, force: bool, after_full_name: Optional[str] = None
+) -> List[RepoBase]:
     where = "WHERE NULLIF(override_category, '') IS NULL"
     if not force:
         where += " AND (category IS NULL OR ai_updated_at IS NULL OR ai_updated_at < pushed_at)"
+    params: List[Any] = []
+    order_by = """
+        ORDER BY
+            category IS NULL DESC,
+            ai_updated_at IS NULL DESC,
+            pushed_at IS NULL,
+            pushed_at DESC,
+            stargazers_count DESC
+    """
+    if force:
+        order_by = "ORDER BY full_name ASC"
+        if after_full_name:
+            where += " AND full_name > ?"
+            params.append(after_full_name)
     effective_limit = limit if limit and limit > 0 else -1
-    with get_connection() as conn:
-        rows = conn.execute(
+    async with get_connection() as conn:
+        rows = await (await conn.execute(
             f"""
             SELECT
                 full_name, name, owner, html_url, description, language,
@@ -605,41 +928,44 @@ def select_repos_for_classification(limit: int, force: bool) -> List[Dict[str, A
                 category, subcategory, ai_confidence, ai_tags, ai_provider, ai_model,
                 ai_updated_at, override_category, override_subcategory, override_tags,
                 override_note, readme_summary, readme_fetched_at, readme_last_attempt_at,
-                readme_failures
+                readme_failures, readme_empty
             FROM repos
             {where}
-            ORDER BY
-                category IS NULL DESC,
-                ai_updated_at IS NULL DESC,
-                pushed_at IS NULL,
-                pushed_at DESC,
-                stargazers_count DESC
+            {order_by}
             LIMIT ?
             """,
-            (effective_limit,),
-        ).fetchall()
+            params + [effective_limit],
+        )).fetchall()
     return [_row_to_repo(row, include_internal=True) for row in rows]
 
 
-def count_unclassified_repos() -> int:
+async def count_unclassified_repos() -> int:
     where = "WHERE NULLIF(override_category, '') IS NULL AND category IS NULL"
-    with get_connection() as conn:
-        row = conn.execute(f"SELECT COUNT(*) FROM repos {where}").fetchone()
+    async with get_connection() as conn:
+        row = await (await conn.execute(f"SELECT COUNT(*) FROM repos {where}")).fetchone()
     return int(row[0] or 0)
 
 
-def count_repos_for_classification(force: bool) -> int:
+async def count_repos_for_classification(force: bool, after_full_name: Optional[str] = None) -> int:
     where = "WHERE NULLIF(override_category, '') IS NULL"
     if not force:
         where += " AND (category IS NULL OR ai_updated_at IS NULL OR ai_updated_at < pushed_at)"
-    with get_connection() as conn:
-        row = conn.execute(f"SELECT COUNT(*) FROM repos {where}").fetchone()
+    elif after_full_name:
+        where += " AND full_name > ?"
+    params: List[Any] = []
+    if force and after_full_name:
+        params.append(after_full_name)
+    async with get_connection() as conn:
+        row = await (await conn.execute(
+            f"SELECT COUNT(*) FROM repos {where}",
+            params,
+        )).fetchone()
     return int(row[0] or 0)
 
 
-def list_override_history(full_name: str) -> List[Dict[str, Any]]:
-    with get_connection() as conn:
-        rows = conn.execute(
+async def list_override_history(full_name: str) -> List[Dict[str, Any]]:
+    async with get_connection() as conn:
+        rows = await (await conn.execute(
             """
             SELECT category, subcategory, tags, note, updated_at
             FROM override_history
@@ -647,7 +973,7 @@ def list_override_history(full_name: str) -> List[Dict[str, Any]]:
             ORDER BY updated_at DESC, id DESC
             """,
             (full_name,),
-        ).fetchall()
+        )).fetchall()
     results: List[Dict[str, Any]] = []
     for row in rows:
         results.append(
@@ -662,13 +988,13 @@ def list_override_history(full_name: str) -> List[Dict[str, Any]]:
     return results
 
 
-def get_repo_stats() -> Dict[str, Any]:
-    with get_connection() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM repos").fetchone()[0]
-        unclassified = conn.execute(
+async def get_repo_stats() -> Dict[str, Any]:
+    async with get_connection() as conn:
+        total = (await (await conn.execute("SELECT COUNT(*) FROM repos")).fetchone())[0]
+        unclassified = (await (await conn.execute(
             "SELECT COUNT(*) FROM repos WHERE override_category IS NULL AND category IS NULL"
-        ).fetchone()[0]
-        category_rows = conn.execute(
+        )).fetchone())[0]
+        category_rows = await (await conn.execute(
             """
             SELECT
                 COALESCE(NULLIF(override_category, ''), NULLIF(category, ''), 'uncategorized') AS name,
@@ -678,11 +1004,11 @@ def get_repo_stats() -> Dict[str, Any]:
                 COALESCE(NULLIF(override_category, ''), NULLIF(category, ''), 'uncategorized')
             ORDER BY count DESC, name ASC
             """
-        ).fetchall()
-        tag_rows = conn.execute(
+        )).fetchall()
+        tag_rows = await (await conn.execute(
             "SELECT override_tags, ai_tags FROM repos"
-        ).fetchall()
-        user_rows = conn.execute("SELECT star_users FROM repos").fetchall()
+        )).fetchall()
+        user_rows = await (await conn.execute("SELECT star_users FROM repos")).fetchall()
 
     category_counts = [
         {"name": row["name"], "count": int(row["count"] or 0)}

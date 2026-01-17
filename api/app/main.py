@@ -1,13 +1,13 @@
+import asyncio
 import logging
 import os
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from threading import Event, Lock, Thread
 from typing import Dict, List, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -15,47 +15,84 @@ from .config import get_settings
 from .db import (
     count_unclassified_repos,
     count_repos_for_classification,
+    create_task,
     get_repo_stats,
     get_repo,
+    get_task,
     get_sync_status,
     init_db,
+    init_db_pool,
+    close_db_pool,
     list_override_history,
     list_repos,
     prune_star_user,
     prune_users_not_in,
     record_readme_fetch,
+    reset_stale_tasks,
     select_repos_for_classification,
+    update_task,
     update_classification,
     update_override,
     update_sync_status,
     upsert_repos,
 )
-from .github import fetch_readme_summary, fetch_starred_repos_for_user, resolve_targets
-from .ai_client import classify_repo_with_retry
+from .github import GitHubClient
+from .models import RepoBase
+from .ai_client import AIClient
 from .taxonomy import load_taxonomy, validate_classification
 from .rules import load_rules, match_rule
 from .settings_store import write_settings
+import httpx
+import uuid
 
-app = FastAPI(title="StarSorty API", version="0.1.0")
+API_SEMAPHORE_LIMIT = int(os.getenv("API_SEMAPHORE_LIMIT", "5"))
+TASK_STALE_MINUTES = int(os.getenv("TASK_STALE_MINUTES", "10"))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db_pool()
+    await init_db()
+    stale = await reset_stale_tasks(TASK_STALE_MINUTES)
+    if stale:
+        logger.warning("Reset %s stale tasks at startup", stale)
+    github_http = httpx.AsyncClient()
+    ai_http = httpx.AsyncClient()
+    app.state.github_client = GitHubClient(github_http, asyncio.Semaphore(API_SEMAPHORE_LIMIT))
+    app.state.ai_client = AIClient(ai_http, asyncio.Semaphore(API_SEMAPHORE_LIMIT))
+    try:
+        yield
+    finally:
+        await github_http.aclose()
+        await ai_http.aclose()
+        await close_db_pool()
+
+
+app = FastAPI(title="StarSorty API", version="0.1.0", lifespan=lifespan)
 settings = get_settings()
 logger = logging.getLogger("starsorty.api")
 DEFAULT_CLASSIFY_BATCH_SIZE = int(os.getenv("CLASSIFY_BATCH_SIZE", "50"))
 DEFAULT_CLASSIFY_CONCURRENCY = int(os.getenv("CLASSIFY_CONCURRENCY", "3"))
 CLASSIFY_CONCURRENCY_MAX = int(os.getenv("CLASSIFY_CONCURRENCY_MAX", "10"))
 CLASSIFY_BATCH_DELAY_MS = int(os.getenv("CLASSIFY_BATCH_DELAY_MS", "0"))
+AI_CLASSIFY_BATCH_SIZE = int(os.getenv("AI_CLASSIFY_BATCH_SIZE", "5"))
 
 origins: List[str] = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
+allow_credentials = True
+if not origins or "*" in origins:
+    allow_credentials = False
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins or ["*"],
-    allow_credentials=True,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"]
 )
 
-classification_lock = Lock()
-classification_stop = Event()
+classification_lock = asyncio.Lock()
+classification_stop = asyncio.Event()
+classification_task: asyncio.Task | None = None
 classification_state = {
     "running": False,
     "started_at": None,
@@ -66,6 +103,7 @@ classification_state = {
     "last_error": None,
     "batch_size": 0,
     "concurrency": 0,
+    "task_id": None,
 }
 
 
@@ -131,21 +169,21 @@ def _resolve_classify_context(
     raise ValueError("AI_PROVIDER or RULES_JSON is required")
 
 
-def _start_background_classify(
+async def _start_background_classify(
     payload: "BackgroundClassifyRequest",
+    task_id: str,
     allow_fallback: bool = False,
 ) -> bool:
-    with classification_lock:
+    global classification_task
+    async with classification_lock:
         if classification_state["running"]:
             return False
         classification_stop.clear()
         classification_state["running"] = True
-        thread = Thread(
-            target=_background_classify_loop,
-            args=(payload, allow_fallback),
-            daemon=True,
+        classification_state["task_id"] = task_id
+        classification_task = asyncio.create_task(
+            _background_classify_loop(payload, allow_fallback, task_id)
         )
-        thread.start()
     return True
 
 
@@ -159,6 +197,25 @@ class StatusResponse(BaseModel):
     last_sync_at: str | None
     last_result: str | None
     last_message: str | None
+
+
+class TaskQueuedResponse(BaseModel):
+    task_id: str
+    status: str
+    message: str | None = None
+
+
+class TaskStatusResponse(BaseModel):
+    task_id: str
+    status: str
+    task_type: str
+    created_at: str
+    started_at: str | None
+    finished_at: str | None
+    message: str | None
+    result: dict | None
+    cursor_full_name: str | None = None
+    retry_from_task_id: str | None = None
 
 
 class RepoOut(BaseModel):
@@ -236,12 +293,14 @@ class ClassifyResponse(BaseModel):
 
 class BackgroundClassifyRequest(ClassifyRequest):
     concurrency: Optional[int] = None
+    cursor_full_name: Optional[str] = None
 
 
 class BackgroundClassifyResponse(BaseModel):
     started: bool
     running: bool
     message: str
+    task_id: str | None = None
 
 
 class BackgroundClassifyStatusResponse(BaseModel):
@@ -254,6 +313,7 @@ class BackgroundClassifyStatusResponse(BaseModel):
     last_error: str | None
     batch_size: int
     concurrency: int
+    task_id: str | None = None
 
 
 class ReadmeResponse(BaseModel):
@@ -318,74 +378,207 @@ class StatsResponse(BaseModel):
     users: List[StatsItem]
 
 
-@app.on_event("startup")
-def startup_event() -> None:
-    init_db()
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _register_task(
+    task_id: str,
+    task_type: str,
+    message: str | None = None,
+    payload: dict | None = None,
+    retry_from_task_id: str | None = None,
+) -> None:
+    await create_task(
+        task_id,
+        task_type,
+        status="queued",
+        message=message,
+        payload=payload,
+        retry_from_task_id=retry_from_task_id,
+    )
+
+
+async def _set_task_status(task_id: str, status: str, **updates: object) -> None:
+    await update_task(
+        task_id,
+        status,
+        started_at=updates.get("started_at"),
+        finished_at=updates.get("finished_at"),
+        message=updates.get("message"),
+        result=updates.get("result"),
+        cursor_full_name=updates.get("cursor_full_name"),
+    )
 
 
 @app.get("/health")
-def health() -> dict:
+async def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/tasks/{task_id}", response_model=TaskStatusResponse)
+async def task_status(task_id: str) -> TaskStatusResponse:
+    task = await get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    response_data = {key: task.get(key) for key in TaskStatusResponse.model_fields}
+    return TaskStatusResponse(**response_data)
+
+
+@app.post(
+    "/tasks/{task_id}/retry",
+    response_model=TaskQueuedResponse,
+    status_code=202,
+    dependencies=[Depends(require_admin)],
+)
+async def retry_task(task_id: str) -> TaskQueuedResponse:
+    task = await get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.get("task_type") != "classify":
+        raise HTTPException(status_code=400, detail="Retry is only supported for classify tasks")
+    if task.get("status") in ("running", "processing", "queued"):
+        raise HTTPException(status_code=409, detail="Task is still running or queued")
+    payload = task.get("payload")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Task payload not found")
+
+    cursor_full_name = task.get("cursor_full_name")
+    try:
+        request_payload = BackgroundClassifyRequest(**payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid task payload: {exc}") from exc
+    if request_payload.force and cursor_full_name:
+        request_payload = BackgroundClassifyRequest(
+            **{**request_payload.model_dump(), "cursor_full_name": cursor_full_name}
+        )
+
+    new_task_id = str(uuid.uuid4())
+    await _register_task(
+        new_task_id,
+        "classify",
+        f"Retry of {task_id}",
+        payload=request_payload.model_dump(),
+        retry_from_task_id=task_id,
+    )
+    started = await _start_background_classify(request_payload, new_task_id, allow_fallback=False)
+    if not started:
+        await _set_task_status(
+            new_task_id,
+            "failed",
+            finished_at=_now_iso(),
+            message="Classification already running",
+        )
+        raise HTTPException(status_code=409, detail="Classification already running")
+    logger.info("Queued retry task %s from %s", new_task_id, task_id)
+    return TaskQueuedResponse(task_id=new_task_id, status="queued", message="Retry queued")
+
+
 @app.get("/status", response_model=StatusResponse)
-def status() -> StatusResponse:
-    status_data = get_sync_status()
+async def status() -> StatusResponse:
+    status_data = await get_sync_status()
     return StatusResponse(**status_data)
 
 
-@app.post("/sync", response_model=SyncResponse, dependencies=[Depends(require_admin)])
-def sync() -> SyncResponse:
+async def _run_sync_task(task_id: str) -> None:
+    await _set_task_status(task_id, "running", started_at=_now_iso())
     current = get_settings()
+    github_client: GitHubClient = app.state.github_client
     try:
-        targets = resolve_targets()
+        targets = await github_client.resolve_targets()
     except Exception as exc:
-        timestamp = update_sync_status("error", str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await update_sync_status("error", str(exc))
+        await _set_task_status(
+            task_id,
+            "failed",
+            finished_at=_now_iso(),
+            message=str(exc),
+        )
+        return
 
     total = 0
     removed_total = 0
     deleted_total = 0
-    for username, use_auth in targets:
-        try:
-            repos = fetch_starred_repos_for_user(username, use_auth)
-        except Exception as exc:
-            timestamp = update_sync_status("error", str(exc))
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        for username, use_auth in targets:
+            repos = await github_client.fetch_starred_repos_for_user(username, use_auth)
+            for repo in repos:
+                repo.star_users = [username]
+            repo_payloads = [repo.model_dump() for repo in repos]
+            total += await upsert_repos(repo_payloads)
+            keep_names = [repo.full_name for repo in repos if repo.full_name]
+            removed, deleted = await prune_star_user(username, keep_names)
+            removed_total += removed
+            deleted_total += deleted
 
-        for repo in repos:
-            repo["star_users"] = [username]
-        total += upsert_repos(repos)
-        keep_names = [repo.get("full_name") for repo in repos if repo.get("full_name")]
-        removed, deleted = prune_star_user(username, keep_names)
-        removed_total += removed
-        deleted_total += deleted
+        allowed_users = [name for name, _ in targets]
+        cleaned_total, cleaned_deleted = await prune_users_not_in(allowed_users)
 
-    allowed_users = [name for name, _ in targets]
-    cleaned_total, cleaned_deleted = prune_users_not_in(allowed_users)
-
-    timestamp = update_sync_status(
-        "ok",
-        (
-            f"synced {total} repos, pruned {removed_total} stars, removed {deleted_total} repos, "
-            f"cleaned {cleaned_total} repos, removed {cleaned_deleted} repos"
-        ),
-    )
-    if current.auto_classify_after_sync:
-        _start_background_classify(
-            BackgroundClassifyRequest(
-                limit=DEFAULT_CLASSIFY_BATCH_SIZE,
-                force=False,
-                include_readme=True,
-                concurrency=DEFAULT_CLASSIFY_CONCURRENCY,
+        timestamp = await update_sync_status(
+            "ok",
+            (
+                f"synced {total} repos, pruned {removed_total} stars, removed {deleted_total} repos, "
+                f"cleaned {cleaned_total} repos, removed {cleaned_deleted} repos"
             ),
+        )
+    except Exception as exc:
+        await update_sync_status("error", str(exc))
+        await _set_task_status(
+            task_id,
+            "failed",
+            finished_at=_now_iso(),
+            message=str(exc),
+        )
+        return
+
+    await _set_task_status(
+        task_id,
+        "finished",
+        finished_at=_now_iso(),
+        result={
+            "count": total,
+            "queued_at": timestamp,
+        },
+    )
+
+    if current.auto_classify_after_sync:
+        classify_task_id = str(uuid.uuid4())
+        auto_payload = BackgroundClassifyRequest(
+            limit=DEFAULT_CLASSIFY_BATCH_SIZE,
+            force=False,
+            include_readme=True,
+            concurrency=DEFAULT_CLASSIFY_CONCURRENCY,
+        )
+        await _register_task(
+            classify_task_id,
+            "classify",
+            "Auto classify after sync",
+            payload=auto_payload.model_dump(),
+        )
+        started = await _start_background_classify(
+            auto_payload,
+            classify_task_id,
             allow_fallback=True,
         )
-    return SyncResponse(status="ok", queued_at=timestamp, count=total)
+        if not started:
+            await _set_task_status(
+                classify_task_id,
+                "failed",
+                finished_at=_now_iso(),
+                message="Classification already running",
+            )
+
+
+@app.post("/sync", response_model=TaskQueuedResponse, status_code=202, dependencies=[Depends(require_admin)])
+async def sync() -> TaskQueuedResponse:
+    task_id = str(uuid.uuid4())
+    await _register_task(task_id, "sync", payload={})
+    asyncio.create_task(_run_sync_task(task_id))
+    return TaskQueuedResponse(task_id=task_id, status="queued", message="Sync queued")
 
 
 @app.get("/repos", response_model=RepoListResponse)
-def repos(
+async def repos(
     q: Optional[str] = None,
     language: Optional[str] = None,
     min_stars: Optional[int] = None,
@@ -395,7 +588,7 @@ def repos(
     limit: int = 50,
     offset: int = 0,
 ) -> RepoListResponse:
-    total, items = list_repos(
+    total, items = await list_repos(
         q=q,
         language=language,
         min_stars=min_stars,
@@ -405,14 +598,17 @@ def repos(
         limit=limit,
         offset=offset,
     )
-    return RepoListResponse(total=total, items=items)
+    items_out = [RepoOut(**item.model_dump()) if isinstance(item, RepoBase) else RepoOut(**item) for item in items]
+    return RepoListResponse(total=total, items=items_out)
 
 
 @app.get("/repos/{full_name:path}", response_model=RepoOut)
-def repo_detail(full_name: str) -> RepoOut:
-    repo = get_repo(full_name)
+async def repo_detail(full_name: str) -> RepoOut:
+    repo = await get_repo(full_name)
     if not repo:
         raise HTTPException(status_code=404, detail="Repo not found")
+    if isinstance(repo, RepoBase):
+        return RepoOut(**repo.model_dump())
     return RepoOut(**repo)
 
 
@@ -421,7 +617,7 @@ def repo_detail(full_name: str) -> RepoOut:
     response_model=OverrideResponse,
     dependencies=[Depends(require_admin)],
 )
-def repo_override(full_name: str, payload: OverrideRequest) -> OverrideResponse:
+async def repo_override(full_name: str, payload: OverrideRequest) -> OverrideResponse:
     fields = payload.model_fields_set
     updates: Dict[str, Optional[object]] = {}
     if "category" in fields:
@@ -443,17 +639,17 @@ def repo_override(full_name: str, payload: OverrideRequest) -> OverrideResponse:
     if not updates:
         raise HTTPException(status_code=400, detail="No fields provided")
 
-    updated = update_override(full_name, updates)
+    updated = await update_override(full_name, updates)
     if not updated:
         raise HTTPException(status_code=404, detail="Repo not found or no updates")
     return OverrideResponse(updated=True)
 
 
 @app.get("/repos/{full_name:path}/overrides", response_model=OverrideHistoryResponse)
-def repo_override_history(full_name: str) -> OverrideHistoryResponse:
-    if not get_repo(full_name):
+async def repo_override_history(full_name: str) -> OverrideHistoryResponse:
+    if not await get_repo(full_name):
         raise HTTPException(status_code=404, detail="Repo not found")
-    items = list_override_history(full_name)
+    items = await list_override_history(full_name)
     return OverrideHistoryResponse(items=items)
 
 
@@ -462,32 +658,42 @@ def repo_override_history(full_name: str) -> OverrideHistoryResponse:
     response_model=ReadmeResponse,
     dependencies=[Depends(require_admin)],
 )
-def repo_readme(full_name: str) -> ReadmeResponse:
-    if not get_repo(full_name):
+async def repo_readme(full_name: str) -> ReadmeResponse:
+    if not await get_repo(full_name):
         raise HTTPException(status_code=404, detail="Repo not found")
+    github_client: GitHubClient = app.state.github_client
     try:
-        summary = fetch_readme_summary(full_name)
+        summary = await github_client.fetch_readme_summary(full_name)
     except Exception as exc:
-        record_readme_fetch(full_name, None, False)
+        try:
+            await record_readme_fetch(full_name, None, False)
+        except Exception:
+            logger.warning("Failed to record README fetch failure for %s", full_name)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    record_readme_fetch(full_name, summary, True)
+    try:
+        await record_readme_fetch(full_name, summary, True)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to persist README summary. Please retry.",
+        ) from exc
     return ReadmeResponse(updated=bool(summary), summary=summary)
 
 
 @app.get("/taxonomy", response_model=TaxonomyResponse)
-def taxonomy() -> TaxonomyResponse:
+async def taxonomy() -> TaxonomyResponse:
     current = get_settings()
     data = load_taxonomy(current.ai_taxonomy_path)
     return TaxonomyResponse(categories=data.get("categories", []), tags=data.get("tags", []))
 
 
-def _update_classification_state(**updates: object) -> None:
-    with classification_lock:
+async def _update_classification_state(**updates: object) -> None:
+    async with classification_lock:
         classification_state.update(updates)
 
 
-def _get_classification_state() -> dict:
-    with classification_lock:
+async def _get_classification_state() -> dict:
+    async with classification_lock:
         return dict(classification_state)
 
 
@@ -509,6 +715,8 @@ def _should_fetch_readme(repo_data: dict) -> bool:
         return False
     if repo_data.get("readme_summary"):
         return False
+    if repo_data.get("readme_empty"):
+        return False
     failures = int(repo_data.get("readme_failures") or 0)
     if failures >= 3:
         return False
@@ -520,23 +728,48 @@ def _should_fetch_readme(repo_data: dict) -> bool:
     return True
 
 
-def _classify_repo_once(
+def _chunk_repos(items: list, size: int) -> list[list]:
+    if size <= 0:
+        return [items]
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+async def _classify_repo_once(
     repo: dict,
     data: dict,
     rules: list,
     classify_mode: str,
     use_ai: bool,
     include_readme: bool,
+    github_client: GitHubClient,
+    ai_client: AIClient,
 ) -> bool:
-    repo_data = dict(repo)
+    if isinstance(repo, RepoBase):
+        repo_data = repo.model_dump()
+    else:
+        repo_data = dict(repo)
     if include_readme:
         if _should_fetch_readme(repo_data):
+            summary = ""
             try:
-                summary = fetch_readme_summary(repo_data["full_name"])
-                record_readme_fetch(repo_data["full_name"], summary, True)
+                summary = await github_client.fetch_readme_summary(repo_data["full_name"])
             except Exception:
-                record_readme_fetch(repo_data["full_name"], None, False)
-                summary = ""
+                try:
+                    await record_readme_fetch(repo_data["full_name"], None, False)
+                except Exception:
+                    logger.warning(
+                        "Failed to record README fetch failure for %s",
+                        repo_data.get("full_name"),
+                    )
+            else:
+                try:
+                    await record_readme_fetch(repo_data["full_name"], summary, True)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to persist README summary for %s: %s",
+                        repo_data.get("full_name"),
+                        exc,
+                    )
             if summary:
                 repo_data["readme_summary"] = summary
     use_rules = classify_mode != "ai_only"
@@ -552,7 +785,7 @@ def _classify_repo_once(
                 },
                 data,
             )
-            update_classification(
+            await update_classification(
                 repo_data["full_name"],
                 validated["category"],
                 validated["subcategory"],
@@ -564,8 +797,8 @@ def _classify_repo_once(
             return True
     if not use_ai:
         return False
-    result = classify_repo_with_retry(repo_data, data, retries=2)
-    update_classification(
+    result = await ai_client.classify_repo_with_retry(repo_data, data, retries=2)
+    await update_classification(
         repo_data["full_name"],
         result["category"],
         result["subcategory"],
@@ -577,7 +810,112 @@ def _classify_repo_once(
     return True
 
 
-def _classify_repos_concurrent(
+async def _classify_repos_batch(
+    repos: list,
+    data: dict,
+    rules: list,
+    classify_mode: str,
+    use_ai: bool,
+    include_readme: bool,
+    github_client: GitHubClient,
+    ai_client: AIClient,
+) -> tuple[int, int]:
+    classified = 0
+    failed = 0
+    repo_datas: list[dict] = []
+    for repo in repos:
+        if isinstance(repo, RepoBase):
+            repo_data = repo.model_dump()
+        else:
+            repo_data = dict(repo)
+        if include_readme:
+            if _should_fetch_readme(repo_data):
+                summary = ""
+                try:
+                    summary = await github_client.fetch_readme_summary(repo_data["full_name"])
+                except Exception:
+                    try:
+                        await record_readme_fetch(repo_data["full_name"], None, False)
+                    except Exception:
+                        logger.warning(
+                            "Failed to record README fetch failure for %s",
+                            repo_data.get("full_name"),
+                        )
+                else:
+                    try:
+                        await record_readme_fetch(repo_data["full_name"], summary, True)
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to persist README summary for %s: %s",
+                            repo_data.get("full_name"),
+                            exc,
+                        )
+                if summary:
+                    repo_data["readme_summary"] = summary
+        repo_datas.append(repo_data)
+
+    use_rules = classify_mode != "ai_only"
+    pending_ai: list[dict] = []
+    for repo_data in repo_datas:
+        if use_rules:
+            rule = match_rule(repo_data, rules)
+            if rule:
+                validated = validate_classification(
+                    {
+                        "category": rule.get("category"),
+                        "subcategory": rule.get("subcategory"),
+                        "tags": rule.get("tags") or [],
+                        "confidence": 1.0,
+                    },
+                    data,
+                )
+                try:
+                    await update_classification(
+                        repo_data["full_name"],
+                        validated["category"],
+                        validated["subcategory"],
+                        validated["confidence"],
+                        validated["tags"],
+                        "rules",
+                        "rules",
+                    )
+                    classified += 1
+                except Exception:
+                    failed += 1
+                continue
+        if use_ai:
+            pending_ai.append(repo_data)
+        else:
+            failed += 1
+
+    if pending_ai:
+        try:
+            results = await ai_client.classify_repos_with_retry(pending_ai, data, retries=2)
+        except Exception:
+            failed += len(pending_ai)
+            return (classified, failed)
+        for repo_data, result in zip(pending_ai, results):
+            if not result:
+                failed += 1
+                continue
+            try:
+                await update_classification(
+                    repo_data["full_name"],
+                    result["category"],
+                    result["subcategory"],
+                    result["confidence"],
+                    result["tags"],
+                    result["provider"],
+                    result["model"],
+                )
+                classified += 1
+            except Exception:
+                failed += 1
+
+    return (classified, failed)
+
+
+async def _classify_repos_concurrent(
     repos_to_classify: list,
     data: dict,
     rules: list,
@@ -585,35 +923,70 @@ def _classify_repos_concurrent(
     use_ai: bool,
     include_readme: bool,
     concurrency: int,
+    github_client: GitHubClient,
+    ai_client: AIClient,
 ) -> tuple[int, int]:
-    if concurrency <= 1 or len(repos_to_classify) <= 1:
+    batches = _chunk_repos(repos_to_classify, AI_CLASSIFY_BATCH_SIZE)
+    if concurrency <= 1 or len(batches) <= 1:
         classified = 0
         failed = 0
-        for repo in repos_to_classify:
+        for batch in batches:
             try:
-                if _classify_repo_once(repo, data, rules, classify_mode, use_ai, include_readme):
-                    classified += 1
-                else:
-                    failed += 1
+                batch_classified, batch_failed = await _classify_repos_batch(
+                    batch,
+                    data,
+                    rules,
+                    classify_mode,
+                    use_ai,
+                    include_readme,
+                    github_client,
+                    ai_client,
+                )
+                classified += batch_classified
+                failed += batch_failed
             except Exception:
-                failed += 1
+                failed += len(batch)
         return (classified, failed)
 
     classified = 0
     failed = 0
+    counter_lock = asyncio.Lock()
+    queue: asyncio.Queue[Optional[list]] = asyncio.Queue()
+    for batch in batches:
+        queue.put_nowait(batch)
+    for _ in range(concurrency):
+        queue.put_nowait(None)
 
-    def classify_single(repo: dict) -> tuple[int, int]:
-        try:
-            return (1, 0) if _classify_repo_once(repo, data, rules, classify_mode, use_ai, include_readme) else (0, 1)
-        except Exception:
-            return (0, 1)
+    async def worker() -> None:
+        nonlocal classified, failed
+        while True:
+            batch = await queue.get()
+            if batch is None:
+                queue.task_done()
+                break
+            try:
+                batch_classified, batch_failed = await _classify_repos_batch(
+                    batch,
+                    data,
+                    rules,
+                    classify_mode,
+                    use_ai,
+                    include_readme,
+                    github_client,
+                    ai_client,
+                )
+                async with counter_lock:
+                    classified += batch_classified
+                    failed += batch_failed
+            except Exception:
+                async with counter_lock:
+                    failed += len(batch)
+            finally:
+                queue.task_done()
 
-    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        futures = [executor.submit(classify_single, repo) for repo in repos_to_classify]
-        for future in as_completed(futures):
-            item_classified, item_failed = future.result()
-            classified += item_classified
-            failed += item_failed
+    workers = [asyncio.create_task(worker()) for _ in range(concurrency)]
+    await queue.join()
+    await asyncio.gather(*workers)
     return (classified, failed)
 
 
@@ -625,8 +998,13 @@ def _clamp_concurrency(value: int) -> int:
     return value
 
 
-def _background_classify_loop(payload: BackgroundClassifyRequest, allow_fallback: bool) -> None:
+async def _background_classify_loop(
+    payload: BackgroundClassifyRequest,
+    allow_fallback: bool,
+    task_id: str,
+) -> None:
     try:
+        await _set_task_status(task_id, "running", started_at=_now_iso())
         current = get_settings()
         rules_path = Path(__file__).resolve().parents[1] / "config" / "rules.json"
         rules = load_rules(current.rules_json, fallback_path=rules_path)
@@ -640,27 +1018,37 @@ def _background_classify_loop(payload: BackgroundClassifyRequest, allow_fallback
 
         should_run = use_ai or (classify_mode != "ai_only" and bool(rules))
         if not should_run:
-            _update_classification_state(
+            await _update_classification_state(
                 running=False,
                 finished_at=datetime.now(timezone.utc).isoformat(),
                 last_error=warning or "No classification sources available",
+                task_id=task_id,
+            )
+            await _set_task_status(
+                task_id,
+                "failed",
+                finished_at=_now_iso(),
+                message=warning or "No classification sources available",
             )
             return
 
         data = load_taxonomy(current.ai_taxonomy_path)
+        github_client: GitHubClient = app.state.github_client
+        ai_client: AIClient = app.state.ai_client
 
         batch_size = payload.limit if payload.limit and payload.limit > 0 else DEFAULT_CLASSIFY_BATCH_SIZE
         concurrency_value = payload.concurrency if payload.concurrency and payload.concurrency > 0 else DEFAULT_CLASSIFY_CONCURRENCY
         concurrency = _clamp_concurrency(concurrency_value)
         force_mode = bool(payload.force)
-        snapshot_repos = None
+        cursor_full_name = payload.cursor_full_name if force_mode else None
+        total_force = None
         if force_mode:
-            snapshot_repos = select_repos_for_classification(0, True)
-            remaining = len(snapshot_repos)
+            total_force = await count_repos_for_classification(True, cursor_full_name)
+            remaining = total_force
         else:
-            remaining = count_repos_for_classification(False)
+            remaining = await count_repos_for_classification(False)
 
-        _update_classification_state(
+        await _update_classification_state(
             running=True,
             started_at=datetime.now(timezone.utc).isoformat(),
             finished_at=None,
@@ -670,22 +1058,26 @@ def _background_classify_loop(payload: BackgroundClassifyRequest, allow_fallback
             last_error=None,
             batch_size=batch_size,
             concurrency=concurrency,
+            task_id=task_id,
         )
 
         previous_remaining = None
-        snapshot_index = 0
+        success_total = 0
+        processed_total = 0
+        failed_total = 0
         while not classification_stop.is_set():
             if force_mode:
-                if not snapshot_repos:
-                    break
-                repos_to_classify = snapshot_repos[snapshot_index : snapshot_index + batch_size]
-                snapshot_index += len(repos_to_classify)
+                repos_to_classify = await select_repos_for_classification(
+                    batch_size,
+                    True,
+                    cursor_full_name,
+                )
             else:
-                repos_to_classify = select_repos_for_classification(batch_size, False)
+                repos_to_classify = await select_repos_for_classification(batch_size, False)
             if not repos_to_classify:
                 break
 
-            batch_classified, batch_failed = _classify_repos_concurrent(
+            batch_classified, batch_failed = await _classify_repos_concurrent(
                 repos_to_classify,
                 data,
                 rules,
@@ -693,14 +1085,30 @@ def _background_classify_loop(payload: BackgroundClassifyRequest, allow_fallback
                 use_ai,
                 payload.include_readme,
                 concurrency,
+                github_client,
+                ai_client,
             )
             processed = batch_classified + batch_failed
+            success_total += batch_classified
+            processed_total += processed
+            failed_total += batch_failed
             if force_mode:
-                remaining = max(0, (len(snapshot_repos or []) - snapshot_index))
+                last_repo = repos_to_classify[-1]
+                if isinstance(last_repo, RepoBase):
+                    cursor_full_name = last_repo.full_name
+                else:
+                    cursor_full_name = last_repo.get("full_name")
+                remaining = max(0, (total_force or 0) - processed_total)
+                if cursor_full_name:
+                    await _set_task_status(
+                        task_id,
+                        "running",
+                        cursor_full_name=cursor_full_name,
+                    )
             else:
-                remaining = count_repos_for_classification(False)
-            state = _get_classification_state()
-            _update_classification_state(
+                remaining = await count_repos_for_classification(False)
+            state = await _get_classification_state()
+            await _update_classification_state(
                 processed=state["processed"] + processed,
                 failed=state["failed"] + batch_failed,
                 remaining=remaining,
@@ -708,33 +1116,68 @@ def _background_classify_loop(payload: BackgroundClassifyRequest, allow_fallback
 
             if processed == 0:
                 break
-            if not force_mode and previous_remaining is not None and remaining >= previous_remaining:
-                break
-            previous_remaining = remaining
+            if not force_mode:
+                if previous_remaining is not None and remaining >= previous_remaining:
+                    break
+                previous_remaining = remaining
             if CLASSIFY_BATCH_DELAY_MS > 0:
-                time.sleep(CLASSIFY_BATCH_DELAY_MS / 1000)
+                await asyncio.sleep(CLASSIFY_BATCH_DELAY_MS / 1000)
 
-        _update_classification_state(
+        await _update_classification_state(
             running=False,
             finished_at=datetime.now(timezone.utc).isoformat(),
+            task_id=task_id,
+        )
+        await _set_task_status(
+            task_id,
+            "finished",
+            finished_at=_now_iso(),
+            result={"processed": processed_total, "classified": success_total, "failed": failed_total},
         )
     except Exception as exc:
-        _update_classification_state(
+        await _update_classification_state(
             running=False,
             finished_at=datetime.now(timezone.utc).isoformat(),
             last_error=str(exc),
+            task_id=task_id,
+        )
+        await _set_task_status(
+            task_id,
+            "failed",
+            finished_at=_now_iso(),
+            message=str(exc),
         )
 
 
-@app.post("/classify", response_model=ClassifyResponse, dependencies=[Depends(require_admin)])
-def classify(payload: ClassifyRequest) -> ClassifyResponse:
+@app.post("/classify", response_model=ClassifyResponse | TaskQueuedResponse, dependencies=[Depends(require_admin)])
+async def classify(payload: ClassifyRequest) -> ClassifyResponse | TaskQueuedResponse:
     current = get_settings()
     try:
         data = load_taxonomy(current.ai_taxonomy_path)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    repos_to_classify = select_repos_for_classification(payload.limit, payload.force)
+    if payload.force:
+        task_id = str(uuid.uuid4())
+        force_payload = BackgroundClassifyRequest(
+            limit=payload.limit,
+            force=True,
+            include_readme=payload.include_readme,
+            concurrency=DEFAULT_CLASSIFY_CONCURRENCY,
+        )
+        await _register_task(
+            task_id,
+            "classify",
+            "Force classification queued",
+            payload=force_payload.model_dump(),
+        )
+        started = await _start_background_classify(force_payload, task_id, allow_fallback=False)
+        if not started:
+            raise HTTPException(status_code=409, detail="Classification already running")
+        payload = TaskQueuedResponse(task_id=task_id, status="queued", message="Classification queued")
+        return JSONResponse(status_code=202, content=payload.model_dump())
+
+    repos_to_classify = await select_repos_for_classification(payload.limit, payload.force)
     rules_path = Path(__file__).resolve().parents[1] / "config" / "rules.json"
     rules = load_rules(current.rules_json, fallback_path=rules_path)
     try:
@@ -748,7 +1191,9 @@ def classify(payload: ClassifyRequest) -> ClassifyResponse:
     if warning:
         logger.warning("Classification request: %s", warning)
 
-    classified, failed = _classify_repos_concurrent(
+    github_client: GitHubClient = app.state.github_client
+    ai_client: AIClient = app.state.ai_client
+    classified, failed = await _classify_repos_concurrent(
         repos_to_classify,
         data,
         rules,
@@ -756,54 +1201,65 @@ def classify(payload: ClassifyRequest) -> ClassifyResponse:
         use_ai,
         payload.include_readme,
         concurrency=1,
+        github_client=github_client,
+        ai_client=ai_client,
     )
 
     return ClassifyResponse(
         total=len(repos_to_classify),
         classified=classified,
         failed=failed,
-        remaining_unclassified=count_unclassified_repos(),
+        remaining_unclassified=await count_unclassified_repos(),
     )
 
 
 @app.post(
     "/classify/background",
     response_model=BackgroundClassifyResponse,
+    status_code=202,
     dependencies=[Depends(require_admin)],
 )
-def classify_background(payload: BackgroundClassifyRequest) -> BackgroundClassifyResponse:
-    started = _start_background_classify(payload, allow_fallback=False)
+async def classify_background(payload: BackgroundClassifyRequest) -> BackgroundClassifyResponse:
+    task_id = str(uuid.uuid4())
+    await _register_task(
+        task_id,
+        "classify",
+        "Background classification queued",
+        payload=payload.model_dump(),
+    )
+    started = await _start_background_classify(payload, task_id, allow_fallback=False)
     if not started:
-        return BackgroundClassifyResponse(
-            started=False, running=True, message="Classification already running"
-        )
+        raise HTTPException(status_code=409, detail="Classification already running")
 
     return BackgroundClassifyResponse(
-        started=True, running=True, message="Background classification started"
+        started=True,
+        running=True,
+        message="Background classification started",
+        task_id=task_id,
     )
 
 
 @app.get("/classify/status", response_model=BackgroundClassifyStatusResponse)
-def classify_status() -> BackgroundClassifyStatusResponse:
-    state = _get_classification_state()
+async def classify_status() -> BackgroundClassifyStatusResponse:
+    state = await _get_classification_state()
     return BackgroundClassifyStatusResponse(**state)
 
 
 @app.post("/classify/stop", dependencies=[Depends(require_admin)])
-def classify_stop() -> dict:
+async def classify_stop() -> dict:
     classification_stop.set()
-    _update_classification_state(last_error="Stopped by user")
+    await _update_classification_state(last_error="Stopped by user")
     return {"stopped": True}
 
 
 @app.get("/stats", response_model=StatsResponse)
-def stats() -> StatsResponse:
-    data = get_repo_stats()
+async def stats() -> StatsResponse:
+    data = await get_repo_stats()
     return StatsResponse(**data)
 
 
 @app.get("/api/config/client-settings", response_model=ClientSettingsResponse)
-def client_settings() -> ClientSettingsResponse:
+async def client_settings() -> ClientSettingsResponse:
     current = get_settings()
     rules_path = Path(__file__).resolve().parents[1] / "config" / "rules.json"
     rules = load_rules(current.rules_json, fallback_path=rules_path)
@@ -822,7 +1278,7 @@ def client_settings() -> ClientSettingsResponse:
 
 
 @app.get("/settings", response_model=SettingsResponse)
-def settings() -> SettingsResponse:
+async def settings() -> SettingsResponse:
     current = get_settings()
     return SettingsResponse(
         github_username=current.github_username,
@@ -841,7 +1297,7 @@ def settings() -> SettingsResponse:
 
 
 @app.patch("/settings", response_model=SettingsResponse, dependencies=[Depends(require_admin)])
-def update_settings(payload: SettingsRequest) -> SettingsResponse:
+async def update_settings(payload: SettingsRequest) -> SettingsResponse:
     fields = payload.model_fields_set
     updates: Dict[str, Optional[object]] = {}
 
@@ -851,7 +1307,7 @@ def update_settings(payload: SettingsRequest) -> SettingsResponse:
     if not updates:
         raise HTTPException(status_code=400, detail="No fields provided")
 
-    write_settings(updates)
+    await asyncio.to_thread(write_settings, updates)
     current = get_settings()
     return SettingsResponse(
         github_username=current.github_username,
