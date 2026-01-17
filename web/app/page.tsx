@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildAdminHeaders } from "./lib/admin";
 import { API_BASE_URL } from "./lib/apiBase";
 import { getErrorMessage, readApiError } from "./lib/apiError";
@@ -55,6 +55,7 @@ type BackgroundStatus = {
   last_error?: string | null;
   batch_size: number;
   concurrency: number;
+  task_id?: string | null;
 };
 
 type ForegroundProgress = {
@@ -64,6 +65,24 @@ type ForegroundProgress = {
   remaining: number | null;
   startRemaining: number | null;
   lastBatch: number;
+};
+
+type TaskQueued = {
+  task_id: string;
+  status: string;
+  message?: string | null;
+};
+
+type TaskStatus = {
+  task_id: string;
+  status: string;
+  task_type: string;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  message?: string | null;
+  result?: Record<string, unknown> | null;
+  retry_from_task_id?: string | null;
 };
 
 type ClientSettings = {
@@ -107,6 +126,7 @@ export default function Home() {
     null
   );
   const [syncing, setSyncing] = useState(false);
+  const [syncTaskId, setSyncTaskId] = useState<string | null>(null);
   const [classifying, setClassifying] = useState(false);
   const [classifyLimit, setClassifyLimit] = useState("20");
   const [classifyConcurrency, setClassifyConcurrency] = useState("3");
@@ -115,6 +135,12 @@ export default function Home() {
   const [forceReclassify, setForceReclassify] = useState(false);
   const [backgroundStatus, setBackgroundStatus] = useState<BackgroundStatus | null>(null);
   const [wasBackgroundRunning, setWasBackgroundRunning] = useState(false);
+  const [taskInfoId, setTaskInfoId] = useState<string | null>(null);
+  const [taskInfo, setTaskInfo] = useState<TaskStatus | null>(null);
+  const [followActiveTask, setFollowActiveTask] = useState(true);
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
+  const [retryingTask, setRetryingTask] = useState(false);
+  const [pollingPaused, setPollingPaused] = useState(false);
   const [foregroundProgress, setForegroundProgress] = useState<ForegroundProgress>({
     running: false,
     processed: 0,
@@ -151,6 +177,17 @@ export default function Home() {
     }
   }, [unknownErrorMessage]);
 
+  const activeTaskId = backgroundStatus?.task_id || syncTaskId;
+  const pollTargetId = followActiveTask ? activeTaskId : taskInfoId;
+  const pollTargetIdRef = useRef<string | null>(null);
+  const pollRequestIdRef = useRef(0);
+  const pollFnRef = useRef<() => void>(() => {});
+  const syncTaskIdRef = useRef<string | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollFailureCountRef = useRef(0);
+  const pollingPausedRef = useRef(false);
+  const pollTickRef = useRef(0);
+
   const loadStats = useCallback(async () => {
     setError(null);
     try {
@@ -182,6 +219,184 @@ export default function Home() {
       setBackgroundStatus(null);
     }
   }, [unknownErrorMessage]);
+
+  useEffect(() => {
+    syncTaskIdRef.current = syncTaskId;
+  }, [syncTaskId]);
+
+  const stopPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }, []);
+
+  const startPolling = useCallback(() => {
+    if (pollIntervalRef.current) return;
+    pollIntervalRef.current = setInterval(() => {
+      pollFnRef.current();
+    }, 3000);
+  }, []);
+
+  const pausePolling = useCallback(
+    (message: string) => {
+      pollingPausedRef.current = true;
+      setPollingPaused(true);
+      stopPolling();
+      setActionMessage(message);
+      setActionStatus("error");
+    },
+    [stopPolling]
+  );
+
+  const handleResumePolling = useCallback(() => {
+    pollingPausedRef.current = false;
+    pollFailureCountRef.current = 0;
+    setPollingPaused(false);
+    setActionMessage(null);
+    setActionStatus(null);
+    if (document.visibilityState === "hidden") return;
+    startPolling();
+    pollFnRef.current();
+  }, [startPolling]);
+
+  const pollBackgroundStatusNow = useCallback(async (requestId: number) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/classify/status`);
+      if (!res.ok) {
+        return;
+      }
+      const data = await res.json();
+      if (pollRequestIdRef.current !== requestId) return;
+      setBackgroundStatus(data);
+    } catch {
+      return;
+    }
+  }, []);
+
+  const pollTaskNow = useCallback(async () => {
+    const taskId = pollTargetIdRef.current;
+    pollTickRef.current += 1;
+    const shouldPollBackground = pollTickRef.current % 5 === 0;
+    if (!taskId) {
+      if (!shouldPollBackground) return;
+      const requestId = pollRequestIdRef.current + 1;
+      pollRequestIdRef.current = requestId;
+      await pollBackgroundStatusNow(requestId);
+      return;
+    }
+    const requestId = pollRequestIdRef.current + 1;
+    pollRequestIdRef.current = requestId;
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE_URL}/tasks/${taskId}`);
+    } catch (err) {
+      if (pollTargetIdRef.current !== taskId) return;
+      if (pollRequestIdRef.current !== requestId) return;
+      pollFailureCountRef.current += 1;
+      if (pollFailureCountRef.current >= 3) {
+        pausePolling(t("pollingPaused"));
+      }
+      return;
+    }
+    if (pollTargetIdRef.current !== taskId) return;
+    if (pollRequestIdRef.current !== requestId) return;
+    if (res.status === 404) {
+      pollTargetIdRef.current = null;
+      pollFailureCountRef.current = 0;
+      pollingPausedRef.current = false;
+      setPollingPaused(false);
+      setTaskInfo(null);
+      setTaskInfoId(null);
+      setPendingTaskId(null);
+      setActionMessage(t("taskNotFound"));
+      setActionStatus("error");
+      return;
+    }
+    if (!res.ok) {
+      if (res.status >= 500 || res.status === 429) {
+        pollFailureCountRef.current += 1;
+        if (pollFailureCountRef.current >= 3) {
+          pausePolling(t("pollingPaused"));
+        }
+      }
+      return;
+    }
+    let data: TaskStatus;
+    try {
+      data = await res.json();
+    } catch (err) {
+      if (pollTargetIdRef.current !== taskId) return;
+      if (pollRequestIdRef.current !== requestId) return;
+      pollFailureCountRef.current += 1;
+      if (pollFailureCountRef.current >= 3) {
+        pausePolling(t("pollingPaused"));
+      }
+      return;
+    }
+    if (pollTargetIdRef.current !== taskId) return;
+    if (pollRequestIdRef.current !== requestId) return;
+    pollFailureCountRef.current = 0;
+    setTaskInfo(data);
+
+    if (shouldPollBackground) {
+      await pollBackgroundStatusNow(requestId);
+    }
+
+    if (taskId === syncTaskIdRef.current) {
+      if (data.status === "finished") {
+        const result = data.result ?? {};
+        const count =
+          typeof result === "object" && result && "count" in result
+            ? Number((result as { count?: number }).count ?? 0)
+            : null;
+        setActionMessage(
+          typeof count === "number" && !Number.isNaN(count)
+            ? t("syncedWithValue", { count })
+            : t("syncComplete")
+        );
+        setActionStatus("success");
+        setSyncing(false);
+        setSyncTaskId(null);
+        await loadStatus();
+        await loadStats();
+        setSourceUser(null);
+        await loadRepos(false);
+      } else if (data.status === "failed") {
+        setActionMessage(data.message || t("syncFailed"));
+        setActionStatus("error");
+        setSyncing(false);
+        setSyncTaskId(null);
+      }
+    }
+  }, [loadRepos, loadStats, loadStatus, pausePolling, pollBackgroundStatusNow, t]);
+
+  useEffect(() => {
+    pollFnRef.current = pollTaskNow;
+  }, [pollTaskNow]);
+
+  useEffect(() => {
+    pollTargetIdRef.current = pollTargetId;
+    pollTickRef.current = 0;
+    pollFailureCountRef.current = 0;
+    if (!pollTargetId) {
+      setTaskInfo(null);
+      if (pollingPausedRef.current) return;
+      if (document.visibilityState === "hidden") {
+        stopPolling();
+        return;
+      }
+      startPolling();
+      return;
+    }
+    if (pollingPausedRef.current) return;
+    if (document.visibilityState === "hidden") {
+      stopPolling();
+      return;
+    }
+    startPolling();
+    pollFnRef.current();
+  }, [pollTargetId, startPolling, stopPolling]);
 
   const loadClientSettings = useCallback(async () => {
     try {
@@ -255,12 +470,45 @@ export default function Home() {
   }, [loadBackgroundStatus, loadClientSettings, loadStats, loadStatus]);
 
   useEffect(() => {
-    if (!backgroundStatus?.running) return;
-    const timer = setInterval(() => {
-      loadBackgroundStatus();
-    }, 4000);
-    return () => clearInterval(timer);
-  }, [backgroundStatus?.running, loadBackgroundStatus]);
+    if (!followActiveTask) return;
+    if (!activeTaskId) {
+      setTaskInfoId(null);
+      setTaskInfo(null);
+      setPendingTaskId(null);
+      return;
+    }
+    if (pendingTaskId && activeTaskId !== pendingTaskId) {
+      return;
+    }
+    if (pendingTaskId && activeTaskId === pendingTaskId) {
+      setPendingTaskId(null);
+    }
+    if (taskInfoId !== activeTaskId) {
+      setTaskInfoId(activeTaskId);
+    }
+  }, [activeTaskId, followActiveTask, pendingTaskId, taskInfoId]);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        stopPolling();
+        return;
+      }
+      if (pollingPausedRef.current) return;
+      startPolling();
+      pollFnRef.current();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [startPolling, stopPolling]);
+
+  useEffect(() => {
+    return () => {
+      stopPolling();
+    };
+  }, [stopPolling]);
 
   useEffect(() => {
     const running = backgroundStatus?.running ?? false;
@@ -295,17 +543,19 @@ export default function Home() {
 
   useEffect(() => {
     if (!actionMessage) return;
+    if (pollingPaused) return;
     const timer = setTimeout(() => {
       setActionMessage(null);
       setActionStatus(null);
     }, 5000);
     return () => clearTimeout(timer);
-  }, [actionMessage]);
+  }, [actionMessage, pollingPaused]);
 
   const handleSync = async () => {
     setSyncing(true);
     setActionMessage(null);
     setActionStatus(null);
+    let queued = false;
     try {
       const response = await fetch(`${API_BASE_URL}/sync`, {
         method: "POST",
@@ -315,19 +565,31 @@ export default function Home() {
         const detail = await readApiError(response, t("syncFailed"));
         throw new Error(detail);
       }
-      const data = await response.json();
-      setActionMessage(t("syncedWithValue", { count: data.count }));
-      setActionStatus("success");
-      await loadStatus();
-      await loadStats();
-      setSourceUser(null);
-      await loadRepos(false);
+      const data = (await response.json()) as Partial<TaskQueued & { count?: number }>;
+      if (data.task_id) {
+        setSyncTaskId(data.task_id);
+        queued = true;
+        setActionMessage(t("syncQueued"));
+        setActionStatus("success");
+      } else {
+        const count = typeof data.count === "number" ? data.count : 0;
+        setActionMessage(t("syncedWithValue", { count }));
+        setActionStatus("success");
+        await loadStatus();
+        await loadStats();
+        setSourceUser(null);
+        await loadRepos(false);
+        setSyncing(false);
+      }
     } catch (err) {
       const message = getErrorMessage(err, t("syncFailed"));
       setActionMessage(message);
       setActionStatus("error");
-    } finally {
       setSyncing(false);
+    } finally {
+      if (!queued) {
+        setSyncing(false);
+      }
     }
   };
 
@@ -384,6 +646,39 @@ export default function Home() {
     setForegroundProgress((prev) => ({ ...prev, running: false }));
   };
 
+  const handleRetryTask = async (taskId: string) => {
+    if (retryingTask) return;
+    setRetryingTask(true);
+    setActionMessage(null);
+    setActionStatus(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/tasks/${taskId}/retry`, {
+        method: "POST",
+        headers: buildAdminHeaders(),
+      });
+      if (!res.ok) {
+        const detail = await readApiError(res, t("classifyFailed"));
+        throw new Error(detail);
+      }
+      const data = (await res.json()) as TaskQueued;
+      if (data?.task_id) {
+        setFollowActiveTask(true);
+        setTaskInfoId(data.task_id);
+        setTaskInfo(null);
+        setPendingTaskId(data.task_id);
+        await loadBackgroundStatus();
+        setActionMessage(t("retryQueued"));
+        setActionStatus("success");
+      }
+    } catch (err) {
+      const message = getErrorMessage(err, t("classifyFailed"));
+      setActionMessage(message);
+      setActionStatus("error");
+    } finally {
+      setRetryingTask(false);
+    }
+  };
+
   const requestClassify = async (limit?: number) => {
     const payload: { limit?: number; force?: boolean; include_readme?: boolean } = {};
     if (typeof limit === "number") {
@@ -405,6 +700,31 @@ export default function Home() {
       throw new Error(detail);
     }
     return response.json();
+  };
+
+  const queueForceClassify = async (limit?: number) => {
+    const payload: { limit?: number; force: boolean; include_readme?: boolean } = {
+      force: true,
+    };
+    if (typeof limit === "number") {
+      payload.limit = limit;
+    }
+    if (!includeReadme) {
+      payload.include_readme = false;
+    }
+    const response = await fetch(`${API_BASE_URL}/classify`, {
+      method: "POST",
+      headers: buildAdminHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const detail = await readApiError(response, t("classifyFailed"));
+      throw new Error(detail);
+    }
+    await response.json();
+    await loadBackgroundStatus();
+    setActionMessage(t("classifyQueued"));
+    setActionStatus("success");
   };
 
   const applyClassifyMessage = (data: {
@@ -437,6 +757,18 @@ export default function Home() {
   };
 
   const handleClassifyOnce = async (limit?: number) => {
+    if (forceReclassify) {
+      setActionMessage(null);
+      setActionStatus(null);
+      try {
+        await queueForceClassify(limit);
+      } catch (err) {
+        const message = getErrorMessage(err, t("classifyFailed"));
+        setActionMessage(message);
+        setActionStatus("error");
+      }
+      return;
+    }
     setClassifying(true);
     setActionMessage(null);
     setActionStatus(null);
@@ -461,7 +793,13 @@ export default function Home() {
   const handleClassifyUntilDone = async () => {
     if (classifying) return;
     if (forceReclassify) {
-      await handleClassifyOnce(0);
+      try {
+        await queueForceClassify(0);
+      } catch (err) {
+        const message = getErrorMessage(err, t("classifyFailed"));
+        setActionMessage(message);
+        setActionStatus("error");
+      }
       return;
     }
     setClassifyLooping(true);
@@ -618,6 +956,7 @@ export default function Home() {
   const backgroundRunning = backgroundStatus?.running ?? false;
   const backgroundProcessed = backgroundStatus?.processed ?? 0;
   const backgroundFailed = backgroundStatus?.failed ?? 0;
+  const backgroundSucceeded = Math.max(0, backgroundProcessed - backgroundFailed);
   const backgroundRemaining = backgroundStatus?.remaining ?? 0;
   const backgroundBatchSize =
     backgroundStatus?.batch_size && backgroundStatus.batch_size > 0
@@ -632,6 +971,8 @@ export default function Home() {
     !!backgroundLastError && backgroundLastError !== "Stopped by user";
   const showForegroundProgress =
     foregroundProgress.running || foregroundProgress.processed > 0;
+  const taskRetryable =
+    taskInfo?.status === "failed" && taskInfo?.task_type === "classify";
   const foregroundPercent =
     foregroundProgress.startRemaining !== null &&
     foregroundProgress.startRemaining > 0 &&
@@ -670,16 +1011,27 @@ export default function Home() {
               </p>
               <p className="text-ink/80">{actionMessage}</p>
             </div>
-            <button
-              type="button"
-              className="self-start rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/60 transition hover:text-ink sm:self-auto"
-              onClick={() => {
-                setActionMessage(null);
-                setActionStatus(null);
-              }}
-            >
-              {t("dismiss")}
-            </button>
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+              {pollingPaused && (
+                <button
+                  type="button"
+                  className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/70 transition hover:border-moss hover:text-moss"
+                  onClick={handleResumePolling}
+                >
+                  {t("reconnect")}
+                </button>
+              )}
+              <button
+                type="button"
+                className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/60 transition hover:text-ink"
+                onClick={() => {
+                  setActionMessage(null);
+                  setActionStatus(null);
+                }}
+              >
+                {t("dismiss")}
+              </button>
+            </div>
           </div>
         )}
         <header className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
@@ -815,6 +1167,7 @@ export default function Home() {
                         {backgroundRunning ? t("backgroundRunning") : t("backgroundIdle")}
                       </span>
                       <span>{t("processedWithValue", { count: backgroundProcessed })}</span>
+                      <span>{t("succeededWithValue", { count: backgroundSucceeded })}</span>
                       <span>{t("failedWithValue", { count: backgroundFailed })}</span>
                       <span>{t("remainingWithValue", { count: backgroundRemaining })}</span>
                       <span>
@@ -826,6 +1179,64 @@ export default function Home() {
                     </div>
                     {showBackgroundError && (
                       <p className="text-xs text-copper">{backgroundLastError}</p>
+                    )}
+                    {taskInfoId && (
+                      <div className="mt-2 flex flex-col gap-2 text-xs text-ink/70">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{t("taskIdWithValue", { value: taskInfoId })}</span>
+                          <span>
+                            {t("taskStatusWithValue", {
+                              value: taskInfo?.status || t("fetching"),
+                            })}
+                          </span>
+                          {taskRetryable && (
+                            <button
+                              type="button"
+                              className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/70 transition hover:border-moss hover:text-moss disabled:opacity-60"
+                              onClick={() => handleRetryTask(taskInfoId)}
+                              disabled={retryingTask}
+                            >
+                              {retryingTask ? t("retrying") : t("retry")}
+                            </button>
+                          )}
+                        </div>
+                        {!!taskInfo?.message && (
+                          <span className="text-xs text-ink/50">{taskInfo.message}</span>
+                        )}
+                        {!!taskInfo?.retry_from_task_id && (
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-ink/60">
+                            <span>
+                              {t("retryFromWithValue", {
+                                value: taskInfo.retry_from_task_id,
+                              })}
+                            </span>
+                            <button
+                              type="button"
+                              className="text-xs text-ink/70 underline transition hover:text-moss"
+                              onClick={() => {
+                                setFollowActiveTask(false);
+                                setPendingTaskId(null);
+                                setTaskInfoId(taskInfo.retry_from_task_id || null);
+                              }}
+                            >
+                              {t("viewTask")}
+                            </button>
+                            {followActiveTask === false && activeTaskId && (
+                              <button
+                                type="button"
+                                className="text-xs text-ink/60 underline transition hover:text-moss"
+                                onClick={() => {
+                                  setFollowActiveTask(true);
+                                  setPendingTaskId(null);
+                                  setTaskInfoId(activeTaskId || null);
+                                }}
+                              >
+                                {t("viewCurrentTask")}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">

@@ -6,6 +6,7 @@
     "start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start.ps1",
     "stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop.ps1",
     "status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/status.ps1",
+    "api:test": "python -m pytest -q api",
     "web:dev": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build",
     "web:lint": "npm --prefix web run lint"
