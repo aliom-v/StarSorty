@@ -306,6 +306,14 @@ class AIClient:
             message = (choices[0].get("message") or {}) if choices else {}
             extracted = _extract_json(message.get("content", ""))
 
+        if not isinstance(extracted, dict) or "category" not in extracted or "subcategory" not in extracted:
+            detail = _sanitize_response_body(response.text)
+            if len(detail) > 800:
+                detail = detail[:800] + "..."
+            raise ValueError(
+                f"AI response did not contain a valid classification object | url={url} | body={detail}"
+            )
+
         validated = validate_classification(extracted or {}, taxonomy)
         validated["provider"] = raw_provider
         validated["model"] = settings.ai_model

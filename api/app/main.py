@@ -1021,7 +1021,12 @@ async def _background_classify_loop(
             await _update_classification_state(
                 running=False,
                 finished_at=datetime.now(timezone.utc).isoformat(),
+                processed=0,
+                failed=0,
+                remaining=0,
                 last_error=warning or "No classification sources available",
+                batch_size=0,
+                concurrency=0,
                 task_id=task_id,
             )
             await _set_task_status(
@@ -1138,7 +1143,12 @@ async def _background_classify_loop(
         await _update_classification_state(
             running=False,
             finished_at=datetime.now(timezone.utc).isoformat(),
+            processed=0,
+            failed=0,
+            remaining=0,
             last_error=str(exc),
+            batch_size=0,
+            concurrency=0,
             task_id=task_id,
         )
         await _set_task_status(
