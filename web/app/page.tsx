@@ -274,6 +274,48 @@ export default function Home() {
     }
   }, []);
 
+  const loadRepos = useCallback(async (append = false, offsetOverride?: number) => {
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+      setError(null);
+      setRepos([]);
+      setHasMore(false);
+    }
+    try {
+      const offset = append && typeof offsetOverride === "number" ? offsetOverride : 0;
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String(offset),
+      });
+      if (query) params.set("q", query);
+      if (category) params.set("category", category);
+      if (tag) params.set("tag", tag);
+      if (minStars) params.set("min_stars", String(minStars));
+      if (sourceUser) params.set("star_user", sourceUser);
+
+      const res = await fetch(`${API_BASE_URL}/repos?${params}`);
+      if (!res.ok) {
+        const detail = await readApiError(res, `Repos fetch failed (${res.status})`);
+        throw new Error(detail);
+      }
+      const data = await res.json();
+      const total = Number(data.total || 0);
+      const items: Repo[] = data.items || [];
+
+      setTotalCount(total || items.length);
+      setRepos((prev) => (append ? [...prev, ...items] : items));
+      setHasMore(offset + items.length < total);
+    } catch (err) {
+      const message = getErrorMessage(err, unknownErrorMessage);
+      setError(message);
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }, [category, minStars, query, sourceUser, tag, unknownErrorMessage]);
+
   const pollTaskNow = useCallback(async () => {
     const taskId = pollTargetIdRef.current;
     pollTickRef.current += 1;
@@ -416,48 +458,6 @@ export default function Home() {
       setGroupMode(false);
     }
   }, []);
-
-  const loadRepos = useCallback(async (append = false, offsetOverride?: number) => {
-    if (append) {
-      setLoadingMore(true);
-    } else {
-      setLoading(true);
-      setError(null);
-      setRepos([]);
-      setHasMore(false);
-    }
-    try {
-      const offset = append && typeof offsetOverride === "number" ? offsetOverride : 0;
-      const params = new URLSearchParams({
-        limit: String(PAGE_SIZE),
-        offset: String(offset),
-      });
-      if (query) params.set("q", query);
-      if (category) params.set("category", category);
-      if (tag) params.set("tag", tag);
-      if (minStars) params.set("min_stars", String(minStars));
-      if (sourceUser) params.set("star_user", sourceUser);
-
-      const res = await fetch(`${API_BASE_URL}/repos?${params}`);
-      if (!res.ok) {
-        const detail = await readApiError(res, `Repos fetch failed (${res.status})`);
-        throw new Error(detail);
-      }
-      const data = await res.json();
-      const total = Number(data.total || 0);
-      const items: Repo[] = data.items || [];
-
-      setTotalCount(total || items.length);
-      setRepos((prev) => (append ? [...prev, ...items] : items));
-      setHasMore(offset + items.length < total);
-    } catch (err) {
-      const message = getErrorMessage(err, unknownErrorMessage);
-      setError(message);
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  }, [category, minStars, query, sourceUser, tag, unknownErrorMessage]);
 
   useEffect(() => {
     const load = async () => {
