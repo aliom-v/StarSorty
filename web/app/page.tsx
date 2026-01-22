@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildAdminHeaders } from "./lib/admin";
 import { API_BASE_URL } from "./lib/apiBase";
 import { getErrorMessage, readApiError } from "./lib/apiError";
@@ -108,6 +108,118 @@ const formatDate = (value?: string | null) => {
   if (Number.isNaN(date.getTime())) return "n/a";
   return date.toLocaleDateString();
 };
+
+// Memoized RepoCard component to prevent unnecessary re-renders
+type RepoCardProps = {
+  repo: Repo;
+  index: number;
+  t: (key: string, params?: Record<string, unknown>) => string;
+};
+
+const RepoCard = memo(function RepoCard({ repo, index, t }: RepoCardProps) {
+  return (
+    <article
+      className={`rounded-3xl border border-ink/10 bg-surface/90 p-6 shadow-soft animate-fade-up stagger-${
+        (index % 4) + 1
+      }`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="font-display text-xl font-semibold break-words">
+            <a
+              href={repo.html_url}
+              target="_blank"
+              rel="noreferrer"
+              className="transition hover:text-moss"
+            >
+              {repo.name}
+            </a>
+          </h3>
+          {repo.description ? (
+            <p className="mt-2 text-sm text-ink/80 break-words">
+              {repo.description}
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-ink/80 break-words">
+              {t("noDescription")}
+            </p>
+          )}
+        </div>
+        <div className="flex shrink-0 flex-col items-start gap-2 text-xs sm:items-end">
+          <a
+            href={repo.html_url}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-full border border-ink/10 bg-surface px-3 py-1 text-ink/70 transition hover:border-moss hover:text-moss"
+          >
+            {t("viewOnGithub")}
+          </a>
+          <a
+            href={`/repo/?full_name=${encodeURIComponent(repo.full_name)}`}
+            className="rounded-full border border-ink/10 bg-surface px-3 py-1 text-ink/70 transition hover:border-moss hover:text-moss"
+          >
+            {t("details")}
+          </a>
+          <span className="rounded-full border border-ink/10 bg-sand px-3 py-1 text-xs">
+            {repo.language ? repo.language : t("unknown")}
+          </span>
+        </div>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-ink/70">
+        <span>
+          {t("starsWithValue", {
+            count: formatStars(repo.stargazers_count),
+          })}
+        </span>
+        <span>
+          {t("updatedWithValue", { date: formatDate(repo.updated_at) })}
+        </span>
+        {repo.category && (
+          <span className="rounded-full bg-moss/10 px-2 py-1 text-moss">
+            {repo.category}
+            {repo.subcategory ? ` / ${repo.subcategory}` : ""}
+          </span>
+        )}
+        {repo.star_users && repo.star_users.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {repo.star_users.slice(0, 3).map((user) => (
+              <span
+                key={user}
+                className="rounded-full border border-ink/10 bg-surface px-2 py-1"
+              >
+                @{user}
+              </span>
+            ))}
+          </div>
+        )}
+        {repo.topics.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {repo.topics.slice(0, 4).map((topicTag) => (
+              <span
+                key={topicTag}
+                className="rounded-full bg-clay px-2 py-1"
+              >
+                {topicTag}
+              </span>
+            ))}
+          </div>
+        )}
+        {repo.tags && repo.tags.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {repo.tags.slice(0, 4).map((repoTag) => (
+              <span
+                key={repoTag}
+                className="rounded-full border border-ink/10 bg-surface px-2 py-1"
+              >
+                {repoTag}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </article>
+  );
+});
 
 export default function Home() {
   const { t, locale, setLocale } = useI18n();
@@ -235,7 +347,7 @@ export default function Home() {
     if (pollIntervalRef.current) return;
     pollIntervalRef.current = setInterval(() => {
       pollFnRef.current();
-    }, 3000);
+    }, 8000);
   }, []);
 
   const pausePolling = useCallback(
@@ -1514,107 +1626,7 @@ export default function Home() {
                 </div>
               )}
               {repos.map((repo, index) => (
-                <article
-                  key={repo.full_name}
-                  className={`rounded-3xl border border-ink/10 bg-surface/90 p-6 shadow-soft animate-fade-up stagger-${
-                    (index % 4) + 1
-                  }`}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <h3 className="font-display text-xl font-semibold break-words">
-                        <a
-                          href={repo.html_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="transition hover:text-moss"
-                        >
-                          {repo.name}
-                        </a>
-                      </h3>
-                      {repo.description ? (
-                        <p className="mt-2 text-sm text-ink/80 break-words">
-                          {repo.description}
-                        </p>
-                      ) : (
-                        <p className="mt-2 text-sm text-ink/80 break-words">
-                          {t("noDescription")}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 flex-col items-start gap-2 text-xs sm:items-end">
-                      <a
-                        href={repo.html_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="rounded-full border border-ink/10 bg-surface px-3 py-1 text-ink/70 transition hover:border-moss hover:text-moss"
-                      >
-                        {t("viewOnGithub")}
-                      </a>
-                      <a
-                        href={`/repo/?full_name=${encodeURIComponent(repo.full_name)}`}
-                        className="rounded-full border border-ink/10 bg-surface px-3 py-1 text-ink/70 transition hover:border-moss hover:text-moss"
-                      >
-                        {t("details")}
-                      </a>
-                      <span className="rounded-full border border-ink/10 bg-sand px-3 py-1 text-xs">
-                        {repo.language ? repo.language : t("unknown")}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-ink/70">
-                    <span>
-                      {t("starsWithValue", {
-                        count: formatStars(repo.stargazers_count),
-                      })}
-                    </span>
-                    <span>
-                      {t("updatedWithValue", { date: formatDate(repo.updated_at) })}
-                    </span>
-                    {repo.category && (
-                      <span className="rounded-full bg-moss/10 px-2 py-1 text-moss">
-                        {repo.category}
-                        {repo.subcategory ? ` / ${repo.subcategory}` : ""}
-                      </span>
-                    )}
-                    {repo.star_users && repo.star_users.length > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {repo.star_users.slice(0, 3).map((user) => (
-                          <span
-                            key={user}
-                            className="rounded-full border border-ink/10 bg-surface px-2 py-1"
-                          >
-                            @{user}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {repo.topics.length > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {repo.topics.slice(0, 4).map((tag) => (
-                          <span
-                            key={tag}
-                            className="rounded-full bg-clay px-2 py-1"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {repo.tags && repo.tags.length > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {repo.tags.slice(0, 4).map((tag) => (
-                          <span
-                            key={tag}
-                            className="rounded-full border border-ink/10 bg-surface px-2 py-1"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </article>
+                <RepoCard key={repo.full_name} repo={repo} index={index} t={t} />
               ))}
             </div>
             {hasMore && (

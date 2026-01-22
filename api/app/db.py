@@ -59,6 +59,42 @@ def _ensure_parent_dir(path: str) -> None:
         os.makedirs(parent, exist_ok=True)
 
 
+# SQLite configuration from environment
+SQLITE_JOURNAL_MODE = os.getenv("SQLITE_JOURNAL_MODE", "WAL").upper()
+SQLITE_SYNCHRONOUS = os.getenv("SQLITE_SYNCHRONOUS", "NORMAL").upper()
+SQLITE_BUSY_TIMEOUT = int(os.getenv("SQLITE_BUSY_TIMEOUT", "5000"))
+
+
+async def _configure_connection(conn: aiosqlite.Connection) -> None:
+    """Configure SQLite connection for optimal performance.
+
+    Configurable via environment variables:
+    - SQLITE_JOURNAL_MODE: WAL (default), DELETE, TRUNCATE, PERSIST, MEMORY, OFF
+    - SQLITE_SYNCHRONOUS: NORMAL (default), FULL, OFF
+    - SQLITE_BUSY_TIMEOUT: 5000ms (default)
+    """
+    try:
+        # Set journal mode and log effective value
+        result = await conn.execute(f"PRAGMA journal_mode={SQLITE_JOURNAL_MODE}")
+        row = await result.fetchone()
+        effective_mode = row[0] if row else "unknown"
+        if effective_mode.upper() != SQLITE_JOURNAL_MODE:
+            logger.warning(
+                "SQLite journal_mode: requested %s, got %s",
+                SQLITE_JOURNAL_MODE,
+                effective_mode,
+            )
+        else:
+            logger.debug("SQLite journal_mode: %s", effective_mode)
+
+        await conn.execute(f"PRAGMA synchronous={SQLITE_SYNCHRONOUS}")
+        await conn.execute("PRAGMA temp_store=MEMORY")
+        await conn.execute("PRAGMA foreign_keys=ON")
+        await conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT}")
+    except Exception as exc:
+        logger.warning("Failed to apply SQLite pragmas: %s", exc)
+
+
 class SQLitePool:
     def __init__(self, db_path: str, size: int) -> None:
         self._db_path = db_path
@@ -69,6 +105,7 @@ class SQLitePool:
         for _ in range(self._size):
             conn = await aiosqlite.connect(self._db_path, timeout=30)
             conn.row_factory = aiosqlite.Row
+            await _configure_connection(conn)
             await self._pool.put(conn)
 
     async def close(self) -> None:
@@ -112,6 +149,7 @@ async def get_connection() -> aiosqlite.Connection:
         _ensure_parent_dir(db_path)
         conn = await aiosqlite.connect(db_path, timeout=30)
         conn.row_factory = aiosqlite.Row
+        await _configure_connection(conn)
         try:
             yield conn
         finally:
@@ -223,6 +261,15 @@ async def init_db() -> None:
         )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_override_category ON repos(override_category)"
+        )
+        # Separate indexes for classification queue - SQLite can combine them
+        # Index for sorting unclassified repos by priority
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repos_classify_sort ON repos(category, pushed_at DESC, stargazers_count DESC)"
+        )
+        # Index for force mode cursor-based pagination
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repos_full_name ON repos(full_name)"
         )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_override_history_full_name ON override_history(full_name)"
@@ -860,6 +907,52 @@ async def update_classification(
 
 
 @_retry_on_lock()
+async def update_classifications_bulk(items: List[Dict[str, Any]]) -> int:
+    """Batch update classification results for multiple repos.
+
+    Uses explicit transaction with rollback on error to prevent partial updates.
+    """
+    if not items:
+        return 0
+    timestamp = datetime.now(timezone.utc).isoformat()
+    rows: List[Tuple[Any, ...]] = []
+    for item in items:
+        full_name = item.get("full_name")
+        if not full_name:
+            continue
+        rows.append(
+            (
+                item.get("category"),
+                item.get("subcategory"),
+                item.get("confidence", 0.0),
+                json.dumps(item.get("tags") or []),
+                item.get("provider"),
+                item.get("model"),
+                timestamp,
+                full_name,
+            )
+        )
+    if not rows:
+        return 0
+    async with get_connection() as conn:
+        try:
+            await conn.executemany(
+                """
+                UPDATE repos
+                SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?,
+                    ai_provider = ?, ai_model = ?, ai_updated_at = ?
+                WHERE full_name = ?
+                """,
+                rows,
+            )
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
+    return len(rows)
+
+
+@_retry_on_lock()
 async def record_readme_fetch(full_name: str, summary: Optional[str], success: bool) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
     async with get_connection() as conn:
@@ -895,6 +988,69 @@ async def record_readme_fetch(full_name: str, summary: Optional[str], success: b
                 (timestamp, full_name),
             )
         await conn.commit()
+
+
+@_retry_on_lock()
+async def record_readme_fetches(entries: List[Dict[str, Any]]) -> None:
+    """Batch update README fetch results for multiple repos.
+
+    Uses explicit transaction with rollback on error to prevent partial updates.
+    """
+    if not entries:
+        return
+    timestamp = datetime.now(timezone.utc).isoformat()
+    with_summary: List[Tuple[Any, ...]] = []
+    empty_summary: List[Tuple[Any, ...]] = []
+    failures: List[Tuple[Any, ...]] = []
+    for entry in entries:
+        full_name = entry.get("full_name")
+        if not full_name:
+            continue
+        success = bool(entry.get("success"))
+        summary = entry.get("summary") if success else None
+        if success:
+            if summary:
+                with_summary.append((summary, timestamp, timestamp, full_name))
+            else:
+                empty_summary.append((timestamp, timestamp, full_name))
+        else:
+            failures.append((timestamp, full_name))
+    async with get_connection() as conn:
+        try:
+            if with_summary:
+                await conn.executemany(
+                    """
+                    UPDATE repos
+                    SET readme_summary = ?, readme_fetched_at = ?, readme_last_attempt_at = ?,
+                        readme_failures = 0, readme_empty = 0
+                    WHERE full_name = ?
+                    """,
+                    with_summary,
+                )
+            if empty_summary:
+                await conn.executemany(
+                    """
+                    UPDATE repos
+                    SET readme_fetched_at = ?, readme_last_attempt_at = ?,
+                        readme_failures = 0, readme_empty = 1
+                    WHERE full_name = ?
+                      AND (readme_summary IS NULL OR readme_summary = '')
+                    """,
+                    empty_summary,
+                )
+            if failures:
+                await conn.executemany(
+                    """
+                    UPDATE repos
+                    SET readme_last_attempt_at = ?, readme_failures = COALESCE(readme_failures, 0) + 1
+                    WHERE full_name = ?
+                    """,
+                    failures,
+                )
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
 
 
 async def select_repos_for_classification(

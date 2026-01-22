@@ -28,10 +28,12 @@ from .db import (
     prune_star_user,
     prune_users_not_in,
     record_readme_fetch,
+    record_readme_fetches,
     reset_stale_tasks,
     select_repos_for_classification,
     update_task,
     update_classification,
+    update_classifications_bulk,
     update_override,
     update_sync_status,
     upsert_repos,
@@ -76,6 +78,11 @@ DEFAULT_CLASSIFY_CONCURRENCY = int(os.getenv("CLASSIFY_CONCURRENCY", "3"))
 CLASSIFY_CONCURRENCY_MAX = int(os.getenv("CLASSIFY_CONCURRENCY_MAX", "10"))
 CLASSIFY_BATCH_DELAY_MS = int(os.getenv("CLASSIFY_BATCH_DELAY_MS", "0"))
 AI_CLASSIFY_BATCH_SIZE = int(os.getenv("AI_CLASSIFY_BATCH_SIZE", "5"))
+CLASSIFY_REMAINING_REFRESH_EVERY = int(os.getenv("CLASSIFY_REMAINING_REFRESH_EVERY", "5"))
+AI_BATCH_FALLBACK = (
+    os.getenv("AI_BATCH_FALLBACK", "1").strip().lower()
+    not in ("0", "false", "no")
+)
 
 origins: List[str] = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
 allow_credentials = True
@@ -823,39 +830,77 @@ async def _classify_repos_batch(
     classified = 0
     failed = 0
     repo_datas: list[dict] = []
+    readme_targets: list[dict] = []
+
     for repo in repos:
         if isinstance(repo, RepoBase):
             repo_data = repo.model_dump()
         else:
             repo_data = dict(repo)
-        if include_readme:
-            if _should_fetch_readme(repo_data):
-                summary = ""
-                try:
-                    summary = await github_client.fetch_readme_summary(repo_data["full_name"])
-                except Exception:
+        if include_readme and _should_fetch_readme(repo_data):
+            readme_targets.append(repo_data)
+        repo_datas.append(repo_data)
+
+    # Concurrent README fetching
+    if include_readme and readme_targets:
+        async def fetch_readme(target: dict) -> dict:
+            try:
+                summary = await github_client.fetch_readme_summary(target["full_name"])
+                return {"full_name": target["full_name"], "summary": summary, "success": True}
+            except Exception as exc:
+                # Log non-404 errors for diagnosis (rate limits, auth issues, etc.)
+                logger.debug(
+                    "README fetch failed for %s: %s",
+                    target.get("full_name"),
+                    exc,
+                )
+                return {"full_name": target["full_name"], "summary": None, "success": False}
+
+        results = await asyncio.gather(
+            *(fetch_readme(target) for target in readme_targets),
+            return_exceptions=True,
+        )
+        readme_updates: list[dict] = []
+        for target, result in zip(readme_targets, results):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "README fetch raised unexpected exception for %s: %s",
+                    target.get("full_name"),
+                    result,
+                )
+                readme_updates.append(
+                    {"full_name": target.get("full_name"), "summary": None, "success": False}
+                )
+                continue
+            readme_updates.append(result)
+            if result.get("success") and result.get("summary"):
+                target["readme_summary"] = result["summary"]
+
+        if readme_updates:
+            try:
+                await record_readme_fetches(readme_updates)
+            except Exception as exc:
+                logger.warning("Failed to persist README batch updates: %s", exc)
+                for update in readme_updates:
+                    full_name = update.get("full_name")
+                    if not full_name:
+                        continue
                     try:
-                        await record_readme_fetch(repo_data["full_name"], None, False)
+                        await record_readme_fetch(
+                            full_name,
+                            update.get("summary"),
+                            bool(update.get("success")),
+                        )
                     except Exception:
                         logger.warning(
                             "Failed to record README fetch failure for %s",
-                            repo_data.get("full_name"),
+                            full_name,
                         )
-                else:
-                    try:
-                        await record_readme_fetch(repo_data["full_name"], summary, True)
-                    except Exception as exc:
-                        logger.warning(
-                            "Failed to persist README summary for %s: %s",
-                            repo_data.get("full_name"),
-                            exc,
-                        )
-                if summary:
-                    repo_data["readme_summary"] = summary
-        repo_datas.append(repo_data)
 
     use_rules = classify_mode != "ai_only"
     pending_ai: list[dict] = []
+    rule_updates: list[dict] = []
+
     for repo_data in repo_datas:
         if use_rules:
             rule = match_rule(repo_data, rules)
@@ -869,48 +914,136 @@ async def _classify_repos_batch(
                     },
                     data,
                 )
-                try:
-                    await update_classification(
-                        repo_data["full_name"],
-                        validated["category"],
-                        validated["subcategory"],
-                        validated["confidence"],
-                        validated["tags"],
-                        "rules",
-                        "rules",
-                    )
-                    classified += 1
-                except Exception:
-                    failed += 1
+                rule_updates.append(
+                    {
+                        "full_name": repo_data.get("full_name"),
+                        "category": validated["category"],
+                        "subcategory": validated["subcategory"],
+                        "confidence": validated["confidence"],
+                        "tags": validated["tags"],
+                        "provider": "rules",
+                        "model": "rules",
+                    }
+                )
                 continue
         if use_ai:
             pending_ai.append(repo_data)
         else:
             failed += 1
 
+    # Bulk write rule classifications
+    if rule_updates:
+        try:
+            await update_classifications_bulk(rule_updates)
+            classified += len(rule_updates)
+        except Exception as exc:
+            logger.warning("Bulk rule classification update failed: %s", exc)
+            for item in rule_updates:
+                full_name = item.get("full_name")
+                if not full_name:
+                    failed += 1
+                    continue
+                try:
+                    await update_classification(
+                        full_name,
+                        item["category"],
+                        item["subcategory"],
+                        item["confidence"],
+                        item["tags"],
+                        item["provider"],
+                        item["model"],
+                    )
+                    classified += 1
+                except Exception:
+                    failed += 1
+
+    # AI classification with fallback
     if pending_ai:
+        ai_updates: list[dict] = []
+        fallback_targets: list[dict] = []
+        batch_error: Exception | None = None
         try:
             results = await ai_client.classify_repos_with_retry(pending_ai, data, retries=2)
-        except Exception:
-            failed += len(pending_ai)
-            return (classified, failed)
+        except Exception as exc:
+            batch_error = exc
+            results = [None for _ in pending_ai]
+
         for repo_data, result in zip(pending_ai, results):
-            if not result:
-                failed += 1
-                continue
-            try:
-                await update_classification(
-                    repo_data["full_name"],
-                    result["category"],
-                    result["subcategory"],
-                    result["confidence"],
-                    result["tags"],
-                    result["provider"],
-                    result["model"],
+            if result:
+                ai_updates.append(
+                    {
+                        "full_name": repo_data.get("full_name"),
+                        "category": result["category"],
+                        "subcategory": result["subcategory"],
+                        "confidence": result["confidence"],
+                        "tags": result["tags"],
+                        "provider": result["provider"],
+                        "model": result["model"],
+                    }
                 )
-                classified += 1
-            except Exception:
-                failed += 1
+            else:
+                fallback_targets.append(repo_data)
+
+        # Fallback: retry failed items individually
+        if fallback_targets:
+            if AI_BATCH_FALLBACK:
+                if batch_error:
+                    logger.warning(
+                        "AI batch classify failed, falling back to single-repo requests: %s",
+                        batch_error,
+                    )
+                fallback_results = await asyncio.gather(
+                    *(
+                        ai_client.classify_repo_with_retry(repo_data, data, retries=1)
+                        for repo_data in fallback_targets
+                    ),
+                    return_exceptions=True,
+                )
+                for repo_data, result in zip(fallback_targets, fallback_results):
+                    if isinstance(result, Exception) or not result:
+                        failed += 1
+                        continue
+                    ai_updates.append(
+                        {
+                            "full_name": repo_data.get("full_name"),
+                            "category": result["category"],
+                            "subcategory": result["subcategory"],
+                            "confidence": result["confidence"],
+                            "tags": result["tags"],
+                            "provider": result["provider"],
+                            "model": result["model"],
+                        }
+                    )
+            else:
+                if batch_error:
+                    logger.warning("AI batch classify failed: %s", batch_error)
+                failed += len(fallback_targets)
+
+        # Bulk write AI classifications
+        if ai_updates:
+            try:
+                await update_classifications_bulk(ai_updates)
+                classified += len(ai_updates)
+            except Exception as exc:
+                logger.warning("Bulk AI classification update failed: %s", exc)
+                for item in ai_updates:
+                    full_name = item.get("full_name")
+                    if not full_name:
+                        failed += 1
+                        continue
+                    try:
+                        await update_classification(
+                            full_name,
+                            item["category"],
+                            item["subcategory"],
+                            item["confidence"],
+                            item["tags"],
+                            item["provider"],
+                            item["model"],
+                        )
+                        classified += 1
+                    except Exception:
+                        failed += 1
 
     return (classified, failed)
 
@@ -1070,6 +1203,8 @@ async def _background_classify_loop(
         success_total = 0
         processed_total = 0
         failed_total = 0
+        remaining_refresh_every = max(1, CLASSIFY_REMAINING_REFRESH_EVERY)
+        refresh_counter = 0
         while not classification_stop.is_set():
             if force_mode:
                 repos_to_classify = await select_repos_for_classification(
@@ -1111,7 +1246,20 @@ async def _background_classify_loop(
                         cursor_full_name=cursor_full_name,
                     )
             else:
-                remaining = await count_repos_for_classification(False)
+                # Reduce count query frequency - only refresh every N batches
+                # Force refresh when failures occur to get accurate remaining count
+                refresh_counter += 1
+                should_refresh = (
+                    refresh_counter % remaining_refresh_every == 0 or
+                    batch_failed > 0  # Force refresh on failures for accuracy
+                )
+                if should_refresh:
+                    remaining = await count_repos_for_classification(False)
+                    refreshed = True
+                else:
+                    # Only decrement by successful classifications, not failures
+                    remaining = max(0, remaining - batch_classified)
+                    refreshed = False
             state = await _get_classification_state()
             await _update_classification_state(
                 processed=state["processed"] + processed,
@@ -1122,9 +1270,11 @@ async def _background_classify_loop(
             if processed == 0:
                 break
             if not force_mode:
-                if previous_remaining is not None and remaining >= previous_remaining:
-                    break
-                previous_remaining = remaining
+                # Check for no progress on refresh (includes after failures)
+                if refreshed:
+                    if previous_remaining is not None and remaining >= previous_remaining:
+                        break
+                    previous_remaining = remaining
             if CLASSIFY_BATCH_DELAY_MS > 0:
                 await asyncio.sleep(CLASSIFY_BATCH_DELAY_MS / 1000)
 
