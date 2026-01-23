@@ -723,6 +723,7 @@ async def list_repos(
     language: Optional[str] = None,
     min_stars: Optional[int] = None,
     category: Optional[str] = None,
+    subcategory: Optional[str] = None,
     tag: Optional[str] = None,
     star_user: Optional[str] = None,
     limit: int = 50,
@@ -753,6 +754,10 @@ async def list_repos(
     if category:
         clauses.append("COALESCE(NULLIF(override_category, ''), category) = ?")
         params.append(category)
+
+    if subcategory:
+        clauses.append("COALESCE(NULLIF(override_subcategory, ''), subcategory) = ?")
+        params.append(subcategory)
 
     if tag:
         clauses.append("COALESCE(NULLIF(override_tags, ''), ai_tags) LIKE ?")
@@ -1161,6 +1166,19 @@ async def get_repo_stats() -> Dict[str, Any]:
             ORDER BY count DESC, name ASC
             """
         )).fetchall()
+        subcategory_rows = await (await conn.execute(
+            """
+            SELECT
+                COALESCE(NULLIF(override_category, ''), NULLIF(category, ''), 'uncategorized') AS category,
+                COALESCE(NULLIF(override_subcategory, ''), NULLIF(subcategory, ''), 'other') AS name,
+                COUNT(*) AS count
+            FROM repos
+            GROUP BY
+                COALESCE(NULLIF(override_category, ''), NULLIF(category, ''), 'uncategorized'),
+                COALESCE(NULLIF(override_subcategory, ''), NULLIF(subcategory, ''), 'other')
+            ORDER BY count DESC, name ASC
+            """
+        )).fetchall()
         tag_rows = await (await conn.execute(
             "SELECT override_tags, ai_tags FROM repos"
         )).fetchall()
@@ -1169,6 +1187,14 @@ async def get_repo_stats() -> Dict[str, Any]:
     category_counts = [
         {"name": row["name"], "count": int(row["count"] or 0)}
         for row in category_rows
+    ]
+    subcategory_counts = [
+        {
+            "category": row["category"],
+            "name": row["name"],
+            "count": int(row["count"] or 0),
+        }
+        for row in subcategory_rows
     ]
 
     tag_map: Dict[str, int] = {}
@@ -1197,6 +1223,7 @@ async def get_repo_stats() -> Dict[str, Any]:
         "total": int(total or 0),
         "unclassified": int(unclassified or 0),
         "categories": category_counts,
+        "subcategories": subcategory_counts,
         "tags": tag_counts,
         "users": user_counts,
     }

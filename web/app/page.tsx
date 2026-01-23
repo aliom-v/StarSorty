@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildAdminHeaders } from "./lib/admin";
 import { API_BASE_URL } from "./lib/apiBase";
 import { getErrorMessage, readApiError } from "./lib/apiError";
-import { useI18n } from "./lib/i18n";
+import { useI18n, type Messages, type MessageValues } from "./lib/i18n";
 import { useTheme } from "./lib/theme";
 
 type Repo = {
@@ -37,10 +37,15 @@ type StatsItem = {
   count: number;
 };
 
+type SubcategoryStatsItem = StatsItem & {
+  category: string;
+};
+
 type Stats = {
   total: number;
   unclassified: number;
   categories: StatsItem[];
+  subcategories?: SubcategoryStatsItem[];
   tags: StatsItem[];
   users: StatsItem[];
 };
@@ -113,7 +118,7 @@ const formatDate = (value?: string | null) => {
 type RepoCardProps = {
   repo: Repo;
   index: number;
-  t: (key: string, params?: Record<string, unknown>) => string;
+  t: (key: keyof Messages, params?: MessageValues) => string;
 };
 
 const RepoCard = memo(function RepoCard({ repo, index, t }: RepoCardProps) {
@@ -264,7 +269,7 @@ export default function Home() {
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
-  const [tag, setTag] = useState<string | null>(null);
+  const [subcategory, setSubcategory] = useState<string | null>(null);
   const [minStars, setMinStars] = useState<number | null>(null);
   const [sourceUser, setSourceUser] = useState<string | null>(null);
   const [groupMode, setGroupMode] = useState(false);
@@ -403,7 +408,7 @@ export default function Home() {
       });
       if (query) params.set("q", query);
       if (category) params.set("category", category);
-      if (tag) params.set("tag", tag);
+      if (subcategory) params.set("subcategory", subcategory);
       if (minStars) params.set("min_stars", String(minStars));
       if (sourceUser) params.set("star_user", sourceUser);
 
@@ -426,7 +431,7 @@ export default function Home() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [category, minStars, query, sourceUser, tag, unknownErrorMessage]);
+  }, [category, minStars, query, sourceUser, subcategory, unknownErrorMessage]);
 
   const pollTaskNow = useCallback(async () => {
     const taskId = pollTargetIdRef.current;
@@ -651,7 +656,7 @@ export default function Home() {
 
   useEffect(() => {
     loadRepos(false);
-  }, [category, loadRepos, minStars, query, sourceUser, tag]);
+  }, [category, loadRepos, minStars, query, sourceUser, subcategory]);
 
   useEffect(() => {
     if (!actionMessage) return;
@@ -1018,19 +1023,23 @@ export default function Home() {
       .sort((a, b) => b.count - a.count);
   }, [repos, stats]);
 
-  const tagCounts = useMemo(() => {
-    if (stats?.tags?.length) return stats.tags;
+  const subcategoryCounts = useMemo(() => {
+    if (!category) return [];
+    const items = stats?.subcategories?.filter((item) => item.category === category);
+    if (items && items.length > 0) {
+      return [...items].sort((a, b) => b.count - a.count);
+    }
     const map = new Map<string, number>();
     repos.forEach((repo) => {
-      const repoTags = repo.tags || [];
-      repoTags.forEach((tagName) => {
-        map.set(tagName, (map.get(tagName) || 0) + 1);
-      });
+      const repoCategory = repo.category || "uncategorized";
+      if (repoCategory !== category) return;
+      const key = repo.subcategory || "other";
+      map.set(key, (map.get(key) || 0) + 1);
     });
     return Array.from(map.entries())
-      .map(([name, count]) => ({ name, count }))
+      .map(([name, count]) => ({ name, count, category }))
       .sort((a, b) => b.count - a.count);
-  }, [repos, stats]);
+  }, [category, repos, stats]);
 
   const userCounts = useMemo(() => {
     if (stats?.users?.length) return stats.users;
@@ -1052,6 +1061,11 @@ export default function Home() {
     [repos, stats]
   );
   const overallTotal = stats?.total ?? (totalCount || repos.length);
+  const selectedCategoryCount = useMemo(() => {
+    if (!category) return overallTotal;
+    const selected = categoryCounts.find((item) => item.name === category);
+    return selected?.count ?? 0;
+  }, [category, categoryCounts, overallTotal]);
 
   const lastSyncLabel = status?.last_sync_at
     ? new Date(status.last_sync_at).toLocaleString()
@@ -1458,7 +1472,10 @@ export default function Home() {
                     ? "bg-clay text-ink"
                     : "bg-surface/70 text-ink/70"
                 }`}
-                onClick={() => setCategory(null)}
+                onClick={() => {
+                  setCategory(null);
+                  setSubcategory(null);
+                }}
               >
                 <span>{t("all")}</span>
                 <span>{overallTotal}</span>
@@ -1471,45 +1488,50 @@ export default function Home() {
                       ? "bg-clay text-ink"
                       : "bg-surface/70 text-ink/70"
                 }`}
-                onClick={() => setCategory(item.name)}
+                onClick={() => {
+                  setCategory(item.name);
+                  setSubcategory(null);
+                }}
               >
                 <span>{item.name === "unknown" ? t("unknown") : item.name}</span>
                 <span>{item.count}</span>
               </button>
               ))}
             </div>
-            <div className="mt-8">
-              <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                {t("tools")}
-              </h3>
-              <div className="mt-4 space-y-2 text-sm">
-                <button
-                  className={`flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left ${
-                    tag === null
-                      ? "bg-clay text-ink"
-                      : "bg-surface/70 text-ink/70"
-                  }`}
-                  onClick={() => setTag(null)}
-                >
-                  <span>{t("all")}</span>
-                  <span>{overallTotal}</span>
-                </button>
-                {tagCounts.slice(0, 10).map((item) => (
+            {category && (
+              <div className="mt-8">
+                <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">
+                  {t("subcategories")}
+                </h3>
+                <div className="mt-4 space-y-2 text-sm">
                   <button
-                    key={item.name}
                     className={`flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left ${
-                      tag === item.name
+                      subcategory === null
                         ? "bg-clay text-ink"
                         : "bg-surface/70 text-ink/70"
                     }`}
-                    onClick={() => setTag(item.name)}
+                    onClick={() => setSubcategory(null)}
                   >
-                    <span>{item.name}</span>
-                    <span>{item.count}</span>
+                    <span>{t("all")}</span>
+                    <span>{selectedCategoryCount}</span>
                   </button>
-                ))}
+                  {subcategoryCounts.map((item) => (
+                    <button
+                      key={item.name}
+                      className={`flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left ${
+                        subcategory === item.name
+                          ? "bg-clay text-ink"
+                          : "bg-surface/70 text-ink/70"
+                      }`}
+                      onClick={() => setSubcategory(item.name)}
+                    >
+                      <span>{item.name === "unknown" ? t("unknown") : item.name}</span>
+                      <span>{item.count}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
             {groupMode && (
               <div className="mt-8">
                 <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">

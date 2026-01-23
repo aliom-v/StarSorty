@@ -38,6 +38,7 @@ def match_rule(repo: Dict[str, Any], rules: List[Dict[str, Any]]) -> Optional[Di
             str(repo.get("name") or ""),
             str(repo.get("full_name") or ""),
             str(repo.get("description") or ""),
+            str(repo.get("language") or ""),
             " ".join(repo.get("topics") or []),
             str(repo.get("readme_summary") or ""),
         ]

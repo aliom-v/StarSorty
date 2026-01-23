@@ -5,13 +5,13 @@ categories:
   - name: media
     subcategories: [downloader, storage, server, cloud-drive, video, audio, image, streaming]
   - name: ai
-    subcategories: [openai, llm, generation, devtools]
+    subcategories: [openai, llm, generation, agent, rag, devtools]
   - name: productivity
-    subcategories: [notes, reader, blog]
+    subcategories: [notes, reader, blog, task, calendar, automation]
   - name: devops
-    subcategories: [container, webserver, cloud-provider, monitor]
+    subcategories: [container, webserver, cloud-provider, monitor, ci-cd, iac, observability]
   - name: dev
-    subcategories: [community, frontend, language, sql, nosql, ide, editor, api-tools, android, cross-platform]
+    subcategories: [community, frontend, backend, language, sql, nosql, ide, editor, api-tools, testing, build, docs, android, cross-platform]
   - name: security
     subcategories: [hacking, privacy]
   - name: os
@@ -41,6 +41,9 @@ tags:
   - llm
   - ai-art
   - ai-dev
+  - agent
+  - rag
+  - vector-db
   - notes
   - rss
   - blog
@@ -48,8 +51,15 @@ tags:
   - nginx
   - vps
   - monitor
+  - ci
+  - iac
+  - observability
   - dev-community
   - frontend
+  - backend
+  - testing
+  - build
+  - docs
   - programming
   - security
   - privacy

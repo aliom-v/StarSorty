@@ -191,24 +191,57 @@
     },
     {
       "keywords": [
-        "langchain",
         "flowise",
         "dify",
         "coze",
         "fastgpt",
-        "autogpt",
-        "babyagi",
-        "agent",
-        "rag",
-        "vector-db",
-        "pinecone",
-        "milvus"
+        "promptflow",
+        "llm-app"
       ],
       "category": "ai",
       "subcategory": "devtools",
       "tags": [
         "ai",
         "ai-dev"
+      ]
+    },
+    {
+      "keywords": [
+        "autogpt",
+        "babyagi",
+        "autogen",
+        "crewai",
+        "langgraph",
+        "agentops"
+      ],
+      "category": "ai",
+      "subcategory": "agent",
+      "tags": [
+        "ai",
+        "agent"
+      ]
+    },
+    {
+      "keywords": [
+        "langchain",
+        "llamaindex",
+        "haystack",
+        "chroma",
+        "qdrant",
+        "weaviate",
+        "pinecone",
+        "milvus",
+        "faiss",
+        "vector-db",
+        "retrieval-augmented",
+        "retrieval augmented"
+      ],
+      "category": "ai",
+      "subcategory": "rag",
+      "tags": [
+        "ai",
+        "rag",
+        "vector-db"
       ]
     },
     {
@@ -347,6 +380,57 @@
       "subcategory": "monitor",
       "tags": [
         "monitor"
+      ]
+    },
+    {
+      "keywords": [
+        "github actions",
+        "gitlab ci",
+        "jenkins",
+        "circleci",
+        "travis",
+        "drone",
+        "buildkite",
+        "teamcity",
+        "azure devops"
+      ],
+      "category": "devops",
+      "subcategory": "ci-cd",
+      "tags": [
+        "ci"
+      ]
+    },
+    {
+      "keywords": [
+        "terraform",
+        "pulumi",
+        "ansible",
+        "saltstack",
+        "chef",
+        "puppet",
+        "packer",
+        "crossplane",
+        "helm"
+      ],
+      "category": "devops",
+      "subcategory": "iac",
+      "tags": [
+        "iac"
+      ]
+    },
+    {
+      "keywords": [
+        "opentelemetry",
+        "jaeger",
+        "zipkin",
+        "tempo",
+        "loki",
+        "sentry"
+      ],
+      "category": "devops",
+      "subcategory": "observability",
+      "tags": [
+        "observability"
       ]
     },
     {
@@ -533,6 +617,81 @@
       "subcategory": "frontend",
       "tags": [
         "frontend"
+      ]
+    },
+    {
+      "keywords": [
+        "fastapi",
+        "django",
+        "flask",
+        "spring",
+        "spring boot",
+        "express",
+        "nestjs",
+        "gin",
+        "fiber",
+        "laravel",
+        "rails",
+        "asp.net",
+        "phoenix"
+      ],
+      "category": "dev",
+      "subcategory": "backend",
+      "tags": [
+        "backend"
+      ]
+    },
+    {
+      "keywords": [
+        "pytest",
+        "jest",
+        "mocha",
+        "vitest",
+        "cypress",
+        "playwright",
+        "selenium",
+        "junit",
+        "testng"
+      ],
+      "category": "dev",
+      "subcategory": "testing",
+      "tags": [
+        "testing"
+      ]
+    },
+    {
+      "keywords": [
+        "webpack",
+        "vite",
+        "rollup",
+        "esbuild",
+        "parcel",
+        "gulp",
+        "grunt",
+        "nx",
+        "turbo",
+        "bazel",
+        "buck"
+      ],
+      "category": "dev",
+      "subcategory": "build",
+      "tags": [
+        "build"
+      ]
+    },
+    {
+      "keywords": [
+        "mkdocs",
+        "sphinx",
+        "docsify",
+        "gitbook",
+        "readthedocs",
+        "mdbook"
+      ],
+      "category": "dev",
+      "subcategory": "docs",
+      "tags": [
+        "docs"
       ]
     },
     {
