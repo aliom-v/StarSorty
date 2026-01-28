@@ -78,3 +78,12 @@ def validate_classification(
         "tags": normalized_tags,
         "confidence": confidence_value,
     }
+
+
+def validate_classification_v2(result: Dict[str, Any]) -> Dict[str, Any]:
+    summary_zh = str(result.get("summary_zh") or "").strip()[:200]
+    raw_tags = result.get("tags") or []
+    tags = [str(t).strip() for t in raw_tags if str(t).strip()][:8]
+    raw_keywords = result.get("keywords") or []
+    keywords = [str(k).strip() for k in raw_keywords if str(k).strip()][:5]
+    return {"summary_zh": summary_zh, "tags": tags, "keywords": keywords}

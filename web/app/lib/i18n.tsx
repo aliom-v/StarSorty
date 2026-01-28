@@ -125,6 +125,11 @@ const translations = {
     providerWithValue: "Provider: {value}",
     modelWithValue: "Model: {value}",
     unknownError: "Unknown error",
+    tagCloud: "Tag Cloud",
+    selectedTags: "Selected Tags",
+    clearTags: "Clear",
+    summary: "Summary",
+    keywords: "Keywords",
   },
   zh: {
     title: "把你的星标像产品一样整理。",
@@ -238,6 +243,11 @@ const translations = {
     providerWithValue: "提供方：{value}",
     modelWithValue: "模型：{value}",
     unknownError: "未知错误",
+    tagCloud: "标签云",
+    selectedTags: "已选标签",
+    clearTags: "清除",
+    summary: "摘要",
+    keywords: "关键词",
   },
 } as const;
 

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from .config import get_settings
-from .taxonomy import format_taxonomy_for_prompt, validate_classification
+from .taxonomy import format_taxonomy_for_prompt, validate_classification, validate_classification_v2
 
 logger = logging.getLogger("starsorty.ai")
 
@@ -221,6 +221,54 @@ def _build_batch_prompts(repos: List[Dict[str, Any]], taxonomy_text: str, allowe
         f"Allowed tags: {tags_line}\n"
     )
     user_prompt = json.dumps(items, ensure_ascii=True)
+    return {"system": system_prompt, "user": user_prompt}
+
+
+def _build_prompts_v2(repo: Dict[str, Any]) -> Dict[str, str]:
+    system_prompt = """你是一个 GitHub 仓库分类专家。分析仓库信息并输出 JSON。
+
+输出格式：
+{
+  "summary_zh": "一句话中文摘要（20-50字）",
+  "tags": ["标签1", "标签2", ...],
+  "keywords": ["关键词1", "关键词2", ...]
+}
+
+规则：
+1. summary_zh: 中文，描述项目核心功能
+2. tags: 5-8个标签，涵盖项目类型、技术栈、应用场景
+3. keywords: 3-5个搜索关键词，中英文混合
+4. 忽略编程语言，关注功能和用途
+
+仅返回 JSON。"""
+    user_prompt = json.dumps(_build_repo_context(repo), ensure_ascii=False)
+    return {"system": system_prompt, "user": user_prompt}
+
+
+def _build_batch_prompts_v2(repos: List[Dict[str, Any]]) -> Dict[str, str]:
+    items = []
+    for index, repo in enumerate(repos):
+        context = _build_repo_context(repo)
+        context["index"] = index
+        items.append(context)
+    system_prompt = """你是一个 GitHub 仓库分类专家。分析仓库信息并输出 JSON 数组。
+
+输出格式（数组，与输入顺序一致）：
+[{
+  "index": 0,
+  "summary_zh": "一句话中文摘要（20-50字）",
+  "tags": ["标签1", "标签2", ...],
+  "keywords": ["关键词1", "关键词2", ...]
+}]
+
+规则：
+1. summary_zh: 中文，描述项目核心功能
+2. tags: 5-8个标签，涵盖项目类型、技术栈、应用场景
+3. keywords: 3-5个搜索关键词，中英文混合
+4. 忽略编程语言，关注功能和用途
+
+仅返回 JSON 数组。"""
+    user_prompt = json.dumps(items, ensure_ascii=False)
     return {"system": system_prompt, "user": user_prompt}
 
 
@@ -465,6 +513,233 @@ class AIClient:
                 wait = 2 ** attempt
                 logger.warning(
                     "AI batch classify failed on attempt %s/%s: %s. Retrying in %ss",
+                    attempt + 1,
+                    retries + 1,
+                    exc,
+                    wait,
+                )
+                await asyncio.sleep(wait)
+                attempt += 1
+
+    async def classify_repo_v2(self, repo: Dict[str, Any]) -> Dict[str, Any]:
+        settings = get_settings()
+        raw_provider = settings.ai_provider.lower()
+        if raw_provider in ("", "none"):
+            raise ValueError("AI_PROVIDER is not configured")
+        if not settings.ai_model:
+            raise ValueError("AI_MODEL is required for classification")
+
+        provider = "anthropic" if raw_provider == "anthropic" else "openai"
+        base_url = settings.ai_base_url or _default_base_url(raw_provider)
+        if not base_url:
+            raise ValueError("AI_BASE_URL is required for this provider")
+
+        prompts = _build_prompts_v2(repo)
+        headers = _headers(provider)
+        payload: Dict[str, Any]
+        url: str
+
+        if provider == "anthropic":
+            url = f"{base_url.rstrip('/')}/messages"
+            payload = {
+                "model": settings.ai_model,
+                "system": prompts["system"],
+                "messages": [{"role": "user", "content": prompts["user"]}],
+                "max_tokens": settings.ai_max_tokens,
+                "temperature": settings.ai_temperature,
+            }
+        else:
+            url = f"{base_url.rstrip('/')}/chat/completions"
+            payload = {
+                "model": settings.ai_model,
+                "messages": [
+                    {"role": "system", "content": prompts["system"]},
+                    {"role": "user", "content": prompts["user"]},
+                ],
+                "max_tokens": settings.ai_max_tokens,
+                "temperature": settings.ai_temperature,
+            }
+
+        async with self._semaphore:
+            response = await self._client.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=settings.ai_timeout,
+            )
+        _raise_for_status_with_detail(response, url)
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            detail = _sanitize_response_body(response.text)
+            if len(detail) > 800:
+                detail = detail[:800] + "..."
+            raise ValueError(
+                f"AI response JSON decode failed (status {response.status_code}) | url={url} | body={detail}"
+            ) from exc
+
+        if provider == "anthropic":
+            content = data.get("content") or []
+            text = ""
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text += block.get("text", "")
+            extracted = _extract_json(text)
+        else:
+            choices = data.get("choices") or []
+            message = (choices[0].get("message") or {}) if choices else {}
+            extracted = _extract_json(message.get("content", ""))
+
+        if not isinstance(extracted, dict):
+            detail = _sanitize_response_body(response.text)
+            if len(detail) > 800:
+                detail = detail[:800] + "..."
+            raise ValueError(
+                f"AI response did not contain a valid classification object | url={url} | body={detail}"
+            )
+
+        validated = validate_classification_v2(extracted)
+        validated["provider"] = raw_provider
+        validated["model"] = settings.ai_model
+        return validated
+
+    async def classify_repos_v2(self, repos: List[Dict[str, Any]]) -> List[Optional[Dict[str, Any]]]:
+        settings = get_settings()
+        raw_provider = settings.ai_provider.lower()
+        if raw_provider in ("", "none"):
+            raise ValueError("AI_PROVIDER is not configured")
+        if not settings.ai_model:
+            raise ValueError("AI_MODEL is required for classification")
+
+        provider = "anthropic" if raw_provider == "anthropic" else "openai"
+        base_url = settings.ai_base_url or _default_base_url(raw_provider)
+        if not base_url:
+            raise ValueError("AI_BASE_URL is required for this provider")
+
+        prompts = _build_batch_prompts_v2(repos)
+        headers = _headers(provider)
+        payload: Dict[str, Any]
+        url: str
+
+        if provider == "anthropic":
+            url = f"{base_url.rstrip('/')}/messages"
+            payload = {
+                "model": settings.ai_model,
+                "system": prompts["system"],
+                "messages": [{"role": "user", "content": prompts["user"]}],
+                "max_tokens": settings.ai_max_tokens,
+                "temperature": settings.ai_temperature,
+            }
+        else:
+            url = f"{base_url.rstrip('/')}/chat/completions"
+            payload = {
+                "model": settings.ai_model,
+                "messages": [
+                    {"role": "system", "content": prompts["system"]},
+                    {"role": "user", "content": prompts["user"]},
+                ],
+                "max_tokens": settings.ai_max_tokens,
+                "temperature": settings.ai_temperature,
+            }
+
+        async with self._semaphore:
+            response = await self._client.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=settings.ai_timeout,
+            )
+        _raise_for_status_with_detail(response, url)
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            detail = _sanitize_response_body(response.text)
+            if len(detail) > 800:
+                detail = detail[:800] + "..."
+            raise ValueError(
+                f"AI response JSON decode failed (status {response.status_code}) | url={url} | body={detail}"
+            ) from exc
+
+        if provider == "anthropic":
+            content = data.get("content") or []
+            text = ""
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text += block.get("text", "")
+            extracted = _extract_json_list(text)
+        else:
+            choices = data.get("choices") or []
+            message = (choices[0].get("message") or {}) if choices else {}
+            extracted = _extract_json_list(message.get("content", ""))
+
+        if not isinstance(extracted, list):
+            raise ValueError("AI response is not a JSON array")
+
+        results: List[Optional[Dict[str, Any]]] = [None for _ in range(len(repos))]
+        for idx, item in enumerate(extracted):
+            if not isinstance(item, dict):
+                continue
+            raw_index = item.get("index")
+            target_index = raw_index if isinstance(raw_index, int) else idx
+            if target_index < 0 or target_index >= len(results):
+                continue
+            validated = validate_classification_v2(item)
+            validated["provider"] = raw_provider
+            validated["model"] = settings.ai_model
+            results[target_index] = validated
+
+        return results
+
+    async def classify_repo_v2_with_retry(
+        self,
+        repo: Dict[str, Any],
+        retries: int = 2,
+    ) -> Dict[str, Any]:
+        attempt = 0
+        while True:
+            try:
+                return await self.classify_repo_v2(repo)
+            except Exception as exc:
+                if attempt >= retries:
+                    logger.warning(
+                        "AI classify v2 failed after %s attempts: %s",
+                        attempt + 1,
+                        exc,
+                    )
+                    raise exc
+                wait = 2 ** attempt
+                logger.warning(
+                    "AI classify v2 failed on attempt %s/%s: %s. Retrying in %ss",
+                    attempt + 1,
+                    retries + 1,
+                    exc,
+                    wait,
+                )
+                await asyncio.sleep(wait)
+                attempt += 1
+
+    async def classify_repos_v2_with_retry(
+        self,
+        repos: List[Dict[str, Any]],
+        retries: int = 2,
+    ) -> List[Optional[Dict[str, Any]]]:
+        attempt = 0
+        while True:
+            try:
+                return await self.classify_repos_v2(repos)
+            except Exception as exc:
+                if attempt >= retries:
+                    logger.warning(
+                        "AI batch classify v2 failed after %s attempts: %s",
+                        attempt + 1,
+                        exc,
+                    )
+                    raise exc
+                wait = 2 ** attempt
+                logger.warning(
+                    "AI batch classify v2 failed on attempt %s/%s: %s. Retrying in %ss",
                     attempt + 1,
                     retries + 1,
                     exc,

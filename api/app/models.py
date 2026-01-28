@@ -34,6 +34,11 @@ class RepoBase(BaseModel):
     readme_last_attempt_at: str | None = None
     readme_failures: int | None = None
     readme_empty: bool | None = None
+    summary_zh: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    ai_keywords: list[str] = Field(default_factory=list)
+    override_summary_zh: str | None = None
+    override_keywords: list[str] = Field(default_factory=list)
 
 
 class ReadmeResult(BaseModel):

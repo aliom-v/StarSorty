@@ -71,7 +71,6 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="StarSorty API", version="0.1.0", lifespan=lifespan)
-settings = get_settings()
 logger = logging.getLogger("starsorty.api")
 DEFAULT_CLASSIFY_BATCH_SIZE = int(os.getenv("CLASSIFY_BATCH_SIZE", "50"))
 DEFAULT_CLASSIFY_CONCURRENCY = int(os.getenv("CLASSIFY_CONCURRENCY", "3"))
@@ -84,7 +83,8 @@ AI_BATCH_FALLBACK = (
     not in ("0", "false", "no")
 )
 
-origins: List[str] = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
+_init_settings = get_settings()
+origins: List[str] = [origin.strip() for origin in _init_settings.cors_origins.split(",") if origin.strip()]
 allow_credentials = True
 if not origins or "*" in origins:
     allow_credentials = False
@@ -243,6 +243,7 @@ class RepoOut(BaseModel):
     ai_subcategory: str | None
     ai_confidence: float | None
     ai_tags: List[str]
+    ai_keywords: List[str]
     ai_provider: str | None
     ai_model: str | None
     ai_updated_at: str | None
@@ -250,11 +251,15 @@ class RepoOut(BaseModel):
     override_subcategory: str | None
     override_tags: List[str]
     override_note: str | None
+    override_summary_zh: str | None
+    override_keywords: List[str]
     readme_summary: str | None
     readme_fetched_at: str | None
     pushed_at: str | None
     updated_at: str | None
     starred_at: str | None
+    summary_zh: str | None
+    keywords: List[str]
 
 
 class RepoListResponse(BaseModel):
@@ -592,10 +597,14 @@ async def repos(
     category: Optional[str] = None,
     subcategory: Optional[str] = None,
     tag: Optional[str] = None,
+    tags: Optional[str] = None,
     star_user: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
 ) -> RepoListResponse:
+    tag_list = None
+    if tags:
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     total, items = await list_repos(
         q=q,
         language=language,
@@ -603,6 +612,7 @@ async def repos(
         category=category,
         subcategory=subcategory,
         tag=tag,
+        tags=tag_list,
         star_user=star_user,
         limit=limit,
         offset=offset,
@@ -1336,8 +1346,8 @@ async def classify(payload: ClassifyRequest) -> ClassifyResponse | TaskQueuedRes
         started = await _start_background_classify(force_payload, task_id, allow_fallback=False)
         if not started:
             raise HTTPException(status_code=409, detail="Classification already running")
-        payload = TaskQueuedResponse(task_id=task_id, status="queued", message="Classification queued")
-        return JSONResponse(status_code=202, content=payload.model_dump())
+        response = TaskQueuedResponse(task_id=task_id, status="queued", message="Classification queued")
+        return JSONResponse(status_code=202, content=response.model_dump())
 
     repos_to_classify = await select_repos_for_classification(payload.limit, payload.force)
     rules_path = Path(__file__).resolve().parents[1] / "config" / "rules.json"

@@ -6,6 +6,7 @@ import { API_BASE_URL } from "./lib/apiBase";
 import { getErrorMessage, readApiError } from "./lib/apiError";
 import { useI18n, type Messages, type MessageValues } from "./lib/i18n";
 import { useTheme } from "./lib/theme";
+import { TAG_GROUPS } from "./lib/tagGroups";
 
 type Repo = {
   full_name: string;
@@ -21,6 +22,8 @@ type Repo = {
   category?: string | null;
   subcategory?: string | null;
   tags?: string[];
+  summary_zh?: string | null;
+  keywords?: string[];
   pushed_at?: string | null;
   updated_at?: string | null;
   starred_at?: string | null;
@@ -122,6 +125,7 @@ type RepoCardProps = {
 };
 
 const RepoCard = memo(function RepoCard({ repo, index, t }: RepoCardProps) {
+  const displayDescription = repo.summary_zh || repo.description;
   return (
     <article
       className={`rounded-3xl border border-ink/10 bg-surface/90 p-6 shadow-soft animate-fade-up stagger-${
@@ -140,9 +144,9 @@ const RepoCard = memo(function RepoCard({ repo, index, t }: RepoCardProps) {
               {repo.name}
             </a>
           </h3>
-          {repo.description ? (
+          {displayDescription ? (
             <p className="mt-2 text-sm text-ink/80 break-words">
-              {repo.description}
+              {displayDescription}
             </p>
           ) : (
             <p className="mt-2 text-sm text-ink/80 break-words">
@@ -179,12 +183,6 @@ const RepoCard = memo(function RepoCard({ repo, index, t }: RepoCardProps) {
         <span>
           {t("updatedWithValue", { date: formatDate(repo.updated_at) })}
         </span>
-        {repo.category && (
-          <span className="rounded-full bg-moss/10 px-2 py-1 text-moss">
-            {repo.category}
-            {repo.subcategory ? ` / ${repo.subcategory}` : ""}
-          </span>
-        )}
         {repo.star_users && repo.star_users.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {repo.star_users.slice(0, 3).map((user) => (
@@ -197,26 +195,26 @@ const RepoCard = memo(function RepoCard({ repo, index, t }: RepoCardProps) {
             ))}
           </div>
         )}
-        {repo.topics.length > 0 && (
+        {repo.tags && repo.tags.length > 0 && (
           <div className="flex flex-wrap gap-2">
-            {repo.topics.slice(0, 4).map((topicTag) => (
+            {repo.tags.slice(0, 6).map((repoTag) => (
               <span
-                key={topicTag}
-                className="rounded-full bg-clay px-2 py-1"
+                key={repoTag}
+                className="rounded-full bg-moss/10 px-2 py-1 text-moss"
               >
-                {topicTag}
+                {repoTag}
               </span>
             ))}
           </div>
         )}
-        {repo.tags && repo.tags.length > 0 && (
+        {repo.keywords && repo.keywords.length > 0 && (
           <div className="flex flex-wrap gap-2">
-            {repo.tags.slice(0, 4).map((repoTag) => (
+            {repo.keywords.slice(0, 4).map((keyword) => (
               <span
-                key={repoTag}
+                key={keyword}
                 className="rounded-full border border-ink/10 bg-surface px-2 py-1"
               >
-                {repoTag}
+                {keyword}
               </span>
             ))}
           </div>
@@ -270,11 +268,18 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [subcategory, setSubcategory] = useState<string | null>(null);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [minStars, setMinStars] = useState<number | null>(null);
   const [sourceUser, setSourceUser] = useState<string | null>(null);
   const [groupMode, setGroupMode] = useState(false);
   const activeError = configError || error;
   const unknownErrorMessage = t("unknownError");
+
+  const handleTagToggle = useCallback((tag: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    );
+  }, []);
 
   const loadStatus = useCallback(async () => {
     setError(null);
@@ -409,6 +414,7 @@ export default function Home() {
       if (query) params.set("q", query);
       if (category) params.set("category", category);
       if (subcategory) params.set("subcategory", subcategory);
+      if (selectedTags.length > 0) params.set("tags", selectedTags.join(","));
       if (minStars) params.set("min_stars", String(minStars));
       if (sourceUser) params.set("star_user", sourceUser);
 
@@ -431,7 +437,7 @@ export default function Home() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [category, minStars, query, sourceUser, subcategory, unknownErrorMessage]);
+  }, [category, minStars, query, selectedTags, sourceUser, subcategory, unknownErrorMessage]);
 
   const pollTaskNow = useCallback(async () => {
     const taskId = pollTargetIdRef.current;
@@ -656,7 +662,7 @@ export default function Home() {
 
   useEffect(() => {
     loadRepos(false);
-  }, [category, loadRepos, minStars, query, sourceUser, subcategory]);
+  }, [category, loadRepos, minStars, query, selectedTags, sourceUser, subcategory]);
 
   useEffect(() => {
     if (!actionMessage) return;
@@ -1461,79 +1467,72 @@ export default function Home() {
         </header>
 
         <div className="mt-10 flex flex-col gap-6 xl:flex-row xl:items-start">
-          <aside className="rounded-3xl border border-ink/10 bg-surface/70 p-6 shadow-soft animate-fade-up stagger-1 xl:sticky xl:top-6 xl:w-64 xl:shrink-0">
+          <aside className="rounded-3xl border border-ink/10 bg-surface/70 p-6 shadow-soft animate-fade-up stagger-1 xl:sticky xl:top-6 xl:w-72 xl:shrink-0 xl:max-h-[calc(100vh-3rem)] xl:overflow-y-auto">
             <h2 className="font-display text-lg font-semibold">
-              {t("categories")}
+              {t("tagCloud")}
             </h2>
-            <div className="mt-6 space-y-3 text-sm">
-              <button
-                className={`flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left ${
-                  category === null
-                    ? "bg-clay text-ink"
-                    : "bg-surface/70 text-ink/70"
-                }`}
-                onClick={() => {
-                  setCategory(null);
-                  setSubcategory(null);
-                }}
-              >
-                <span>{t("all")}</span>
-                <span>{overallTotal}</span>
-              </button>
-              {categoryCounts.slice(0, 8).map((item) => (
-                <button
-                  key={item.name}
-                  className={`flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left ${
-                    category === item.name
-                      ? "bg-clay text-ink"
-                      : "bg-surface/70 text-ink/70"
-                }`}
-                onClick={() => {
-                  setCategory(item.name);
-                  setSubcategory(null);
-                }}
-              >
-                <span>{item.name === "unknown" ? t("unknown") : item.name}</span>
-                <span>{item.count}</span>
-              </button>
-              ))}
-            </div>
-            {category && (
-              <div className="mt-8">
-                <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                  {t("subcategories")}
-                </h3>
-                <div className="mt-4 space-y-2 text-sm">
-                  <button
-                    className={`flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left ${
-                      subcategory === null
-                        ? "bg-clay text-ink"
-                        : "bg-surface/70 text-ink/70"
-                    }`}
-                    onClick={() => setSubcategory(null)}
-                  >
-                    <span>{t("all")}</span>
-                    <span>{selectedCategoryCount}</span>
-                  </button>
-                  {subcategoryCounts.map((item) => (
+
+            {selectedTags.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
+                  {t("selectedTags")}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {selectedTags.map((tag) => (
                     <button
-                      key={item.name}
-                      className={`flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left ${
-                        subcategory === item.name
-                          ? "bg-clay text-ink"
-                          : "bg-surface/70 text-ink/70"
-                      }`}
-                      onClick={() => setSubcategory(item.name)}
+                      key={tag}
+                      type="button"
+                      className="rounded-full bg-moss px-3 py-1 text-xs text-white transition hover:bg-moss/80"
+                      onClick={() => handleTagToggle(tag)}
                     >
-                      <span>{item.name === "unknown" ? t("unknown") : item.name}</span>
-                      <span>{item.count}</span>
+                      {tag} ×
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    className="rounded-full border border-ink/10 bg-surface px-3 py-1 text-xs text-ink/70 transition hover:border-copper hover:text-copper"
+                    onClick={() => setSelectedTags([])}
+                  >
+                    {t("clearTags")}
+                  </button>
                 </div>
               </div>
             )}
+
+            <div className="mt-6 space-y-4">
+              {TAG_GROUPS.map((group) => {
+                const groupTagCounts = stats?.tags?.filter((t) =>
+                  group.tags.includes(t.name)
+                ) ?? [];
+                if (groupTagCounts.length === 0) return null;
+                return (
+                  <div key={group.id}>
+                    <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">
+                      {group.name}
+                    </h3>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {groupTagCounts.map((tagItem) => (
+                        <button
+                          key={tagItem.name}
+                          type="button"
+                          className={`rounded-full px-3 py-1 text-xs transition ${
+                            selectedTags.includes(tagItem.name)
+                              ? "bg-moss text-white"
+                              : "bg-surface border border-ink/10 text-ink/70 hover:border-moss hover:text-moss"
+                          }`}
+                          onClick={() => handleTagToggle(tagItem.name)}
+                        >
+                          {tagItem.name} ({tagItem.count})
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
             {groupMode && (
-              <div className="mt-8">
+              <div className="mt-8 border-t border-ink/10 pt-6">
                 <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">
                   {t("users")}
                 </h3>
@@ -1569,46 +1568,12 @@ export default function Home() {
 
             <div className="mt-8 border-t border-ink/10 pt-6">
               <h2 className="font-display text-lg font-semibold">
-                {t("filters")}
+                {t("status")}
               </h2>
-              <div className="mt-5 space-y-4 text-sm">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                    {t("stars")}
-                  </p>
-                  <div className="mt-2 space-y-2">
-                    <button
-                      className={`w-full rounded-2xl border border-ink/10 px-3 py-2 text-left ${
-                        minStars === null ? "bg-clay" : "bg-surface"
-                      }`}
-                      onClick={() => setMinStars(null)}
-                    >
-                      {t("any")}
-                    </button>
-                    {STAR_FILTERS.map((tier) => (
-                      <button
-                        key={tier}
-                        className={`w-full rounded-2xl border border-ink/10 px-3 py-2 text-left ${
-                          minStars === tier ? "bg-clay" : "bg-surface"
-                        }`}
-                        onClick={() => setMinStars(tier)}
-                      >
-                        {tier.toLocaleString()}+
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                    {t("status")}
-                  </p>
-                  <div className="mt-2 space-y-2 text-ink/70">
-                    <div>{t("totalWithValue", { count: overallTotal })}</div>
-                    <div>{t("showingWithValue", { count: repos.length })}</div>
-                    <div>{t("unclassifiedWithValue", { count: unclassifiedCount })}</div>
-                    <div>{t("apiBaseWithValue", { value: API_BASE_URL })}</div>
-                  </div>
-                </div>
+              <div className="mt-4 space-y-2 text-sm text-ink/70">
+                <div>{t("totalWithValue", { count: overallTotal })}</div>
+                <div>{t("showingWithValue", { count: repos.length })}</div>
+                <div>{t("unclassifiedWithValue", { count: unclassifiedCount })}</div>
               </div>
             </div>
           </aside>

@@ -267,15 +267,14 @@ async def init_db() -> None:
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_classify_sort ON repos(category, pushed_at DESC, stargazers_count DESC)"
         )
-        # Index for force mode cursor-based pagination
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_repos_full_name ON repos(full_name)"
-        )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_override_history_full_name ON override_history(full_name)"
         )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_tasks_status_updated_at ON tasks(status, updated_at)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repos_ai_keywords ON repos(ai_keywords)"
         )
         await conn.execute(
             """
@@ -491,6 +490,10 @@ async def _ensure_columns(conn: aiosqlite.Connection) -> None:
         ("readme_last_attempt_at", "readme_last_attempt_at TEXT"),
         ("readme_failures", "readme_failures INTEGER"),
         ("readme_empty", "readme_empty INTEGER"),
+        ("summary_zh", "summary_zh TEXT"),
+        ("ai_keywords", "ai_keywords TEXT"),
+        ("override_summary_zh", "override_summary_zh TEXT"),
+        ("override_keywords", "override_keywords TEXT"),
     ]
     for name, ddl in columns:
         if name not in existing:
@@ -614,9 +617,13 @@ def _row_to_repo(row: aiosqlite.Row, include_internal: bool = False) -> RepoBase
     star_users = _load_json_list(row["star_users"])
     ai_tags = _load_json_list(row["ai_tags"])
     override_tags = _load_json_list_optional(row["override_tags"])
+    ai_keywords = _load_json_list(row["ai_keywords"]) if "ai_keywords" in row.keys() else []
+    override_keywords = _load_json_list_optional(row["override_keywords"]) if "override_keywords" in row.keys() else None
     effective_category = row["override_category"] or row["category"]
     effective_subcategory = row["override_subcategory"] or row["subcategory"]
     effective_tags = ai_tags if override_tags is None else override_tags
+    effective_summary_zh = (row["override_summary_zh"] or row["summary_zh"]) if "summary_zh" in row.keys() else None
+    effective_keywords = ai_keywords if override_keywords is None else override_keywords
     repo = RepoBase(
         full_name=row["full_name"],
         name=row["name"],
@@ -635,6 +642,7 @@ def _row_to_repo(row: aiosqlite.Row, include_internal: bool = False) -> RepoBase
         ai_subcategory=row["subcategory"],
         ai_confidence=row["ai_confidence"],
         ai_tags=ai_tags,
+        ai_keywords=ai_keywords,
         ai_provider=row["ai_provider"],
         ai_model=row["ai_model"],
         ai_updated_at=row["ai_updated_at"],
@@ -642,11 +650,15 @@ def _row_to_repo(row: aiosqlite.Row, include_internal: bool = False) -> RepoBase
         override_subcategory=row["override_subcategory"],
         override_tags=override_tags or [],
         override_note=row["override_note"],
+        override_summary_zh=row["override_summary_zh"] if "override_summary_zh" in row.keys() else None,
+        override_keywords=override_keywords or [],
         readme_summary=row["readme_summary"],
         readme_fetched_at=row["readme_fetched_at"],
         pushed_at=row["pushed_at"],
         updated_at=row["updated_at"],
         starred_at=row["starred_at"],
+        summary_zh=effective_summary_zh,
+        keywords=effective_keywords,
         readme_last_attempt_at=row["readme_last_attempt_at"] if include_internal else None,
         readme_failures=(row["readme_failures"] or 0) if include_internal else None,
         readme_empty=bool(row["readme_empty"] or 0) if include_internal else None,
@@ -725,6 +737,7 @@ async def list_repos(
     category: Optional[str] = None,
     subcategory: Optional[str] = None,
     tag: Optional[str] = None,
+    tags: Optional[List[str]] = None,
     star_user: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
@@ -738,10 +751,10 @@ async def list_repos(
             "("
             "name LIKE ? OR full_name LIKE ? OR description LIKE ? "
             "OR topics LIKE ? OR ai_tags LIKE ? OR override_tags LIKE ? "
-            "OR star_users LIKE ?"
+            "OR star_users LIKE ? OR summary_zh LIKE ? OR ai_keywords LIKE ?"
             ")"
         )
-        params.extend([like, like, like, like, like, like, like])
+        params.extend([like, like, like, like, like, like, like, like, like])
 
     if language:
         clauses.append("language = ?")
@@ -763,6 +776,13 @@ async def list_repos(
         clauses.append("COALESCE(NULLIF(override_tags, ''), ai_tags) LIKE ?")
         params.append(f"%\"{tag}\"%")
 
+    if tags:
+        tag_clauses = []
+        for t in tags:
+            tag_clauses.append("(COALESCE(NULLIF(override_tags, ''), ai_tags) LIKE ?)")
+            params.append(f'%"{t}"%')
+        clauses.append("(" + " OR ".join(tag_clauses) + ")")
+
     if star_user:
         clauses.append("star_users LIKE ?")
         params.append(f"%\"{star_user}\"%")
@@ -783,7 +803,8 @@ async def list_repos(
                 star_users,
                 category, subcategory, ai_confidence, ai_tags, ai_provider, ai_model,
                 ai_updated_at, override_category, override_subcategory, override_tags,
-                override_note, readme_summary, readme_fetched_at
+                override_note, readme_summary, readme_fetched_at,
+                summary_zh, ai_keywords, override_summary_zh, override_keywords
             FROM repos
             {where_sql}
             ORDER BY stargazers_count DESC, full_name ASC
@@ -804,7 +825,8 @@ async def get_repo(full_name: str) -> Optional[RepoBase]:
                 star_users,
                 category, subcategory, ai_confidence, ai_tags, ai_provider, ai_model,
                 ai_updated_at, override_category, override_subcategory, override_tags,
-                override_note, readme_summary, readme_fetched_at
+                override_note, readme_summary, readme_fetched_at,
+                summary_zh, ai_keywords, override_summary_zh, override_keywords
             FROM repos
             WHERE full_name = ?
             """,
@@ -1089,7 +1111,8 @@ async def select_repos_for_classification(
                 category, subcategory, ai_confidence, ai_tags, ai_provider, ai_model,
                 ai_updated_at, override_category, override_subcategory, override_tags,
                 override_note, readme_summary, readme_fetched_at, readme_last_attempt_at,
-                readme_failures, readme_empty
+                readme_failures, readme_empty,
+                summary_zh, ai_keywords, override_summary_zh, override_keywords
             FROM repos
             {where}
             {order_by}
