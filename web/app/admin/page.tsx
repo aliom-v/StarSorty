@@ -85,7 +85,7 @@ export default function AdminPage() {
     setVerifying(true);
     setAuthError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/health`, {
+      const res = await fetch(`${API_BASE_URL}/auth/check`, {
         headers: { "X-Admin-Token": password },
       });
       if (res.ok) {

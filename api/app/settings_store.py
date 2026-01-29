@@ -28,6 +28,7 @@ def read_settings() -> Dict[str, Any]:
     db_path = _get_db_path()
     if not Path(db_path).exists():
         return {}
+    conn = None
     try:
         conn = sqlite3.connect(db_path, timeout=30)
         conn.row_factory = sqlite3.Row
@@ -35,10 +36,8 @@ def read_settings() -> Dict[str, Any]:
     except sqlite3.Error:
         return {}
     finally:
-        try:
+        if conn is not None:
             conn.close()
-        except Exception:
-            pass
 
     settings: Dict[str, Any] = {}
     for row in rows:

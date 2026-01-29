@@ -48,6 +48,8 @@ def validate_classification(
     subcategory = result.get("subcategory") if isinstance(result, dict) else None
     tags = result.get("tags") if isinstance(result, dict) else []
     confidence = result.get("confidence") if isinstance(result, dict) else 0.0
+    summary_zh = result.get("summary_zh") if isinstance(result, dict) else None
+    keywords = result.get("keywords") if isinstance(result, dict) else None
 
     if category not in category_map:
         category = "uncategorized"
@@ -72,12 +74,17 @@ def validate_classification(
     if confidence_value < 0 or confidence_value > 1:
         confidence_value = 0.0
 
-    return {
+    validated: Dict[str, Any] = {
         "category": category,
         "subcategory": subcategory,
         "tags": normalized_tags,
         "confidence": confidence_value,
     }
+    if summary_zh:
+        validated["summary_zh"] = str(summary_zh).strip()[:200]
+    if keywords and isinstance(keywords, list):
+        validated["keywords"] = [str(k).strip() for k in keywords if str(k).strip()][:5]
+    return validated
 
 
 def validate_classification_v2(result: Dict[str, Any]) -> Dict[str, Any]:

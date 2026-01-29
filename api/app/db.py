@@ -857,7 +857,7 @@ async def update_override(full_name: str, updates: Dict[str, Any]) -> bool:
         if not column:
             continue
         if key == "tags":
-            params.append(json.dumps(value) if value is not None else None)
+            params.append(json.dumps(value, ensure_ascii=False) if value is not None else None)
         else:
             params.append(value)
         sets.append(f"{column} = ?")
@@ -910,27 +910,52 @@ async def update_classification(
     tags: List[str],
     provider: str,
     model: str,
+    summary_zh: Optional[str] = None,
+    keywords: Optional[List[str]] = None,
 ) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
     async with get_connection() as conn:
-        await conn.execute(
-            """
-            UPDATE repos
-            SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?,
-                ai_provider = ?, ai_model = ?, ai_updated_at = ?, classify_fail_count = 0
-            WHERE full_name = ?
-            """,
-            (
-                category,
-                subcategory,
-                confidence,
-                json.dumps(tags),
-                provider,
-                model,
-                timestamp,
-                full_name,
-            ),
-        )
+        if summary_zh is not None or keywords is not None:
+            await conn.execute(
+                """
+                UPDATE repos
+                SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?,
+                    ai_provider = ?, ai_model = ?, ai_updated_at = ?, classify_fail_count = 0,
+                    summary_zh = ?, ai_keywords = ?
+                WHERE full_name = ?
+                """,
+                (
+                    category,
+                    subcategory,
+                    confidence,
+                    json.dumps(tags, ensure_ascii=False),
+                    provider,
+                    model,
+                    timestamp,
+                    summary_zh,
+                    json.dumps(keywords, ensure_ascii=False) if keywords is not None else None,
+                    full_name,
+                ),
+            )
+        else:
+            await conn.execute(
+                """
+                UPDATE repos
+                SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?,
+                    ai_provider = ?, ai_model = ?, ai_updated_at = ?, classify_fail_count = 0
+                WHERE full_name = ?
+                """,
+                (
+                    category,
+                    subcategory,
+                    confidence,
+                    json.dumps(tags, ensure_ascii=False),
+                    provider,
+                    model,
+                    timestamp,
+                    full_name,
+                ),
+            )
         await conn.commit()
 
 
@@ -948,15 +973,18 @@ async def update_classifications_bulk(items: List[Dict[str, Any]]) -> int:
         full_name = item.get("full_name")
         if not full_name:
             continue
+        keywords = item.get("keywords")
         rows.append(
             (
                 item.get("category"),
                 item.get("subcategory"),
                 item.get("confidence", 0.0),
-                json.dumps(item.get("tags") or []),
+                json.dumps(item.get("tags") or [], ensure_ascii=False),
                 item.get("provider"),
                 item.get("model"),
                 timestamp,
+                item.get("summary_zh"),
+                json.dumps(keywords, ensure_ascii=False) if keywords is not None else None,
                 full_name,
             )
         )
@@ -968,7 +996,8 @@ async def update_classifications_bulk(items: List[Dict[str, Any]]) -> int:
                 """
                 UPDATE repos
                 SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?,
-                    ai_provider = ?, ai_model = ?, ai_updated_at = ?, classify_fail_count = 0
+                    ai_provider = ?, ai_model = ?, ai_updated_at = ?, classify_fail_count = 0,
+                    summary_zh = ?, ai_keywords = ?
                 WHERE full_name = ?
                 """,
                 rows,

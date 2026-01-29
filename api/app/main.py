@@ -431,6 +431,11 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/auth/check", dependencies=[Depends(require_admin)])
+async def auth_check() -> dict:
+    return {"ok": True}
+
+
 @app.get("/tasks/{task_id}", response_model=TaskStatusResponse)
 async def task_status(task_id: str) -> TaskStatusResponse:
     task = await get_task(task_id)
@@ -651,8 +656,10 @@ async def repo_override(full_name: str, payload: OverrideRequest) -> OverrideRes
             raise HTTPException(status_code=400, detail="subcategory cannot be empty")
         updates["subcategory"] = payload.subcategory
     if "tags" in fields:
-        tags = payload.tags or []
-        updates["tags"] = [tag for tag in tags if str(tag).strip()]
+        if payload.tags is None:
+            updates["tags"] = None
+        else:
+            updates["tags"] = [tag for tag in payload.tags if str(tag).strip()]
     if "note" in fields:
         if payload.note is not None and not str(payload.note).strip():
             raise HTTPException(status_code=400, detail="note cannot be empty")
@@ -864,6 +871,8 @@ async def _classify_repo_once(
         result["tags"],
         result["provider"],
         result["model"],
+        summary_zh=result.get("summary_zh"),
+        keywords=result.get("keywords"),
     )
     return True
 
@@ -1039,6 +1048,8 @@ async def _classify_repos_batch(
                         "tags": result["tags"],
                         "provider": result["provider"],
                         "model": result["model"],
+                        "summary_zh": result.get("summary_zh"),
+                        "keywords": result.get("keywords"),
                     }
                 )
             else:
@@ -1072,6 +1083,8 @@ async def _classify_repos_batch(
                             "tags": result["tags"],
                             "provider": result["provider"],
                             "model": result["model"],
+                            "summary_zh": result.get("summary_zh"),
+                            "keywords": result.get("keywords"),
                         }
                     )
             else:
@@ -1103,6 +1116,8 @@ async def _classify_repos_batch(
                             item["tags"],
                             item["provider"],
                             item["model"],
+                            summary_zh=item.get("summary_zh"),
+                            keywords=item.get("keywords"),
                         )
                         classified += 1
                         success_full_names.add(full_name)
