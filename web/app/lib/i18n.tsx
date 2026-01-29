@@ -87,7 +87,7 @@ const translations = {
     retryFromWithValue: "Retry from: {value}",
     viewTask: "View task",
     viewCurrentTask: "View current",
-    backgroundClassify: "Classify in background",
+    backgroundClassify: "Classify",
     backgroundStatus: "Background status",
     foregroundStatus: "Foreground status",
     backgroundRunning: "Running",
@@ -130,6 +130,54 @@ const translations = {
     clearTags: "Clear",
     summary: "Summary",
     keywords: "Keywords",
+    // Admin page
+    admin: "Admin",
+    adminPageTitle: "Administration",
+    adminPageSubtitle: "Manage sync, classification, and settings.",
+    enterPassword: "Enter admin password",
+    password: "Password",
+    login: "Login",
+    logout: "Logout",
+    passwordRequired: "Password required",
+    passwordIncorrect: "Password incorrect",
+    verifying: "Verifying...",
+    syncOperations: "Sync Operations",
+    classifyOperations: "Classify Operations",
+    configSettings: "Configuration",
+    githubUsername: "GitHub Username",
+    githubTargetUsername: "Target Username",
+    githubUsernames: "Usernames (comma-separated)",
+    githubIncludeSelf: "Include self",
+    githubMode: "GitHub Mode",
+    classifyMode: "Classify Mode",
+    autoClassifyAfterSync: "Auto classify after sync",
+    syncCron: "Sync schedule (cron)",
+    syncTimeout: "Sync timeout (seconds)",
+    rulesJson: "Rules JSON",
+    save: "Save",
+    saving: "Saving...",
+    saved: "Saved",
+    saveFailed: "Save failed",
+    // Admin page - additional
+    startBackground: "Start background",
+    stopped: "Stopped",
+    failedRepos: "Failed Repos",
+    resetFailed: "Reset failed",
+    noFailedRepos: "No failed repos",
+    failCountWithValue: "Failed {count} times",
+    resetFailedWithValue: "Reset {count} repos",
+    hide: "Hide",
+    show: "Show",
+    // Settings page (read-only)
+    settingsPageTitle: "Settings Overview",
+    settingsPageSubtitle: "View current configuration. To modify, go to Admin page.",
+    currentConfig: "Current Configuration",
+    tokenStatus: "Token Status",
+    githubTokenSet: "GitHub Token",
+    aiApiKeySet: "AI API Key",
+    configured: "Configured",
+    notConfigured: "Not configured",
+    goToAdmin: "Go to Admin",
   },
   zh: {
     title: "把你的星标像产品一样整理。",
@@ -205,7 +253,7 @@ const translations = {
     retryFromWithValue: "重试来源：{value}",
     viewTask: "查看任务",
     viewCurrentTask: "查看当前任务",
-    backgroundClassify: "后台分类",
+    backgroundClassify: "分类",
     backgroundStatus: "后台状态",
     foregroundStatus: "前台状态",
     backgroundRunning: "运行中",
@@ -248,6 +296,54 @@ const translations = {
     clearTags: "清除",
     summary: "摘要",
     keywords: "关键词",
+    // Admin page
+    admin: "管理",
+    adminPageTitle: "管理后台",
+    adminPageSubtitle: "管理同步、分类和设置。",
+    enterPassword: "输入管理员密码",
+    password: "密码",
+    login: "登录",
+    logout: "退出",
+    passwordRequired: "请输入密码",
+    passwordIncorrect: "密码错误",
+    verifying: "验证中...",
+    syncOperations: "同步操作",
+    classifyOperations: "分类操作",
+    configSettings: "配置设置",
+    githubUsername: "GitHub 用户名",
+    githubTargetUsername: "目标用户名",
+    githubUsernames: "用户名列表（逗号分隔）",
+    githubIncludeSelf: "包含自己",
+    githubMode: "GitHub 模式",
+    classifyMode: "分类模式",
+    autoClassifyAfterSync: "同步后自动分类",
+    syncCron: "同步计划（cron）",
+    syncTimeout: "同步超时（秒）",
+    rulesJson: "规则 JSON",
+    save: "保存",
+    saving: "保存中...",
+    saved: "已保存",
+    saveFailed: "保存失败",
+    // Admin page - additional
+    startBackground: "启动后台",
+    stopped: "已停止",
+    failedRepos: "失败仓库",
+    resetFailed: "重置失败",
+    noFailedRepos: "没有失败的仓库",
+    failCountWithValue: "失败 {count} 次",
+    resetFailedWithValue: "已重置 {count} 个仓库",
+    hide: "隐藏",
+    show: "显示",
+    // Settings page (read-only)
+    settingsPageTitle: "设置概览",
+    settingsPageSubtitle: "查看当前配置。如需修改，请前往管理页面。",
+    currentConfig: "当前配置",
+    tokenStatus: "令牌状态",
+    githubTokenSet: "GitHub Token",
+    aiApiKeySet: "AI API Key",
+    configured: "已配置",
+    notConfigured: "未配置",
+    goToAdmin: "前往管理",
   },
 } as const;
 
@@ -272,10 +368,7 @@ type I18nContextValue = {
 const I18nContext = createContext<I18nContextValue | null>(null);
 
 const detectLocale = (): Locale => {
-  if (typeof navigator === "undefined") return "en";
-  const language = navigator.languages?.[0] || navigator.language;
-  if (!language) return "en";
-  return language.toLowerCase().startsWith("zh") ? "zh" : "en";
+  return "zh";
 };
 
 const readStoredLocale = (): Locale | null => {
@@ -288,7 +381,7 @@ const readStoredLocale = (): Locale | null => {
 };
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>("en");
+  const [locale, setLocaleState] = useState<Locale>("zh");
 
   useEffect(() => {
     const stored = readStoredLocale();

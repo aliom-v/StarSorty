@@ -66,15 +66,6 @@ type BackgroundStatus = {
   task_id?: string | null;
 };
 
-type ForegroundProgress = {
-  running: boolean;
-  processed: number;
-  failed: number;
-  remaining: number | null;
-  startRemaining: number | null;
-  lastBatch: number;
-};
-
 type TaskQueued = {
   task_id: string;
   status: string;
@@ -242,12 +233,6 @@ export default function Home() {
   );
   const [syncing, setSyncing] = useState(false);
   const [syncTaskId, setSyncTaskId] = useState<string | null>(null);
-  const [classifying, setClassifying] = useState(false);
-  const [classifyLimit, setClassifyLimit] = useState("20");
-  const [classifyConcurrency, setClassifyConcurrency] = useState("3");
-  const [includeReadme, setIncludeReadme] = useState(true);
-  const [classifyLooping, setClassifyLooping] = useState(false);
-  const [forceReclassify, setForceReclassify] = useState(false);
   const [backgroundStatus, setBackgroundStatus] = useState<BackgroundStatus | null>(null);
   const [wasBackgroundRunning, setWasBackgroundRunning] = useState(false);
   const [taskInfoId, setTaskInfoId] = useState<string | null>(null);
@@ -256,14 +241,6 @@ export default function Home() {
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
   const [retryingTask, setRetryingTask] = useState(false);
   const [pollingPaused, setPollingPaused] = useState(false);
-  const [foregroundProgress, setForegroundProgress] = useState<ForegroundProgress>({
-    running: false,
-    processed: 0,
-    failed: 0,
-    remaining: null,
-    startRemaining: null,
-    lastBatch: 0,
-  });
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
@@ -272,6 +249,7 @@ export default function Home() {
   const [minStars, setMinStars] = useState<number | null>(null);
   const [sourceUser, setSourceUser] = useState<string | null>(null);
   const [groupMode, setGroupMode] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const activeError = configError || error;
   const unknownErrorMessage = t("unknownError");
 
@@ -716,59 +694,6 @@ export default function Home() {
     }
   };
 
-  const parseClassifyLimit = () => {
-    const parsed = parseInt(classifyLimit, 10);
-    if (Number.isNaN(parsed)) return 20;
-    return Math.max(1, Math.min(500, parsed));
-  };
-
-  const parseClassifyConcurrency = () => {
-    const parsed = parseInt(classifyConcurrency, 10);
-    if (Number.isNaN(parsed)) return 3;
-    return Math.max(1, Math.min(10, parsed));
-  };
-
-  const startForegroundProgress = () => {
-    const initialRemaining = forceReclassify ? null : (stats?.unclassified ?? null);
-    setForegroundProgress({
-      running: true,
-      processed: 0,
-      failed: 0,
-      remaining: initialRemaining,
-      startRemaining: initialRemaining,
-      lastBatch: 0,
-    });
-  };
-
-  const updateForegroundProgress = (data: {
-    classified: number;
-    failed: number;
-    remaining_unclassified?: number;
-  }) => {
-    setForegroundProgress((prev) => {
-      const batchProcessed = data.classified + data.failed;
-      const remaining =
-        typeof data.remaining_unclassified === "number"
-          ? data.remaining_unclassified
-          : prev.remaining;
-      const startRemaining =
-        prev.startRemaining ??
-        (typeof remaining === "number" ? remaining + batchProcessed : null);
-      return {
-        ...prev,
-        processed: prev.processed + batchProcessed,
-        failed: prev.failed + data.failed,
-        remaining,
-        startRemaining,
-        lastBatch: batchProcessed,
-      };
-    });
-  };
-
-  const stopForegroundProgress = () => {
-    setForegroundProgress((prev) => ({ ...prev, running: false }));
-  };
-
   const handleRetryTask = async (taskId: string) => {
     if (retryingTask) return;
     setRetryingTask(true);
@@ -802,184 +727,14 @@ export default function Home() {
     }
   };
 
-  const requestClassify = async (limit?: number) => {
-    const payload: { limit?: number; force?: boolean; include_readme?: boolean } = {};
-    if (typeof limit === "number") {
-      payload.limit = limit;
-    }
-    if (forceReclassify) {
-      payload.force = true;
-    }
-    if (!includeReadme) {
-      payload.include_readme = false;
-    }
-    const response = await fetch(`${API_BASE_URL}/classify`, {
-      method: "POST",
-      headers: buildAdminHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      const detail = await readApiError(response, t("classifyFailed"));
-      throw new Error(detail);
-    }
-    return response.json();
-  };
-
-  const queueForceClassify = async (limit?: number) => {
-    const payload: { limit?: number; force: boolean; include_readme?: boolean } = {
-      force: true,
-    };
-    if (typeof limit === "number") {
-      payload.limit = limit;
-    }
-    if (!includeReadme) {
-      payload.include_readme = false;
-    }
-    const response = await fetch(`${API_BASE_URL}/classify`, {
-      method: "POST",
-      headers: buildAdminHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      const detail = await readApiError(response, t("classifyFailed"));
-      throw new Error(detail);
-    }
-    await response.json();
-    await loadBackgroundStatus();
-    setActionMessage(t("classifyQueued"));
-    setActionStatus("success");
-  };
-
-  const applyClassifyMessage = (data: {
-    classified: number;
-    total: number;
-    failed: number;
-    remaining_unclassified?: number;
-  }) => {
-    updateForegroundProgress(data);
-    const remaining =
-      typeof data.remaining_unclassified === "number"
-        ? data.remaining_unclassified
-        : null;
-    setActionMessage(
-      remaining === null
-        ? t("classifiedWithValue", {
-            classified: data.classified,
-            total: data.total,
-            failed: data.failed,
-          })
-        : t("classifiedWithRemainingValue", {
-            classified: data.classified,
-            total: data.total,
-            failed: data.failed,
-            remaining,
-          })
-    );
-    setActionStatus("success");
-    return remaining;
-  };
-
-  const handleClassifyOnce = async (limit?: number) => {
-    if (forceReclassify) {
-      setActionMessage(null);
-      setActionStatus(null);
-      try {
-        await queueForceClassify(limit);
-      } catch (err) {
-        const message = getErrorMessage(err, t("classifyFailed"));
-        setActionMessage(message);
-        setActionStatus("error");
-      }
-      return;
-    }
-    setClassifying(true);
-    setActionMessage(null);
-    setActionStatus(null);
-    startForegroundProgress();
-    try {
-      const data = await requestClassify(limit);
-      applyClassifyMessage(data);
-      await loadRepos(false);
-      await loadStats();
-    } catch (err) {
-      const message = getErrorMessage(err, t("classifyFailed"));
-      setActionMessage(message);
-      setActionStatus("error");
-    } finally {
-      setClassifying(false);
-      stopForegroundProgress();
-    }
-  };
-
-  const handleClassifyBatch = () => handleClassifyOnce(parseClassifyLimit());
-  const handleClassifyAll = () => handleClassifyOnce(0);
-  const handleClassifyUntilDone = async () => {
-    if (classifying) return;
-    if (forceReclassify) {
-      try {
-        await queueForceClassify(0);
-      } catch (err) {
-        const message = getErrorMessage(err, t("classifyFailed"));
-        setActionMessage(message);
-        setActionStatus("error");
-      }
-      return;
-    }
-    setClassifyLooping(true);
-    setClassifying(true);
-    setActionMessage(null);
-    setActionStatus(null);
-    startForegroundProgress();
-    try {
-      const limit = parseClassifyLimit();
-      let previousRemaining: number | null = null;
-      for (let round = 0; round < 200; round += 1) {
-        const data = await requestClassify(limit);
-        const remaining = applyClassifyMessage(data);
-        const total = typeof data.total === "number" ? data.total : 0;
-        if (total === 0) break;
-        if (remaining === null || remaining <= 0) break;
-        if (previousRemaining !== null && remaining >= previousRemaining) {
-          break;
-        }
-        previousRemaining = remaining;
-      }
-      await loadRepos(false);
-      await loadStats();
-    } catch (err) {
-      const message = getErrorMessage(err, t("classifyFailed"));
-      setActionMessage(message);
-      setActionStatus("error");
-    } finally {
-      setClassifying(false);
-      setClassifyLooping(false);
-      stopForegroundProgress();
-    }
-  };
-
   const handleBackgroundStart = async () => {
     setActionMessage(null);
     setActionStatus(null);
     try {
-      const payload: {
-        limit?: number;
-        force?: boolean;
-        include_readme?: boolean;
-        concurrency?: number;
-      } = {
-        limit: parseClassifyLimit(),
-        concurrency: parseClassifyConcurrency(),
-      };
-      if (forceReclassify) {
-        payload.force = true;
-      }
-      if (!includeReadme) {
-        payload.include_readme = false;
-      }
       const res = await fetch(`${API_BASE_URL}/classify/background`, {
         method: "POST",
         headers: buildAdminHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ limit: 20, concurrency: 3 }),
       });
       if (!res.ok) {
         const detail = await readApiError(res, t("classifyFailed"));
@@ -1076,55 +831,22 @@ export default function Home() {
   const lastSyncLabel = status?.last_sync_at
     ? new Date(status.last_sync_at).toLocaleString()
     : t("never");
-  const classifyLabel = classifying
-    ? t("classifying")
-    : unclassifiedCount > 0
-      ? t("classifyNext")
-      : t("classify");
-  const classifyAllLabel = classifying ? t("classifying") : t("classifyAll");
-  const classifyUntilDoneLabel = classifyLooping
-    ? t("classifying")
-    : t("classifyUntilDone");
   const backgroundRunning = backgroundStatus?.running ?? false;
   const backgroundProcessed = backgroundStatus?.processed ?? 0;
   const backgroundFailed = backgroundStatus?.failed ?? 0;
   const backgroundSucceeded = Math.max(0, backgroundProcessed - backgroundFailed);
   const backgroundRemaining = backgroundStatus?.remaining ?? 0;
-  const backgroundBatchSize =
-    backgroundStatus?.batch_size && backgroundStatus.batch_size > 0
-      ? backgroundStatus.batch_size
-      : parseClassifyLimit();
-  const backgroundConcurrency =
-    backgroundStatus?.concurrency && backgroundStatus.concurrency > 0
-      ? backgroundStatus.concurrency
-      : parseClassifyConcurrency();
+  const backgroundBatchSize = backgroundStatus?.batch_size ?? 20;
+  const backgroundConcurrency = backgroundStatus?.concurrency ?? 3;
   const backgroundLastError = backgroundStatus?.last_error ?? null;
   const showBackgroundError =
     !!backgroundLastError && backgroundLastError !== "Stopped by user";
-  const showForegroundProgress =
-    foregroundProgress.running || foregroundProgress.processed > 0;
   const taskRetryable =
     taskInfo?.status === "failed" && taskInfo?.task_type === "classify";
-  const foregroundPercent =
-    foregroundProgress.startRemaining !== null &&
-    foregroundProgress.startRemaining > 0 &&
-    foregroundProgress.remaining !== null
-      ? Math.min(
-          100,
-          Math.max(
-            0,
-            Math.round(
-              ((foregroundProgress.startRemaining - foregroundProgress.remaining) /
-                foregroundProgress.startRemaining) *
-                100
-            )
-          )
-        )
-      : null;
 
   return (
-    <main className="min-h-screen px-6 py-10 lg:px-12">
-      <section className="mx-auto max-w-[1400px]">
+    <main className="h-screen flex flex-col overflow-hidden px-6 py-6 lg:px-12">
+      <section className="mx-auto max-w-[1400px] w-full flex flex-col flex-1 min-h-0">
         {actionMessage && (
           <div
             className={`mb-6 flex flex-col gap-3 rounded-2xl border px-4 py-3 text-sm shadow-soft sm:flex-row sm:items-center sm:justify-between ${
@@ -1186,32 +908,6 @@ export default function Home() {
                 </span>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
-                <div className="flex items-center rounded-full border border-ink/10 bg-surface px-1 py-1 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setLocale("en")}
-                    className={`rounded-full px-3 py-1 font-semibold transition ${
-                      locale === "en"
-                        ? "bg-clay text-ink"
-                        : "text-ink/60 hover:text-ink"
-                    }`}
-                    aria-pressed={locale === "en"}
-                  >
-                    EN
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLocale("zh")}
-                    className={`rounded-full px-3 py-1 font-semibold transition ${
-                      locale === "zh"
-                        ? "bg-clay text-ink"
-                        : "text-ink/60 hover:text-ink"
-                    }`}
-                    aria-pressed={locale === "zh"}
-                  >
-                    中文
-                  </button>
-                </div>
                 <button
                   type="button"
                   onClick={toggleTheme}
@@ -1230,62 +926,19 @@ export default function Home() {
                 >
                   {syncing ? t("syncing") : t("syncNow")}
                 </button>
-                <div className="flex items-center gap-2 rounded-full border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70">
-                  <span>{t("batchSize")}</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={500}
-                    step={1}
-                    value={classifyLimit}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (/^\d*$/.test(value)) {
-                        setClassifyLimit(value);
-                      }
-                    }}
-                    className="w-14 bg-transparent text-right text-ink outline-none"
-                    aria-label={t("batchSize")}
-                  />
-                </div>
-                <label className="flex items-center gap-2 rounded-full border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70">
-                  <input
-                    type="checkbox"
-                    checked={forceReclassify}
-                    onChange={(event) => setForceReclassify(event.target.checked)}
-                    className="accent-moss"
-                  />
-                  <span>{t("forceReclassify")}</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={handleClassifyBatch}
-                  disabled={classifying || backgroundRunning}
-                  className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
-                >
-                  {classifyLabel}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClassifyAll}
-                  disabled={classifying || backgroundRunning}
-                  className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
-                >
-                  {classifyAllLabel}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClassifyUntilDone}
-                  disabled={classifying || backgroundRunning}
-                  className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
-                >
-                  {classifyUntilDoneLabel}
-                </button>
                 <a
                   href="/settings/"
                   className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss"
                 >
                   {t("settings")}
+                </a>
+                <a
+                  href="/admin/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-copper hover:text-copper"
+                >
+                  {t("admin")}
                 </a>
               </div>
               <div className="rounded-3xl border border-ink/10 bg-surface/80 p-4 text-left shadow-soft">
@@ -1372,33 +1025,6 @@ export default function Home() {
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <div className="flex items-center gap-2 rounded-full border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70">
-                      <span>{t("concurrency")}</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={10}
-                        step={1}
-                        value={classifyConcurrency}
-                        onChange={(event) => {
-                          const value = event.target.value;
-                          if (/^\d*$/.test(value)) {
-                            setClassifyConcurrency(value);
-                          }
-                        }}
-                        className="w-12 bg-transparent text-right text-ink outline-none"
-                        aria-label={t("concurrency")}
-                      />
-                    </div>
-                    <label className="flex items-center gap-2 rounded-full border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70">
-                      <input
-                        type="checkbox"
-                        checked={includeReadme}
-                        onChange={(event) => setIncludeReadme(event.target.checked)}
-                        className="accent-moss"
-                      />
-                      <span>{t("includeReadme")}</span>
-                    </label>
                     <button
                       type="button"
                       onClick={handleBackgroundStart}
@@ -1416,169 +1042,136 @@ export default function Home() {
                       {t("stop")}
                     </button>
                   </div>
-                  {showForegroundProgress && (
-                    <div className="rounded-2xl border border-ink/10 bg-surface/70 px-4 py-3 text-xs text-ink/70">
-                      <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                        {t("foregroundStatus")}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-3">
-                        <span>
-                          {foregroundProgress.running
-                            ? t("backgroundRunning")
-                            : t("backgroundIdle")}
-                        </span>
-                        <span>
-                          {t("processedWithValue", {
-                            count: foregroundProgress.processed,
-                          })}
-                        </span>
-                        <span>
-                          {t("failedWithValue", {
-                            count: foregroundProgress.failed,
-                          })}
-                        </span>
-                        <span>
-                          {t("remainingWithValue", {
-                            count: foregroundProgress.remaining ?? "n/a",
-                          })}
-                        </span>
-                        {foregroundProgress.startRemaining !== null && (
-                          <span>
-                            {t("totalWithValue", {
-                              count: foregroundProgress.startRemaining,
-                            })}
-                          </span>
-                        )}
-                      </div>
-                      {foregroundPercent !== null && (
-                        <div className="mt-2 h-1.5 w-full rounded-full bg-clay">
-                          <div
-                            className="h-1.5 rounded-full bg-moss"
-                            style={{ width: `${foregroundPercent}%` }}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
           </div>
         </header>
 
-        <div className="mt-10 flex flex-col gap-6 xl:flex-row xl:items-start">
-          <aside className="rounded-3xl border border-ink/10 bg-surface/70 p-6 shadow-soft animate-fade-up stagger-1 xl:sticky xl:top-6 xl:w-72 xl:shrink-0 xl:max-h-[calc(100vh-3rem)] xl:overflow-y-auto">
-            <h2 className="font-display text-lg font-semibold">
-              {t("tagCloud")}
-            </h2>
+        <div className="mt-6 flex flex-col gap-6 xl:flex-row flex-1 min-h-0 overflow-hidden">
+          <aside className="rounded-3xl border border-ink/10 bg-surface/70 p-6 shadow-soft animate-fade-up stagger-1 xl:w-72 xl:shrink-0 xl:overflow-y-auto">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between xl:cursor-default"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+            >
+              <h2 className="font-display text-lg font-semibold">
+                {t("tagCloud")}
+              </h2>
+              <span className="text-ink/40 xl:hidden">
+                {sidebarOpen ? "▲" : "▼"}
+              </span>
+            </button>
 
-            {selectedTags.length > 0 && (
-              <div className="mt-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                  {t("selectedTags")}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {selectedTags.map((tag) => (
+            <div className={`${sidebarOpen ? "block" : "hidden"} xl:block`}>
+              {selectedTags.length > 0 && (
+                <div className="mt-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
+                    {t("selectedTags")}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {selectedTags.map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        className="rounded-full bg-moss px-3 py-1 text-xs text-white transition hover:bg-moss/80"
+                        onClick={() => handleTagToggle(tag)}
+                      >
+                        {tag} ×
+                      </button>
+                    ))}
                     <button
-                      key={tag}
                       type="button"
-                      className="rounded-full bg-moss px-3 py-1 text-xs text-white transition hover:bg-moss/80"
-                      onClick={() => handleTagToggle(tag)}
+                      className="rounded-full border border-ink/10 bg-surface px-3 py-1 text-xs text-ink/70 transition hover:border-copper hover:text-copper"
+                      onClick={() => setSelectedTags([])}
                     >
-                      {tag} ×
+                      {t("clearTags")}
                     </button>
-                  ))}
-                  <button
-                    type="button"
-                    className="rounded-full border border-ink/10 bg-surface px-3 py-1 text-xs text-ink/70 transition hover:border-copper hover:text-copper"
-                    onClick={() => setSelectedTags([])}
-                  >
-                    {t("clearTags")}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <div className="mt-6 space-y-4">
-              {TAG_GROUPS.map((group) => {
-                const groupTagCounts = stats?.tags?.filter((t) =>
-                  group.tags.includes(t.name)
-                ) ?? [];
-                if (groupTagCounts.length === 0) return null;
-                return (
-                  <div key={group.id}>
-                    <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                      {group.name}
-                    </h3>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {groupTagCounts.map((tagItem) => (
-                        <button
-                          key={tagItem.name}
-                          type="button"
-                          className={`rounded-full px-3 py-1 text-xs transition ${
-                            selectedTags.includes(tagItem.name)
-                              ? "bg-moss text-white"
-                              : "bg-surface border border-ink/10 text-ink/70 hover:border-moss hover:text-moss"
-                          }`}
-                          onClick={() => handleTagToggle(tagItem.name)}
-                        >
-                          {tagItem.name} ({tagItem.count})
-                        </button>
-                      ))}
-                    </div>
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              )}
 
-            {groupMode && (
-              <div className="mt-8 border-t border-ink/10 pt-6">
-                <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                  {t("users")}
-                </h3>
-                <div className="mt-4 space-y-2 text-sm">
-                  <button
-                    className={`flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left ${
-                      sourceUser === null
-                        ? "bg-clay text-ink"
-                        : "bg-surface/70 text-ink/70"
-                    }`}
-                    onClick={() => setSourceUser(null)}
-                  >
-                    <span>{t("all")}</span>
-                    <span>{overallTotal}</span>
-                  </button>
-                  {userCounts.map((user) => (
+              <div className="mt-6 space-y-4">
+                {TAG_GROUPS.map((group) => {
+                  const groupTagCounts = stats?.tags?.filter((t) =>
+                    group.tags.includes(t.name)
+                  ) ?? [];
+                  if (groupTagCounts.length === 0) return null;
+                  return (
+                    <div key={group.id}>
+                      <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">
+                        {group.name}
+                      </h3>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {groupTagCounts.map((tagItem) => (
+                          <button
+                            key={tagItem.name}
+                            type="button"
+                            className={`rounded-full px-3 py-1 text-xs transition ${
+                              selectedTags.includes(tagItem.name)
+                                ? "bg-moss text-white"
+                                : "bg-surface border border-ink/10 text-ink/70 hover:border-moss hover:text-moss"
+                            }`}
+                            onClick={() => handleTagToggle(tagItem.name)}
+                          >
+                            {tagItem.name} ({tagItem.count})
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {groupMode && (
+                <div className="mt-8 border-t border-ink/10 pt-6">
+                  <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">
+                    {t("users")}
+                  </h3>
+                  <div className="mt-4 space-y-2 text-sm">
                     <button
-                      key={user.name}
                       className={`flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left ${
-                        sourceUser === user.name
+                        sourceUser === null
                           ? "bg-clay text-ink"
                           : "bg-surface/70 text-ink/70"
                       }`}
-                      onClick={() => setSourceUser(user.name)}
+                      onClick={() => setSourceUser(null)}
                     >
-                      <span>{user.name}</span>
-                      <span>{user.count}</span>
+                      <span>{t("all")}</span>
+                      <span>{overallTotal}</span>
                     </button>
-                  ))}
+                    {userCounts.map((user) => (
+                      <button
+                        key={user.name}
+                        className={`flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left ${
+                          sourceUser === user.name
+                            ? "bg-clay text-ink"
+                            : "bg-surface/70 text-ink/70"
+                        }`}
+                        onClick={() => setSourceUser(user.name)}
+                      >
+                        <span>{user.name}</span>
+                        <span>{user.count}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            <div className="mt-8 border-t border-ink/10 pt-6">
-              <h2 className="font-display text-lg font-semibold">
-                {t("status")}
-              </h2>
-              <div className="mt-4 space-y-2 text-sm text-ink/70">
-                <div>{t("totalWithValue", { count: overallTotal })}</div>
-                <div>{t("showingWithValue", { count: repos.length })}</div>
-                <div>{t("unclassifiedWithValue", { count: unclassifiedCount })}</div>
+              <div className="mt-8 border-t border-ink/10 pt-6">
+                <h2 className="font-display text-lg font-semibold">
+                  {t("status")}
+                </h2>
+                <div className="mt-4 space-y-2 text-sm text-ink/70">
+                  <div>{t("totalWithValue", { count: overallTotal })}</div>
+                  <div>{t("showingWithValue", { count: repos.length })}</div>
+                  <div>{t("unclassifiedWithValue", { count: unclassifiedCount })}</div>
+                </div>
               </div>
             </div>
           </aside>
 
-          <section className="min-w-0 flex-1 space-y-6">
+          <section className="min-w-0 flex-1 space-y-6 overflow-y-auto">
             <div className="rounded-3xl border border-ink/10 bg-surface/80 p-5 shadow-soft animate-fade-up stagger-2">
               <div className="flex flex-col gap-3 md:flex-row md:items-center">
                 <input

@@ -494,6 +494,7 @@ async def _ensure_columns(conn: aiosqlite.Connection) -> None:
         ("ai_keywords", "ai_keywords TEXT"),
         ("override_summary_zh", "override_summary_zh TEXT"),
         ("override_keywords", "override_keywords TEXT"),
+        ("classify_fail_count", "classify_fail_count INTEGER DEFAULT 0"),
     ]
     for name, ddl in columns:
         if name not in existing:
@@ -916,7 +917,7 @@ async def update_classification(
             """
             UPDATE repos
             SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?,
-                ai_provider = ?, ai_model = ?, ai_updated_at = ?
+                ai_provider = ?, ai_model = ?, ai_updated_at = ?, classify_fail_count = 0
             WHERE full_name = ?
             """,
             (
@@ -967,7 +968,7 @@ async def update_classifications_bulk(items: List[Dict[str, Any]]) -> int:
                 """
                 UPDATE repos
                 SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?,
-                    ai_provider = ?, ai_model = ?, ai_updated_at = ?
+                    ai_provider = ?, ai_model = ?, ai_updated_at = ?, classify_fail_count = 0
                 WHERE full_name = ?
                 """,
                 rows,
@@ -1083,7 +1084,7 @@ async def record_readme_fetches(entries: List[Dict[str, Any]]) -> None:
 async def select_repos_for_classification(
     limit: int, force: bool, after_full_name: Optional[str] = None
 ) -> List[RepoBase]:
-    where = "WHERE NULLIF(override_category, '') IS NULL"
+    where = "WHERE NULLIF(override_category, '') IS NULL AND (classify_fail_count IS NULL OR classify_fail_count < 5)"
     if not force:
         where += " AND (category IS NULL OR ai_updated_at IS NULL OR ai_updated_at < pushed_at)"
     params: List[Any] = []
@@ -1131,7 +1132,7 @@ async def count_unclassified_repos() -> int:
 
 
 async def count_repos_for_classification(force: bool, after_full_name: Optional[str] = None) -> int:
-    where = "WHERE NULLIF(override_category, '') IS NULL"
+    where = "WHERE NULLIF(override_category, '') IS NULL AND (classify_fail_count IS NULL OR classify_fail_count < 5)"
     if not force:
         where += " AND (category IS NULL OR ai_updated_at IS NULL OR ai_updated_at < pushed_at)"
     elif after_full_name:
@@ -1145,6 +1146,69 @@ async def count_repos_for_classification(force: bool, after_full_name: Optional[
             params,
         )).fetchone()
     return int(row[0] or 0)
+
+
+@_retry_on_lock()
+async def increment_classify_fail_count(full_names: List[str]) -> None:
+    """Increment classify_fail_count for the given repos."""
+    if not full_names:
+        return
+    async with get_connection() as conn:
+        placeholders = ",".join("?" for _ in full_names)
+        await conn.execute(
+            f"""
+            UPDATE repos
+            SET classify_fail_count = COALESCE(classify_fail_count, 0) + 1
+            WHERE full_name IN ({placeholders})
+            """,
+            full_names,
+        )
+        await conn.commit()
+
+
+@_retry_on_lock()
+async def reset_classify_fail_count(full_names: Optional[List[str]] = None) -> int:
+    """Reset classify_fail_count to 0. If full_names is None, reset all."""
+    async with get_connection() as conn:
+        if full_names is None:
+            result = await conn.execute(
+                "UPDATE repos SET classify_fail_count = 0 WHERE classify_fail_count > 0"
+            )
+        else:
+            if not full_names:
+                return 0
+            placeholders = ",".join("?" for _ in full_names)
+            result = await conn.execute(
+                f"UPDATE repos SET classify_fail_count = 0 WHERE full_name IN ({placeholders})",
+                full_names,
+            )
+        await conn.commit()
+        return result.rowcount
+
+
+async def get_failed_repos(min_fail_count: int = 5) -> List[Dict[str, Any]]:
+    """Get repos that have failed classification multiple times."""
+    async with get_connection() as conn:
+        rows = await (await conn.execute(
+            """
+            SELECT full_name, name, owner, description, language, classify_fail_count
+            FROM repos
+            WHERE classify_fail_count >= ?
+            ORDER BY classify_fail_count DESC, full_name ASC
+            """,
+            (min_fail_count,),
+        )).fetchall()
+    return [
+        {
+            "full_name": row["full_name"],
+            "name": row["name"],
+            "owner": row["owner"],
+            "description": row["description"],
+            "language": row["language"],
+            "classify_fail_count": row["classify_fail_count"],
+        }
+        for row in rows
+    ]
 
 
 async def list_override_history(full_name: str) -> List[Dict[str, Any]]:

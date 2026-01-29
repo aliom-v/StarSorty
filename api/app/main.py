@@ -20,6 +20,8 @@ from .db import (
     get_repo,
     get_task,
     get_sync_status,
+    get_failed_repos,
+    increment_classify_fail_count,
     init_db,
     init_db_pool,
     close_db_pool,
@@ -29,6 +31,7 @@ from .db import (
     prune_users_not_in,
     record_readme_fetch,
     record_readme_fetches,
+    reset_classify_fail_count,
     reset_stale_tasks,
     select_repos_for_classification,
     update_task,
@@ -699,6 +702,42 @@ async def repo_readme(full_name: str) -> ReadmeResponse:
     return ReadmeResponse(updated=bool(summary), summary=summary)
 
 
+class FailedRepoItem(BaseModel):
+    full_name: str
+    name: str
+    owner: str
+    description: Optional[str] = None
+    language: Optional[str] = None
+    classify_fail_count: int
+
+
+class FailedReposResponse(BaseModel):
+    items: List[FailedRepoItem]
+    total: int
+
+
+class ResetFailedResponse(BaseModel):
+    reset_count: int
+
+
+@app.get("/repos/failed", response_model=FailedReposResponse)
+async def list_failed_repos(min_fail_count: int = 5) -> FailedReposResponse:
+    """List repos that have failed classification multiple times."""
+    items = await get_failed_repos(min_fail_count)
+    return FailedReposResponse(items=items, total=len(items))
+
+
+@app.post(
+    "/repos/failed/reset",
+    response_model=ResetFailedResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def reset_failed_repos() -> ResetFailedResponse:
+    """Reset classify_fail_count for all repos, allowing them to be retried."""
+    count = await reset_classify_fail_count()
+    return ResetFailedResponse(reset_count=count)
+
+
 @app.get("/taxonomy", response_model=TaxonomyResponse)
 async def taxonomy() -> TaxonomyResponse:
     current = get_settings()
@@ -843,6 +882,8 @@ async def _classify_repos_batch(
     failed = 0
     repo_datas: list[dict] = []
     readme_targets: list[dict] = []
+    all_full_names: set[str] = set()
+    success_full_names: set[str] = set()
 
     for repo in repos:
         if isinstance(repo, RepoBase):
@@ -852,6 +893,9 @@ async def _classify_repos_batch(
         if include_readme and _should_fetch_readme(repo_data):
             readme_targets.append(repo_data)
         repo_datas.append(repo_data)
+        full_name = repo_data.get("full_name")
+        if full_name:
+            all_full_names.add(full_name)
 
     # Concurrent README fetching
     if include_readme and readme_targets:
@@ -948,6 +992,9 @@ async def _classify_repos_batch(
         try:
             await update_classifications_bulk(rule_updates)
             classified += len(rule_updates)
+            for item in rule_updates:
+                if item.get("full_name"):
+                    success_full_names.add(item["full_name"])
         except Exception as exc:
             logger.warning("Bulk rule classification update failed: %s", exc)
             for item in rule_updates:
@@ -966,6 +1013,7 @@ async def _classify_repos_batch(
                         item["model"],
                     )
                     classified += 1
+                    success_full_names.add(full_name)
                 except Exception:
                     failed += 1
 
@@ -1036,6 +1084,9 @@ async def _classify_repos_batch(
             try:
                 await update_classifications_bulk(ai_updates)
                 classified += len(ai_updates)
+                for item in ai_updates:
+                    if item.get("full_name"):
+                        success_full_names.add(item["full_name"])
             except Exception as exc:
                 logger.warning("Bulk AI classification update failed: %s", exc)
                 for item in ai_updates:
@@ -1054,8 +1105,18 @@ async def _classify_repos_batch(
                             item["model"],
                         )
                         classified += 1
+                        success_full_names.add(full_name)
                     except Exception:
                         failed += 1
+
+    # Increment fail count for repos that failed classification
+    failed_full_names = list(all_full_names - success_full_names)
+    if failed_full_names:
+        try:
+            await increment_classify_fail_count(failed_full_names)
+            logger.debug("Incremented fail count for %d repos", len(failed_full_names))
+        except Exception as exc:
+            logger.warning("Failed to increment classify_fail_count: %s", exc)
 
     return (classified, failed)
 
