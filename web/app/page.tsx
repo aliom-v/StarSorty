@@ -926,6 +926,14 @@ export default function Home() {
                 >
                   {syncing ? t("syncing") : t("syncNow")}
                 </button>
+                <button
+                  type="button"
+                  onClick={handleBackgroundStart}
+                  disabled={backgroundRunning}
+                  className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
+                >
+                  {backgroundRunning ? t("classifying") : t("classify")}
+                </button>
                 <a
                   href="/settings/"
                   className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss"
