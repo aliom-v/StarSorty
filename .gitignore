@@ -47,3 +47,4 @@ Thumbs.db
 scripts/ai_test_input.example.json
 scripts/integration_test.ps1
 scripts/test_ai.ps1
+.claude/
