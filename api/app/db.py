@@ -7,7 +7,7 @@ import random
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import aiosqlite
 
@@ -22,8 +22,8 @@ def _retry_on_lock(
     max_attempts: int = 5,
     base_delay: float = 0.05,
     max_delay: float = 0.5,
-) -> callable:
-    def decorator(func: callable) -> callable:
+) -> Callable:
+    def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             attempt = 0
@@ -276,6 +276,14 @@ async def init_db() -> None:
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_ai_keywords ON repos(ai_keywords)"
         )
+        # Index for stargazers_count sorting (used in most queries)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repos_stargazers ON repos(stargazers_count DESC)"
+        )
+        # Index for summary_zh search
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repos_summary_zh ON repos(summary_zh)"
+        )
         await conn.execute(
             """
             INSERT OR IGNORE INTO sync_status (id, last_sync_at, last_result, last_message)
@@ -383,8 +391,6 @@ async def update_task(
     if cursor_full_name is not None:
         fields.append("cursor_full_name = ?")
         params.append(cursor_full_name)
-    if not fields:
-        return
     params.append(task_id)
     async with get_connection() as conn:
         await conn.execute(
@@ -731,6 +737,11 @@ async def prune_users_not_in(
     return (updated, deleted)
 
 
+def _escape_like(value: str) -> str:
+    """Escape special characters for SQL LIKE queries."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 async def list_repos(
     q: Optional[str] = None,
     language: Optional[str] = None,
@@ -747,12 +758,13 @@ async def list_repos(
     params: List[Any] = []
 
     if q:
-        like = f"%{q}%"
+        escaped_q = _escape_like(q)
+        like = f"%{escaped_q}%"
         clauses.append(
             "("
-            "name LIKE ? OR full_name LIKE ? OR description LIKE ? "
-            "OR topics LIKE ? OR ai_tags LIKE ? OR override_tags LIKE ? "
-            "OR star_users LIKE ? OR summary_zh LIKE ? OR ai_keywords LIKE ?"
+            "name LIKE ? ESCAPE '\\' OR full_name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' "
+            "OR topics LIKE ? ESCAPE '\\' OR ai_tags LIKE ? ESCAPE '\\' OR override_tags LIKE ? ESCAPE '\\' "
+            "OR star_users LIKE ? ESCAPE '\\' OR summary_zh LIKE ? ESCAPE '\\' OR ai_keywords LIKE ? ESCAPE '\\'"
             ")"
         )
         params.extend([like, like, like, like, like, like, like, like, like])
@@ -814,6 +826,63 @@ async def list_repos(
             params + [limit, offset],
         )).fetchall()
     return total, [_row_to_repo(row) for row in rows]
+
+
+async def iter_repos_for_export(
+    language: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    batch_size: int = 500,
+):
+    """Async generator that yields repos in batches for memory-efficient export."""
+    clauses = []
+    params: List[Any] = []
+
+    if language:
+        clauses.append("language = ?")
+        params.append(language)
+
+    if tags:
+        tag_clauses = []
+        for t in tags:
+            tag_clauses.append("(COALESCE(NULLIF(override_tags, ''), ai_tags) LIKE ?)")
+            params.append(f'%"{t}"%')
+        clauses.append("(" + " OR ".join(tag_clauses) + ")")
+
+    where_sql = ""
+    if clauses:
+        where_sql = "WHERE " + " AND ".join(clauses)
+
+    offset = 0
+    while True:
+        async with get_connection() as conn:
+            rows = await (await conn.execute(
+                f"""
+                SELECT
+                    full_name, name, owner, html_url, description, language,
+                    stargazers_count, forks_count, topics, pushed_at, updated_at, starred_at,
+                    star_users,
+                    category, subcategory, ai_confidence, ai_tags, ai_provider, ai_model,
+                    ai_updated_at, override_category, override_subcategory, override_tags,
+                    override_note, readme_summary, readme_fetched_at,
+                    summary_zh, ai_keywords, override_summary_zh, override_keywords
+                FROM repos
+                {where_sql}
+                ORDER BY stargazers_count DESC, full_name ASC
+                LIMIT ? OFFSET ?
+                """,
+                params + [batch_size, offset],
+            )).fetchall()
+
+        if not rows:
+            break
+
+        for row in rows:
+            yield _row_to_repo(row)
+
+        if len(rows) < batch_size:
+            break
+
+        offset += batch_size
 
 
 async def get_repo(full_name: str) -> Optional[RepoBase]:
@@ -1295,10 +1364,32 @@ async def get_repo_stats() -> Dict[str, Any]:
             ORDER BY count DESC, name ASC
             """
         )).fetchall()
+        # Use json_each to aggregate tags in SQL instead of loading all into memory
         tag_rows = await (await conn.execute(
-            "SELECT override_tags, ai_tags FROM repos"
+            """
+            SELECT tag.value AS name, COUNT(*) AS count
+            FROM repos, json_each(
+                CASE
+                    WHEN override_tags IS NOT NULL AND override_tags != '[]' AND override_tags != 'null'
+                    THEN override_tags
+                    ELSE COALESCE(ai_tags, '[]')
+                END
+            ) AS tag
+            WHERE tag.value IS NOT NULL AND tag.value != ''
+            GROUP BY tag.value
+            ORDER BY count DESC, name ASC
+            """
         )).fetchall()
-        user_rows = await (await conn.execute("SELECT star_users FROM repos")).fetchall()
+        # Use json_each to aggregate users in SQL
+        user_rows = await (await conn.execute(
+            """
+            SELECT user.value AS name, COUNT(*) AS count
+            FROM repos, json_each(COALESCE(star_users, '[]')) AS user
+            WHERE user.value IS NOT NULL AND user.value != ''
+            GROUP BY user.value
+            ORDER BY count DESC, name ASC
+            """
+        )).fetchall()
 
     category_counts = [
         {"name": row["name"], "count": int(row["count"] or 0)}
@@ -1312,28 +1403,14 @@ async def get_repo_stats() -> Dict[str, Any]:
         }
         for row in subcategory_rows
     ]
-
-    tag_map: Dict[str, int] = {}
-    for row in tag_rows:
-        override_tags = _load_json_list_optional(row["override_tags"])
-        ai_tags = _load_json_list(row["ai_tags"])
-        effective_tags = ai_tags if override_tags is None else override_tags
-        for tag in effective_tags:
-            tag_map[tag] = tag_map.get(tag, 0) + 1
-    tag_counts = sorted(
-        ({"name": name, "count": count} for name, count in tag_map.items()),
-        key=lambda item: (-item["count"], item["name"]),
-    )
-
-    user_map: Dict[str, int] = {}
-    for row in user_rows:
-        users = _load_json_list(row["star_users"])
-        for user in users:
-            user_map[user] = user_map.get(user, 0) + 1
-    user_counts = sorted(
-        ({"name": name, "count": count} for name, count in user_map.items()),
-        key=lambda item: (-item["count"], item["name"]),
-    )
+    tag_counts = [
+        {"name": row["name"], "count": int(row["count"] or 0)}
+        for row in tag_rows
+    ]
+    user_counts = [
+        {"name": row["name"], "count": int(row["count"] or 0)}
+        for row in user_rows
+    ]
 
     return {
         "total": int(total or 0),

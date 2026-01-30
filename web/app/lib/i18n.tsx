@@ -59,6 +59,7 @@ const translations = {
     never: "never",
     dismiss: "Dismiss",
     loadingRepos: "Loading repos...",
+    loadingSettings: "Loading settings...",
     noRepos: "No repos yet. Run the sync API to pull your GitHub stars.",
     noDescription: "No description yet.",
     viewOnGithub: "View on GitHub",
@@ -178,6 +179,16 @@ const translations = {
     configured: "Configured",
     notConfigured: "Not configured",
     goToAdmin: "Go to Admin",
+    // Export
+    exportData: "Export Data",
+    exportDataDesc: "Export your starred repos to Obsidian-compatible Markdown files.",
+    exportToObsidian: "Export to Obsidian",
+    exporting: "Exporting...",
+    exportComplete: "Export complete",
+    exportFailed: "Export failed",
+    loadFailedReposError: "Failed to load failed repos",
+    loadStatsError: "Failed to load stats",
+    loadStatusError: "Failed to load background status",
   },
   zh: {
     title: "把你的星标像产品一样整理。",
@@ -225,6 +236,7 @@ const translations = {
     never: "从未",
     dismiss: "关闭",
     loadingRepos: "加载仓库中...",
+    loadingSettings: "加载设置中...",
     noRepos: "还没有仓库。请运行同步接口拉取你的 GitHub Star。",
     noDescription: "暂无描述。",
     viewOnGithub: "在 GitHub 查看",
@@ -344,6 +356,16 @@ const translations = {
     configured: "已配置",
     notConfigured: "未配置",
     goToAdmin: "前往管理",
+    // Export
+    exportData: "数据导出",
+    exportDataDesc: "将你的 Star 仓库导出为 Obsidian 兼容的 Markdown 文件。",
+    exportToObsidian: "导出到 Obsidian",
+    exporting: "导出中...",
+    exportComplete: "导出完成",
+    exportFailed: "导出失败",
+    loadFailedReposError: "加载失败仓库列表出错",
+    loadStatsError: "加载统计信息失败",
+    loadStatusError: "加载后台状态失败",
   },
 } as const;
 
@@ -367,7 +389,7 @@ type I18nContextValue = {
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
-const detectLocale = (): Locale => {
+const getDefaultLocale = (): Locale => {
   return "zh";
 };
 
@@ -385,7 +407,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const stored = readStoredLocale();
-    const initialLocale = stored ?? detectLocale();
+    const initialLocale = stored ?? getDefaultLocale();
     setLocaleState(initialLocale);
     if (typeof document !== "undefined") {
       document.documentElement.lang = initialLocale;

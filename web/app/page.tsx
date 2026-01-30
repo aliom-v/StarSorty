@@ -234,7 +234,6 @@ export default function Home() {
   const [syncing, setSyncing] = useState(false);
   const [syncTaskId, setSyncTaskId] = useState<string | null>(null);
   const [backgroundStatus, setBackgroundStatus] = useState<BackgroundStatus | null>(null);
-  const [wasBackgroundRunning, setWasBackgroundRunning] = useState(false);
   const [taskInfoId, setTaskInfoId] = useState<string | null>(null);
   const [taskInfo, setTaskInfo] = useState<TaskStatus | null>(null);
   const [followActiveTask, setFollowActiveTask] = useState(true);
@@ -250,6 +249,7 @@ export default function Home() {
   const [sourceUser, setSourceUser] = useState<string | null>(null);
   const [groupMode, setGroupMode] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const wasBackgroundRunningRef = useRef(false);
   const activeError = configError || error;
   const unknownErrorMessage = t("unknownError");
 
@@ -406,7 +406,13 @@ export default function Home() {
       const items: Repo[] = data.items || [];
 
       setTotalCount(total || items.length);
-      setRepos((prev) => (append ? [...prev, ...items] : items));
+      setRepos((prev) => {
+        if (!append) return items;
+        // Deduplicate by full_name when appending
+        const existingNames = new Set(prev.map((r) => r.full_name));
+        const newItems = items.filter((item) => !existingNames.has(item.full_name));
+        return [...prev, ...newItems];
+      });
       setHasMore(offset + items.length < total);
     } catch (err) {
       const message = getErrorMessage(err, unknownErrorMessage);
@@ -613,7 +619,8 @@ export default function Home() {
 
   useEffect(() => {
     const running = backgroundStatus?.running ?? false;
-    if (wasBackgroundRunning && !running) {
+    const wasRunning = wasBackgroundRunningRef.current;
+    if (wasRunning && !running) {
       loadRepos(false);
       loadStats();
       const lastError = backgroundStatus?.last_error;
@@ -628,14 +635,13 @@ export default function Home() {
         setActionStatus("success");
       }
     }
-    setWasBackgroundRunning(running);
+    wasBackgroundRunningRef.current = running;
   }, [
     backgroundStatus?.running,
     backgroundStatus?.last_error,
     loadRepos,
     loadStats,
     t,
-    wasBackgroundRunning,
   ]);
 
   useEffect(() => {
@@ -827,6 +833,16 @@ export default function Home() {
     const selected = categoryCounts.find((item) => item.name === category);
     return selected?.count ?? 0;
   }, [category, categoryCounts, overallTotal]);
+
+  // Pre-compute non-empty tag groups to avoid filtering on every render
+  const tagGroupsWithCounts = useMemo(() => {
+    if (!stats?.tags) return [];
+    return TAG_GROUPS.map((group) => {
+      const groupTagCounts = stats.tags.filter((t) => group.tags.includes(t.name));
+      if (groupTagCounts.length === 0) return null;
+      return { ...group, tagCounts: groupTagCounts };
+    }).filter(Boolean) as Array<{ id: string; name: string; tags: string[]; tagCounts: StatsItem[] }>;
+  }, [stats?.tags]);
 
   const lastSyncLabel = status?.last_sync_at
     ? new Date(status.last_sync_at).toLocaleString()
@@ -1100,35 +1116,29 @@ export default function Home() {
               )}
 
               <div className="mt-6 space-y-4">
-                {TAG_GROUPS.map((group) => {
-                  const groupTagCounts = stats?.tags?.filter((t) =>
-                    group.tags.includes(t.name)
-                  ) ?? [];
-                  if (groupTagCounts.length === 0) return null;
-                  return (
-                    <div key={group.id}>
-                      <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                        {group.name}
-                      </h3>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {groupTagCounts.map((tagItem) => (
-                          <button
-                            key={tagItem.name}
-                            type="button"
-                            className={`rounded-full px-3 py-1 text-xs transition ${
-                              selectedTags.includes(tagItem.name)
-                                ? "bg-moss text-white"
-                                : "bg-surface border border-ink/10 text-ink/70 hover:border-moss hover:text-moss"
-                            }`}
-                            onClick={() => handleTagToggle(tagItem.name)}
-                          >
-                            {tagItem.name} ({tagItem.count})
-                          </button>
-                        ))}
-                      </div>
+                {tagGroupsWithCounts.map((group) => (
+                  <div key={group.id}>
+                    <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">
+                      {group.name}
+                    </h3>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {group.tagCounts.map((tagItem) => (
+                        <button
+                          key={tagItem.name}
+                          type="button"
+                          className={`rounded-full px-3 py-1 text-xs transition ${
+                            selectedTags.includes(tagItem.name)
+                              ? "bg-moss text-white"
+                              : "bg-surface border border-ink/10 text-ink/70 hover:border-moss hover:text-moss"
+                          }`}
+                          onClick={() => handleTagToggle(tagItem.name)}
+                        >
+                          {tagItem.name} ({tagItem.count})
+                        </button>
+                      ))}
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
 
               {groupMode && (

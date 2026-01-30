@@ -78,10 +78,10 @@ def _mask_sensitive_payload(payload: Any) -> Any:
 
 def _mask_secrets_in_text(text: str) -> str:
     masked = text
-    masked = re.sub(r"(?i)(authorization\\s*[:=]\\s*bearer\\s+)[^\\s\"']+", r"\\1***", masked)
-    masked = re.sub(r"(?i)(x-api-key\\s*[:=]\\s*)[^\\s\"']+", r"\\1***", masked)
-    masked = re.sub(r"(?i)(api_key\\s*[:=]\\s*)[^\\s\"']+", r"\\1***", masked)
-    masked = re.sub(r"\\bsk-[A-Za-z0-9\\-]{8,}\\b", "sk-***", masked)
+    masked = re.sub(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s\"']+", r"\1***", masked)
+    masked = re.sub(r"(?i)(x-api-key\s*[:=]\s*)[^\s\"']+", r"\1***", masked)
+    masked = re.sub(r"(?i)(api_key\s*[:=]\s*)[^\s\"']+", r"\1***", masked)
+    masked = re.sub(r"\bsk-[A-Za-z0-9\-]{8,}\b", "sk-***", masked)
     return masked
 
 
@@ -116,14 +116,26 @@ def _raise_for_status_with_detail(response: httpx.Response, url: str) -> None:
         raise httpx.HTTPStatusError(message, request=exc.request, response=exc.response) from exc
 
 
+def _strip_code_block(text: str) -> str:
+    """Strip markdown code block wrapper, handling language identifiers like ```json."""
+    candidate = text.strip()
+    if not candidate.startswith("```"):
+        return candidate
+    lines = candidate.split("\n")
+    if len(lines) < 2:
+        return candidate
+    # Remove first line (```json or ```) and last line (```)
+    if lines[-1].strip() == "```":
+        lines = lines[1:-1]
+    else:
+        lines = lines[1:]
+    return "\n".join(lines).strip()
+
+
 def _extract_json(text: str) -> Optional[Dict[str, Any]]:
     if not text:
         return None
-    candidate = text.strip()
-    if candidate.startswith("```"):
-        parts = candidate.split("```")
-        if len(parts) >= 3:
-            candidate = parts[1].strip()
+    candidate = _strip_code_block(text)
     try:
         return json.loads(candidate)
     except json.JSONDecodeError:
@@ -143,11 +155,7 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
 def _extract_json_list(text: str) -> Optional[List[Any]]:
     if not text:
         return None
-    candidate = text.strip()
-    if candidate.startswith("```"):
-        parts = candidate.split("```")
-        if len(parts) >= 3:
-            candidate = parts[1].strip()
+    candidate = _strip_code_block(text)
     try:
         parsed = json.loads(candidate)
         if isinstance(parsed, list):
@@ -324,7 +332,7 @@ class AIClient:
     async def classify_repo(
         self,
         repo: Dict[str, Any],
-        taxonomy: Dict[str, List[Dict[str, List[str]]]],
+        taxonomy: Dict[str, Any],
     ) -> Dict[str, Any]:
         settings = get_settings()
         raw_provider = settings.ai_provider.lower()
@@ -414,7 +422,7 @@ class AIClient:
     async def classify_repos(
         self,
         repos: List[Dict[str, Any]],
-        taxonomy: Dict[str, List[Dict[str, List[str]]]],
+        taxonomy: Dict[str, Any],
     ) -> List[Optional[Dict[str, Any]]]:
         settings = get_settings()
         raw_provider = settings.ai_provider.lower()
@@ -510,7 +518,7 @@ class AIClient:
     async def classify_repo_with_retry(
         self,
         repo: Dict[str, Any],
-        taxonomy: Dict[str, List[Dict[str, List[str]]]],
+        taxonomy: Dict[str, Any],
         retries: int = 2,
     ) -> Dict[str, Any]:
         attempt = 0
@@ -524,7 +532,7 @@ class AIClient:
                         attempt + 1,
                         exc,
                     )
-                    raise exc
+                    raise
                 wait = 2 ** attempt
                 logger.warning(
                     "AI classify failed on attempt %s/%s: %s. Retrying in %ss",
@@ -539,7 +547,7 @@ class AIClient:
     async def classify_repos_with_retry(
         self,
         repos: List[Dict[str, Any]],
-        taxonomy: Dict[str, List[Dict[str, List[str]]]],
+        taxonomy: Dict[str, Any],
         retries: int = 2,
     ) -> List[Optional[Dict[str, Any]]]:
         attempt = 0
@@ -553,7 +561,7 @@ class AIClient:
                         attempt + 1,
                         exc,
                     )
-                    raise exc
+                    raise
                 wait = 2 ** attempt
                 logger.warning(
                     "AI batch classify failed on attempt %s/%s: %s. Retrying in %ss",
@@ -752,7 +760,7 @@ class AIClient:
                         attempt + 1,
                         exc,
                     )
-                    raise exc
+                    raise
                 wait = 2 ** attempt
                 logger.warning(
                     "AI classify v2 failed on attempt %s/%s: %s. Retrying in %ss",
@@ -780,7 +788,7 @@ class AIClient:
                         attempt + 1,
                         exc,
                     )
-                    raise exc
+                    raise
                 wait = 2 ** attempt
                 logger.warning(
                     "AI batch classify v2 failed on attempt %s/%s: %s. Retrying in %ss",

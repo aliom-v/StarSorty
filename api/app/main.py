@@ -1,13 +1,14 @@
 import asyncio
 import logging
 import os
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -25,6 +26,7 @@ from .db import (
     init_db,
     init_db_pool,
     close_db_pool,
+    iter_repos_for_export,
     list_override_history,
     list_repos,
     prune_star_user,
@@ -47,6 +49,7 @@ from .ai_client import AIClient
 from .taxonomy import load_taxonomy, validate_classification
 from .rules import load_rules, match_rule
 from .settings_store import write_settings
+from .export import generate_obsidian_zip, generate_obsidian_zip_streaming
 import httpx
 import uuid
 
@@ -68,6 +71,14 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # Cancel background classification task if running
+        if classification_task is not None:
+            classification_stop.set()
+            classification_task.cancel()
+            try:
+                await classification_task
+            except asyncio.CancelledError:
+                pass
         await github_http.aclose()
         await ai_http.aclose()
         await close_db_pool()
@@ -116,12 +127,21 @@ classification_state = {
     "task_id": None,
 }
 
+_admin_token_warned = False
+
 
 def require_admin(x_admin_token: str | None = Header(default=None, alias="X-Admin-Token")) -> None:
+    global _admin_token_warned
     admin_token = os.getenv("ADMIN_TOKEN", "").strip()
     if not admin_token:
+        if not _admin_token_warned:
+            logger.warning(
+                "ADMIN_TOKEN is not set. Admin endpoints are unprotected. "
+                "Set ADMIN_TOKEN environment variable for production use."
+            )
+            _admin_token_warned = True
         return
-    if x_admin_token != admin_token:
+    if not secrets.compare_digest(x_admin_token or "", admin_token):
         raise HTTPException(status_code=401, detail="Admin token required")
 
 
@@ -589,11 +609,22 @@ async def _run_sync_task(task_id: str) -> None:
             )
 
 
+def _handle_task_exception(task: asyncio.Task) -> None:
+    """Callback to log exceptions from fire-and-forget tasks."""
+    try:
+        exc = task.exception()
+        if exc is not None:
+            logger.error("Background task failed: %s", exc, exc_info=exc)
+    except asyncio.CancelledError:
+        pass
+
+
 @app.post("/sync", response_model=TaskQueuedResponse, status_code=202, dependencies=[Depends(require_admin)])
 async def sync() -> TaskQueuedResponse:
     task_id = str(uuid.uuid4())
     await _register_task(task_id, "sync", payload={})
-    asyncio.create_task(_run_sync_task(task_id))
+    bg_task = asyncio.create_task(_run_sync_task(task_id))
+    bg_task.add_done_callback(_handle_task_exception)
     return TaskQueuedResponse(task_id=task_id, status="queued", message="Sync queued")
 
 
@@ -627,6 +658,61 @@ async def repos(
     )
     items_out = [RepoOut(**item.model_dump()) if isinstance(item, RepoBase) else RepoOut(**item) for item in items]
     return RepoListResponse(total=total, items=items_out)
+
+
+@app.get("/export/obsidian")
+async def export_obsidian(
+    tags: Optional[str] = None,
+    language: Optional[str] = None,
+) -> Response:
+    """Export all repos as Obsidian-compatible Markdown files in a ZIP."""
+    tag_list = None
+    if tags:
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    # Use streaming to avoid loading all repos into memory at once
+    repo_iter = iter_repos_for_export(language=language, tags=tag_list)
+    zip_bytes = await generate_obsidian_zip_streaming(repo_iter)
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="starsorty-export.zip"'},
+    )
+
+
+class FailedRepoItem(BaseModel):
+    full_name: str
+    name: str
+    owner: str
+    description: Optional[str] = None
+    language: Optional[str] = None
+    classify_fail_count: int
+
+
+class FailedReposResponse(BaseModel):
+    items: List[FailedRepoItem]
+    total: int
+
+
+class ResetFailedResponse(BaseModel):
+    reset_count: int
+
+
+@app.get("/repos/failed", response_model=FailedReposResponse)
+async def list_failed_repos(min_fail_count: int = 5) -> FailedReposResponse:
+    """List repos that have failed classification multiple times."""
+    items = await get_failed_repos(min_fail_count)
+    return FailedReposResponse(items=items, total=len(items))
+
+
+@app.post(
+    "/repos/failed/reset",
+    response_model=ResetFailedResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def reset_failed_repos() -> ResetFailedResponse:
+    """Reset classify_fail_count for all repos, allowing them to be retried."""
+    count = await reset_classify_fail_count()
+    return ResetFailedResponse(reset_count=count)
 
 
 @app.get("/repos/{full_name:path}", response_model=RepoOut)
@@ -707,42 +793,6 @@ async def repo_readme(full_name: str) -> ReadmeResponse:
             detail="Failed to persist README summary. Please retry.",
         ) from exc
     return ReadmeResponse(updated=bool(summary), summary=summary)
-
-
-class FailedRepoItem(BaseModel):
-    full_name: str
-    name: str
-    owner: str
-    description: Optional[str] = None
-    language: Optional[str] = None
-    classify_fail_count: int
-
-
-class FailedReposResponse(BaseModel):
-    items: List[FailedRepoItem]
-    total: int
-
-
-class ResetFailedResponse(BaseModel):
-    reset_count: int
-
-
-@app.get("/repos/failed", response_model=FailedReposResponse)
-async def list_failed_repos(min_fail_count: int = 5) -> FailedReposResponse:
-    """List repos that have failed classification multiple times."""
-    items = await get_failed_repos(min_fail_count)
-    return FailedReposResponse(items=items, total=len(items))
-
-
-@app.post(
-    "/repos/failed/reset",
-    response_model=ResetFailedResponse,
-    dependencies=[Depends(require_admin)],
-)
-async def reset_failed_repos() -> ResetFailedResponse:
-    """Reset classify_fail_count for all repos, allowing them to be retried."""
-    count = await reset_classify_fail_count()
-    return ResetFailedResponse(reset_count=count)
 
 
 @app.get("/taxonomy", response_model=TaxonomyResponse)

@@ -1,9 +1,11 @@
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
 
+logger = logging.getLogger("starsorty.config")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 API_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(REPO_ROOT / ".env")
@@ -42,7 +44,8 @@ def get_settings() -> Settings:
     overrides = {}
     try:
         overrides = read_settings()
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to read settings overrides: %s", exc)
         overrides = {}
 
     def pick(key: str, default: str) -> str:
@@ -120,7 +123,7 @@ def get_settings() -> Settings:
             return str(value).lower() in ("1", "true", "yes", "on")
         return os.getenv(key, str(default)).lower() in ("1", "true", "yes", "on")
 
-    def pick_classify_mode(default: str = "rules_then_ai") -> str:
+    def pick_classify_mode(default: str = "ai_only") -> str:
         value = str(pick("CLASSIFY_MODE", default)).strip().lower()
         if value in ("rules_then_ai", "ai_only", "rules_only"):
             return value
@@ -133,7 +136,7 @@ def get_settings() -> Settings:
         github_include_self=pick_bool("GITHUB_INCLUDE_SELF", False),
         github_mode=pick("GITHUB_MODE", "merge"),
         github_token=os.getenv("GITHUB_TOKEN", ""),
-        classify_mode=pick_classify_mode(default="ai_only"),
+        classify_mode=pick_classify_mode(),
         auto_classify_after_sync=pick_bool("AUTO_CLASSIFY_AFTER_SYNC", True),
         ai_provider=pick_env_nonempty("AI_PROVIDER", "none"),
         ai_api_key=os.getenv("AI_API_KEY", ""),

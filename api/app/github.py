@@ -19,6 +19,8 @@ _rate_limit_reset_at: Optional[float] = None
 async def _sleep_if_rate_limited() -> None:
     async with _rate_limit_lock:
         reset_at = _rate_limit_reset_at
+    # Note: Using snapshot value outside lock is intentional - sleeping inside
+    # the lock would block other coroutines. The TOCTOU here is benign.
     if reset_at:
         now = time.time()
         if now < reset_at:
@@ -168,7 +170,8 @@ async def _request_with_retry(
 
         return response
 
-    raise RuntimeError("GitHub request retry loop exceeded")
+    # This line is unreachable due to the loop structure, but kept for safety
+    return response  # pragma: no cover
 
 
 def _parse_usernames(raw: str) -> List[str]:
