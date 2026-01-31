@@ -7,12 +7,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from .config import get_settings
+from .rate_limit import limiter, RATE_LIMIT_DEFAULT, RATE_LIMIT_ADMIN, RATE_LIMIT_HEAVY
+from .cache import cache, CACHE_TTL_STATS, CACHE_TTL_REPOS
 from .db import (
     count_unclassified_repos,
     count_repos_for_classification,
@@ -85,6 +89,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="StarSorty API", version="0.1.0", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 logger = logging.getLogger("starsorty.api")
 DEFAULT_CLASSIFY_BATCH_SIZE = int(os.getenv("CLASSIFY_BATCH_SIZE", "50"))
 DEFAULT_CLASSIFY_CONCURRENCY = int(os.getenv("CLASSIFY_CONCURRENCY", "3"))
@@ -452,7 +458,8 @@ async def health() -> dict:
 
 
 @app.get("/auth/check", dependencies=[Depends(require_admin)])
-async def auth_check() -> dict:
+@limiter.limit(RATE_LIMIT_ADMIN)
+async def auth_check(request: Request) -> dict:
     return {"ok": True}
 
 
@@ -581,6 +588,9 @@ async def _run_sync_task(task_id: str) -> None:
         },
     )
 
+    await cache.invalidate_prefix("stats")
+    await cache.invalidate_prefix("repos")
+
     if current.auto_classify_after_sync:
         classify_task_id = str(uuid.uuid4())
         auto_payload = BackgroundClassifyRequest(
@@ -620,7 +630,8 @@ def _handle_task_exception(task: asyncio.Task) -> None:
 
 
 @app.post("/sync", response_model=TaskQueuedResponse, status_code=202, dependencies=[Depends(require_admin)])
-async def sync() -> TaskQueuedResponse:
+@limiter.limit(RATE_LIMIT_HEAVY)
+async def sync(request: Request) -> TaskQueuedResponse:
     task_id = str(uuid.uuid4())
     await _register_task(task_id, "sync", payload={})
     bg_task = asyncio.create_task(_run_sync_task(task_id))
@@ -629,7 +640,9 @@ async def sync() -> TaskQueuedResponse:
 
 
 @app.get("/repos", response_model=RepoListResponse)
+@limiter.limit(RATE_LIMIT_DEFAULT)
 async def repos(
+    request: Request,
     q: Optional[str] = None,
     language: Optional[str] = None,
     min_stars: Optional[int] = None,
@@ -661,7 +674,9 @@ async def repos(
 
 
 @app.get("/export/obsidian")
+@limiter.limit(RATE_LIMIT_HEAVY)
 async def export_obsidian(
+    request: Request,
     tags: Optional[str] = None,
     language: Optional[str] = None,
 ) -> Response:
@@ -1427,6 +1442,8 @@ async def _background_classify_loop(
             finished_at=_now_iso(),
             result={"processed": processed_total, "classified": success_total, "failed": failed_total},
         )
+        await cache.invalidate_prefix("stats")
+        await cache.invalidate_prefix("repos")
     except Exception as exc:
         await _update_classification_state(
             running=False,
@@ -1448,7 +1465,8 @@ async def _background_classify_loop(
 
 
 @app.post("/classify", response_model=ClassifyResponse | TaskQueuedResponse, dependencies=[Depends(require_admin)])
-async def classify(payload: ClassifyRequest) -> ClassifyResponse | TaskQueuedResponse:
+@limiter.limit(RATE_LIMIT_HEAVY)
+async def classify(request: Request, payload: ClassifyRequest) -> ClassifyResponse | TaskQueuedResponse:
     current = get_settings()
     try:
         data = load_taxonomy(current.ai_taxonomy_path)
@@ -1517,7 +1535,8 @@ async def classify(payload: ClassifyRequest) -> ClassifyResponse | TaskQueuedRes
     status_code=202,
     dependencies=[Depends(require_admin)],
 )
-async def classify_background(payload: BackgroundClassifyRequest) -> BackgroundClassifyResponse:
+@limiter.limit(RATE_LIMIT_HEAVY)
+async def classify_background(request: Request, payload: BackgroundClassifyRequest) -> BackgroundClassifyResponse:
     task_id = str(uuid.uuid4())
     await _register_task(
         task_id,
@@ -1551,8 +1570,13 @@ async def classify_stop() -> dict:
 
 
 @app.get("/stats", response_model=StatsResponse)
-async def stats() -> StatsResponse:
+@limiter.limit(RATE_LIMIT_DEFAULT)
+async def stats(request: Request) -> StatsResponse:
+    cached = await cache.get("stats")
+    if cached:
+        return StatsResponse(**cached)
     data = await get_repo_stats()
+    await cache.set("stats", data, CACHE_TTL_STATS)
     return StatsResponse(**data)
 
 
