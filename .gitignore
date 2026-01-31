@@ -4,6 +4,7 @@
 !.env.example
 node_modules/
 .next/
+*.tsbuildinfo
 out/
 __pycache__/
 *.pyc
