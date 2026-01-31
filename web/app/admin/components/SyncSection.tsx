@@ -4,9 +4,10 @@ import { useState } from "react";
 import { buildAdminHeaders } from "../../lib/admin";
 import { API_BASE_URL } from "../../lib/apiBase";
 import { getErrorMessage, readApiError } from "../../lib/apiError";
+import type { TFunction } from "../../lib/i18n";
 
 type Props = {
-  t: (key: string) => string;
+  t: TFunction;
   setMessage: (msg: string | null) => void;
 };
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { buildAdminHeaders } from "../../lib/admin";
 import { API_BASE_URL } from "../../lib/apiBase";
 import { getErrorMessage, readApiError } from "../../lib/apiError";
+import type { TFunction } from "../../lib/i18n";
 
 type Stats = {
   total: number;
@@ -22,7 +23,7 @@ type BackgroundStatus = {
 };
 
 type Props = {
-  t: (key: string, params?: Record<string, unknown>) => string;
+  t: TFunction;
   message: string | null;
   setMessage: (msg: string | null) => void;
 };

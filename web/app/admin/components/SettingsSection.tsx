@@ -3,6 +3,7 @@
 import { buildAdminHeaders } from "../../lib/admin";
 import { API_BASE_URL } from "../../lib/apiBase";
 import { getErrorMessage, readApiError } from "../../lib/apiError";
+import type { TFunction } from "../../lib/i18n";
 
 type Settings = {
   github_username: string;
@@ -20,7 +21,7 @@ type Settings = {
 };
 
 type Props = {
-  t: (key: string) => string;
+  t: TFunction;
   settings: Settings;
   setSettings: (settings: Settings) => void;
   setMessage: (msg: string | null) => void;

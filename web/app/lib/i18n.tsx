@@ -372,6 +372,7 @@ const translations = {
 export type Locale = "en" | "zh";
 export type Messages = (typeof translations)["en"];
 export type MessageValues = Record<string, string | number>;
+export type TFunction = (key: keyof Messages, values?: MessageValues) => string;
 
 export const formatMessage = (template: string, values?: MessageValues) => {
   if (!values) return template;

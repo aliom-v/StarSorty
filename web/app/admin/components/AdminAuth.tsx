@@ -3,9 +3,10 @@
 import { useState } from "react";
 import { setSessionToken } from "../../lib/admin";
 import { API_BASE_URL } from "../../lib/apiBase";
+import type { TFunction } from "../../lib/i18n";
 
 type Props = {
-  t: (key: string) => string;
+  t: TFunction;
   onAuthenticated: () => void;
 };
 
