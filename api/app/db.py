@@ -764,10 +764,12 @@ async def list_repos(
             "("
             "name LIKE ? ESCAPE '\\' OR full_name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' "
             "OR topics LIKE ? ESCAPE '\\' OR ai_tags LIKE ? ESCAPE '\\' OR override_tags LIKE ? ESCAPE '\\' "
-            "OR star_users LIKE ? ESCAPE '\\' OR summary_zh LIKE ? ESCAPE '\\' OR ai_keywords LIKE ? ESCAPE '\\'"
+            "OR star_users LIKE ? ESCAPE '\\' OR summary_zh LIKE ? ESCAPE '\\' "
+            "OR override_summary_zh LIKE ? ESCAPE '\\' OR ai_keywords LIKE ? ESCAPE '\\' "
+            "OR override_keywords LIKE ? ESCAPE '\\'"
             ")"
         )
-        params.extend([like, like, like, like, like, like, like, like, like])
+        params.extend([like, like, like, like, like, like, like, like, like, like, like])
 
     if language:
         clauses.append("language = ?")
@@ -1097,10 +1099,12 @@ async def record_readme_fetch(full_name: str, summary: Optional[str], success: b
                 await conn.execute(
                     """
                     UPDATE repos
-                    SET readme_fetched_at = ?, readme_last_attempt_at = ?,
-                        readme_failures = 0, readme_empty = 1
+                    SET readme_summary = NULL,
+                        readme_fetched_at = ?,
+                        readme_last_attempt_at = ?,
+                        readme_failures = 0,
+                        readme_empty = 1
                     WHERE full_name = ?
-                      AND (readme_summary IS NULL OR readme_summary = '')
                     """,
                     (timestamp, timestamp, full_name),
                 )
@@ -1157,10 +1161,12 @@ async def record_readme_fetches(entries: List[Dict[str, Any]]) -> None:
                 await conn.executemany(
                     """
                     UPDATE repos
-                    SET readme_fetched_at = ?, readme_last_attempt_at = ?,
-                        readme_failures = 0, readme_empty = 1
+                    SET readme_summary = NULL,
+                        readme_fetched_at = ?,
+                        readme_last_attempt_at = ?,
+                        readme_failures = 0,
+                        readme_empty = 1
                     WHERE full_name = ?
-                      AND (readme_summary IS NULL OR readme_summary = '')
                     """,
                     empty_summary,
                 )
@@ -1223,7 +1229,10 @@ async def select_repos_for_classification(
 
 
 async def count_unclassified_repos() -> int:
-    where = "WHERE NULLIF(override_category, '') IS NULL AND category IS NULL"
+    where = (
+        "WHERE NULLIF(override_category, '') IS NULL "
+        "AND NULLIF(category, '') IS NULL"
+    )
     async with get_connection() as conn:
         row = await (await conn.execute(f"SELECT COUNT(*) FROM repos {where}")).fetchone()
     return int(row[0] or 0)
@@ -1338,7 +1347,12 @@ async def get_repo_stats() -> Dict[str, Any]:
     async with get_connection() as conn:
         total = (await (await conn.execute("SELECT COUNT(*) FROM repos")).fetchone())[0]
         unclassified = (await (await conn.execute(
-            "SELECT COUNT(*) FROM repos WHERE override_category IS NULL AND category IS NULL"
+            """
+            SELECT COUNT(*)
+            FROM repos
+            WHERE NULLIF(override_category, '') IS NULL
+              AND NULLIF(category, '') IS NULL
+            """
         )).fetchone())[0]
         category_rows = await (await conn.execute(
             """
@@ -1370,7 +1384,7 @@ async def get_repo_stats() -> Dict[str, Any]:
             SELECT tag.value AS name, COUNT(*) AS count
             FROM repos, json_each(
                 CASE
-                    WHEN override_tags IS NOT NULL AND override_tags != '[]' AND override_tags != 'null'
+                    WHEN override_tags IS NOT NULL AND override_tags != '' AND override_tags != 'null'
                     THEN override_tags
                     ELSE COALESCE(ai_tags, '[]')
                 END

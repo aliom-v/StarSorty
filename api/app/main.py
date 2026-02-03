@@ -411,10 +411,15 @@ class StatsItem(BaseModel):
     count: int
 
 
+class SubcategoryStatsItem(StatsItem):
+    category: str
+
+
 class StatsResponse(BaseModel):
     total: int
     unclassified: int
     categories: List[StatsItem]
+    subcategories: List[SubcategoryStatsItem]
     tags: List[StatsItem]
     users: List[StatsItem]
 
@@ -771,7 +776,10 @@ async def repo_override(full_name: str, payload: OverrideRequest) -> OverrideRes
 
     updated = await update_override(full_name, updates)
     if not updated:
-        raise HTTPException(status_code=404, detail="Repo not found or no updates")
+        if not await get_repo(full_name):
+            raise HTTPException(status_code=404, detail="Repo not found")
+        return OverrideResponse(updated=False)
+    await cache.invalidate_prefix("stats")
     return OverrideResponse(updated=True)
 
 
@@ -1423,10 +1431,7 @@ async def _background_classify_loop(
             if processed == 0:
                 break
             if not force_mode:
-                # Check for no progress on refresh (includes after failures)
                 if refreshed:
-                    if previous_remaining is not None and remaining >= previous_remaining:
-                        break
                     previous_remaining = remaining
             if CLASSIFY_BATCH_DELAY_MS > 0:
                 await asyncio.sleep(CLASSIFY_BATCH_DELAY_MS / 1000)
