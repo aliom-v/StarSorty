@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import secrets
@@ -428,6 +429,33 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _repos_cache_key(
+    q: Optional[str],
+    language: Optional[str],
+    min_stars: Optional[int],
+    category: Optional[str],
+    subcategory: Optional[str],
+    tag: Optional[str],
+    tags: Optional[str],
+    star_user: Optional[str],
+    limit: int,
+    offset: int,
+) -> str:
+    payload = {
+        "q": q,
+        "language": language,
+        "min_stars": min_stars,
+        "category": category,
+        "subcategory": subcategory,
+        "tag": tag,
+        "tags": tags,
+        "star_user": star_user,
+        "limit": limit,
+        "offset": offset,
+    }
+    return f"repos:{json.dumps(payload, sort_keys=True, separators=(',', ':'))}"
+
+
 async def _register_task(
     task_id: str,
     task_type: str,
@@ -660,8 +688,26 @@ async def repos(
     offset: int = 0,
 ) -> RepoListResponse:
     tag_list = None
+    normalized_tags = None
     if tags:
-        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+        tag_list = sorted({t.strip() for t in tags.split(",") if t.strip()})
+        if tag_list:
+            normalized_tags = ",".join(tag_list)
+    cache_key = _repos_cache_key(
+        q=q,
+        language=language,
+        min_stars=min_stars,
+        category=category,
+        subcategory=subcategory,
+        tag=tag,
+        tags=normalized_tags,
+        star_user=star_user,
+        limit=limit,
+        offset=offset,
+    )
+    cached = await cache.get(cache_key)
+    if cached is not None:
+        return RepoListResponse(**cached)
     total, items = await list_repos(
         q=q,
         language=language,
@@ -674,7 +720,13 @@ async def repos(
         limit=limit,
         offset=offset,
     )
-    items_out = [RepoOut(**item.model_dump()) if isinstance(item, RepoBase) else RepoOut(**item) for item in items]
+    items_payload: List[dict] = []
+    for item in items:
+        payload = item.model_dump() if isinstance(item, RepoBase) else item
+        items_payload.append(payload)
+    items_out = [RepoOut(**payload) for payload in items_payload]
+    response_payload = {"total": total, "items": items_payload}
+    await cache.set(cache_key, response_payload, CACHE_TTL_REPOS)
     return RepoListResponse(total=total, items=items_out)
 
 
@@ -780,6 +832,7 @@ async def repo_override(full_name: str, payload: OverrideRequest) -> OverrideRes
             raise HTTPException(status_code=404, detail="Repo not found")
         return OverrideResponse(updated=False)
     await cache.invalidate_prefix("stats")
+    await cache.invalidate_prefix("repos")
     return OverrideResponse(updated=True)
 
 
@@ -815,6 +868,7 @@ async def repo_readme(full_name: str) -> ReadmeResponse:
             status_code=503,
             detail="Failed to persist README summary. Please retry.",
         ) from exc
+    await cache.invalidate_prefix("repos")
     return ReadmeResponse(updated=bool(summary), summary=summary)
 
 
