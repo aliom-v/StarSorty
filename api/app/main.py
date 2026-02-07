@@ -536,7 +536,19 @@ async def auth_check(request: Request) -> dict:
 async def task_status(task_id: str) -> TaskStatusResponse:
     task = await get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        now = _now_iso()
+        return TaskStatusResponse(
+            task_id=task_id,
+            status="failed",
+            task_type="unknown",
+            created_at=now,
+            started_at=None,
+            finished_at=now,
+            message="Task not found or expired",
+            result=None,
+            cursor_full_name=None,
+            retry_from_task_id=None,
+        )
     response_data = {key: task.get(key) for key in TaskStatusResponse.model_fields}
     return TaskStatusResponse(**response_data)
 

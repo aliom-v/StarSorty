@@ -240,6 +240,7 @@ export default function Home() {
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
   const [retryingTask, setRetryingTask] = useState(false);
   const [pollingPaused, setPollingPaused] = useState(false);
+  const [showAdvancedStatus, setShowAdvancedStatus] = useState(false);
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
@@ -463,9 +464,9 @@ export default function Home() {
     await loadStats(true);
     await loadRepos(false);
 
-    setActionMessage(t("taskStateResynced"));
-    setActionStatus("success");
-  }, [loadBackgroundStatus, loadRepos, loadStats, loadStatus, t]);
+    setActionMessage(null);
+    setActionStatus(null);
+  }, [loadBackgroundStatus, loadRepos, loadStats, loadStatus]);
 
   const pollTaskNow = useCallback(async () => {
     const taskId = pollTargetIdRef.current;
@@ -895,6 +896,15 @@ export default function Home() {
     !!backgroundLastError && backgroundLastError !== "Stopped by user";
   const taskRetryable =
     taskInfo?.status === "failed" && taskInfo?.task_type === "classify";
+  const taskStatus = taskInfo?.status || "";
+  const taskType = taskInfo?.task_type || "";
+  const syncRunning =
+    syncing || (taskType === "sync" && (taskStatus === "running" || taskStatus === "queued"));
+  const simpleOperationStatus = backgroundRunning
+    ? t("classifying")
+    : syncRunning
+      ? t("syncing")
+      : t("backgroundIdle");
 
   return (
     <main className="h-screen flex flex-col overflow-hidden px-6 py-6 lg:px-12">
@@ -1003,29 +1013,41 @@ export default function Home() {
               </div>
               <div className="rounded-3xl border border-ink/10 bg-surface/80 p-4 text-left shadow-soft">
                 <div className="space-y-3">
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                      {t("backgroundStatus")}
+                      {t("simpleStatus")}
                     </p>
-                    <div className="flex flex-wrap gap-3 text-xs text-ink/70">
-                      <span>
-                        {backgroundRunning ? t("backgroundRunning") : t("backgroundIdle")}
-                      </span>
-                      <span>{t("processedWithValue", { count: backgroundProcessed })}</span>
-                      <span>{t("succeededWithValue", { count: backgroundSucceeded })}</span>
-                      <span>{t("failedWithValue", { count: backgroundFailed })}</span>
-                      <span>{t("remainingWithValue", { count: backgroundRemaining })}</span>
-                      <span>
-                        {t("batchSize")}: {backgroundBatchSize}
-                      </span>
-                      <span>
-                        {t("concurrency")}: {backgroundConcurrency}
-                      </span>
+                    <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-ink/70">
+                      <span>{t("operationStatusWithValue", { value: simpleOperationStatus })}</span>
+                      <button
+                        type="button"
+                        className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/70 transition hover:border-moss hover:text-moss"
+                        onClick={() => setShowAdvancedStatus((prev) => !prev)}
+                      >
+                        {showAdvancedStatus ? t("hide") : t("advancedDetails")}
+                      </button>
                     </div>
+                    {showAdvancedStatus && (
+                      <div className="flex flex-wrap gap-3 text-xs text-ink/70">
+                        <span>
+                          {backgroundRunning ? t("backgroundRunning") : t("backgroundIdle")}
+                        </span>
+                        <span>{t("processedWithValue", { count: backgroundProcessed })}</span>
+                        <span>{t("succeededWithValue", { count: backgroundSucceeded })}</span>
+                        <span>{t("failedWithValue", { count: backgroundFailed })}</span>
+                        <span>{t("remainingWithValue", { count: backgroundRemaining })}</span>
+                        <span>
+                          {t("batchSize")}: {backgroundBatchSize}
+                        </span>
+                        <span>
+                          {t("concurrency")}: {backgroundConcurrency}
+                        </span>
+                      </div>
+                    )}
                     {showBackgroundError && (
                       <p className="text-xs text-copper">{backgroundLastError}</p>
                     )}
-                    {taskInfoId && (
+                    {showAdvancedStatus && taskInfoId && (
                       <div className="mt-2 flex flex-col gap-2 text-xs text-ink/70">
                         <div className="flex flex-wrap items-center gap-2">
                           <span>{t("taskIdWithValue", { value: taskInfoId })}</span>
