@@ -1543,7 +1543,7 @@ async def _background_classify_loop(
         await _update_classification_state(
             running=False,
             finished_at=datetime.now(timezone.utc).isoformat(),
-            task_id=task_id,
+            task_id=None,
         )
         await _set_task_status(
             task_id,
@@ -1564,7 +1564,7 @@ async def _background_classify_loop(
             last_error=str(exc),
             batch_size=state.get("batch_size", 0),
             concurrency=state.get("concurrency", 0),
-            task_id=task_id,
+            task_id=None,
         )
         await _set_task_status(
             task_id,
@@ -1679,6 +1679,8 @@ async def classify_background(request: Request, payload: BackgroundClassifyReque
 @app.get("/classify/status", response_model=BackgroundClassifyStatusResponse)
 async def classify_status() -> BackgroundClassifyStatusResponse:
     state = await _get_classification_state()
+    if not state.get("running"):
+        state["task_id"] = None
     return BackgroundClassifyStatusResponse(**state)
 
 

@@ -446,6 +446,27 @@ export default function Home() {
     }
   }, [category, minStars, query, selectedTags, sourceUser, subcategory, unknownErrorMessage]);
 
+  const handleMissingTaskRecovery = useCallback(async () => {
+    pollTargetIdRef.current = null;
+    pollFailureCountRef.current = 0;
+    pollingPausedRef.current = false;
+    setPollingPaused(false);
+    setTaskInfo(null);
+    setTaskInfoId(null);
+    setPendingTaskId(null);
+    setSyncTaskId(null);
+    setSyncing(false);
+    setFollowActiveTask(true);
+
+    await loadBackgroundStatus();
+    await loadStatus();
+    await loadStats(true);
+    await loadRepos(false);
+
+    setActionMessage(t("taskStateResynced"));
+    setActionStatus("success");
+  }, [loadBackgroundStatus, loadRepos, loadStats, loadStatus, t]);
+
   const pollTaskNow = useCallback(async () => {
     const taskId = pollTargetIdRef.current;
     pollTickRef.current += 1;
@@ -474,15 +495,7 @@ export default function Home() {
     if (pollTargetIdRef.current !== taskId) return;
     if (pollRequestIdRef.current !== requestId) return;
     if (res.status === 404) {
-      pollTargetIdRef.current = null;
-      pollFailureCountRef.current = 0;
-      pollingPausedRef.current = false;
-      setPollingPaused(false);
-      setTaskInfo(null);
-      setTaskInfoId(null);
-      setPendingTaskId(null);
-      setActionMessage(t("taskNotFound"));
-      setActionStatus("error");
+      await handleMissingTaskRecovery();
       return;
     }
     if (!res.ok) {
@@ -541,7 +554,7 @@ export default function Home() {
         setSyncTaskId(null);
       }
     }
-  }, [loadRepos, loadStats, loadStatus, pausePolling, pollBackgroundStatusNow, t]);
+  }, [handleMissingTaskRecovery, loadRepos, loadStats, loadStatus, pausePolling, pollBackgroundStatusNow, t]);
 
   useEffect(() => {
     pollFnRef.current = pollTaskNow;
