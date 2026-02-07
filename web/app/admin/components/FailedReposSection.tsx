@@ -22,21 +22,29 @@ type Props = {
 
 export default function FailedReposSection({ t, setMessage }: Props) {
   const [failedRepos, setFailedRepos] = useState<FailedRepo[]>([]);
+  const [failedTotal, setFailedTotal] = useState(0);
   const [showFailedRepos, setShowFailedRepos] = useState(false);
+  const [loadingFailedRepos, setLoadingFailedRepos] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
   const loadFailedRepos = useCallback(async () => {
+    setLoadingFailedRepos(true);
+    setLocalError(null);
     try {
       const res = await fetch(`${API_BASE_URL}/repos/failed`);
       if (res.ok) {
         const data = await res.json();
         setFailedRepos(data.items ?? []);
+        setFailedTotal(Number(data.total ?? (data.items?.length ?? 0)));
       } else {
-        setMessage(t("loadFailedReposError"));
+        setLocalError(t("loadFailedReposError"));
       }
     } catch {
-      setMessage(t("loadFailedReposError"));
+      setLocalError(t("loadFailedReposError"));
+    } finally {
+      setLoadingFailedRepos(false);
     }
-  }, [t, setMessage]);
+  }, [t]);
 
   const handleResetFailed = async () => {
     setMessage(null);
@@ -58,15 +66,18 @@ export default function FailedReposSection({ t, setMessage }: Props) {
   };
 
   useEffect(() => {
-    if (showFailedRepos) {
+    if (showFailedRepos || failedTotal === 0) {
       loadFailedRepos();
     }
-  }, [showFailedRepos, loadFailedRepos]);
+  }, [showFailedRepos, failedTotal, loadFailedRepos]);
 
   return (
     <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-lg font-semibold">{t("failedRepos")}</h2>
+        <div>
+          <h2 className="font-display text-lg font-semibold">{t("failedRepos")}</h2>
+          <p className="mt-1 text-xs text-ink/70">{t("failedReposWithValue", { count: failedTotal })}</p>
+        </div>
         <div className="flex gap-2">
           <button
             type="button"
@@ -86,7 +97,11 @@ export default function FailedReposSection({ t, setMessage }: Props) {
       </div>
       {showFailedRepos && (
         <div className="mt-4 space-y-2">
-          {failedRepos.length === 0 ? (
+          {loadingFailedRepos ? (
+            <p className="text-sm text-ink/70">{t("loadingRepos")}</p>
+          ) : localError ? (
+            <p className="text-sm text-copper">{localError}</p>
+          ) : failedRepos.length === 0 ? (
             <p className="text-sm text-ink/70">{t("noFailedRepos")}</p>
           ) : (
             failedRepos.map((repo) => (
