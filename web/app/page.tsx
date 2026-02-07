@@ -898,6 +898,13 @@ export default function Home() {
     taskInfo?.status === "failed" && taskInfo?.task_type === "classify";
   const taskStatus = taskInfo?.status || "";
   const taskType = taskInfo?.task_type || "";
+  const taskTypeLabel = taskType === "sync"
+    ? t("taskTypeSync")
+    : taskType === "classify"
+      ? t("taskTypeClassify")
+      : taskType
+        ? taskType
+        : t("taskTypeUnknown");
   const syncRunning =
     syncing || (taskType === "sync" && (taskStatus === "running" || taskStatus === "queued"));
   const simpleOperationStatus = backgroundRunning
@@ -1053,7 +1060,7 @@ export default function Home() {
                           <span>{t("taskIdWithValue", { value: taskInfoId })}</span>
                           <span>
                             {t("taskTypeWithValue", {
-                              value: taskInfo?.task_type || t("fetching"),
+                              value: taskTypeLabel,
                             })}
                           </span>
                           <span>
