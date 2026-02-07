@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { buildAdminHeaders } from "../lib/admin";
 import { API_BASE_URL } from "../lib/apiBase";
@@ -71,6 +71,8 @@ export default function RepoDetailClient() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [fetchingReadme, setFetchingReadme] = useState(false);
+  const repoRequestIdRef = useRef(0);
+  const historyRequestIdRef = useRef(0);
 
   const encodedFullName = useMemo(
     () => encodeURIComponent(fullName),
@@ -79,40 +81,55 @@ export default function RepoDetailClient() {
 
   const loadRepo = useCallback(async () => {
     if (!fullName) return;
+    const requestId = repoRequestIdRef.current + 1;
+    repoRequestIdRef.current = requestId;
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(`${API_BASE_URL}/repos/${encodedFullName}`);
+      if (repoRequestIdRef.current !== requestId) return;
       if (!res.ok) {
         const detail = await readApiError(res, `Repo fetch failed (${res.status})`);
         throw new Error(detail);
       }
       const data = await res.json();
+      if (repoRequestIdRef.current !== requestId) return;
       setRepo(data);
     } catch (err) {
+      if (repoRequestIdRef.current !== requestId) return;
       const messageText = getErrorMessage(err, t("unknownError"));
       setError(messageText);
     } finally {
+      if (repoRequestIdRef.current !== requestId) return;
       setLoading(false);
     }
   }, [encodedFullName, fullName, t]);
 
   const loadHistory = useCallback(async () => {
     if (!fullName) return;
+    const requestId = historyRequestIdRef.current + 1;
+    historyRequestIdRef.current = requestId;
     try {
       const res = await fetch(`${API_BASE_URL}/repos/${encodedFullName}/overrides`);
+      if (historyRequestIdRef.current !== requestId) return;
       if (!res.ok) {
         return;
       }
       const data = await res.json();
+      if (historyRequestIdRef.current !== requestId) return;
       setHistory(data.items || []);
     } catch {
+      if (historyRequestIdRef.current !== requestId) return;
       setHistory([]);
     }
   }, [encodedFullName, fullName]);
 
   useEffect(() => {
     if (!fullName) {
+      setRepo(null);
+      setHistory([]);
+      setError(null);
+      setMessage(null);
       setLoading(false);
       return;
     }

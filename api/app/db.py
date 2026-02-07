@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import re
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,25 @@ from .models import RepoBase
 
 logger = logging.getLogger("starsorty.db")
 _pool: "SQLitePool | None" = None
+_fts_enabled = False
+
+
+def _env_int(name: str, default: int, minimum: int | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s=%r, fallback to %s", name, raw, default)
+        return default
+    if minimum is not None and value < minimum:
+        logger.warning("Out-of-range %s=%r, fallback to %s", name, raw, default)
+        return default
+    return value
+
+
+FTS_MAX_TERMS = _env_int("FTS_MAX_TERMS", 8, minimum=1)
 
 
 def _retry_on_lock(
@@ -59,10 +79,197 @@ def _ensure_parent_dir(path: str) -> None:
         os.makedirs(parent, exist_ok=True)
 
 
+def _build_fts_query(raw_query: str) -> str | None:
+    terms = [
+        term.strip().lower()
+        for term in re.split(r"[^\w\u4e00-\u9fff]+", raw_query)
+        if term and term.strip()
+    ]
+    if not terms:
+        return None
+    normalized: List[str] = []
+    for term in terms[:FTS_MAX_TERMS]:
+        escaped = term[:64].replace('"', '""')
+        if escaped:
+            normalized.append(f'"{escaped}"')
+    if not normalized:
+        return None
+    return " AND ".join(normalized)
+
+
+async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
+    global _fts_enabled
+    try:
+        await conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS repos_fts USING fts5(
+                full_name,
+                name,
+                description,
+                topics,
+                ai_tags,
+                override_tags,
+                star_users,
+                summary_zh,
+                override_summary_zh,
+                ai_keywords,
+                override_keywords,
+                content='repos',
+                content_rowid='id'
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS repos_ai AFTER INSERT ON repos BEGIN
+                INSERT INTO repos_fts(
+                    rowid,
+                    full_name,
+                    name,
+                    description,
+                    topics,
+                    ai_tags,
+                    override_tags,
+                    star_users,
+                    summary_zh,
+                    override_summary_zh,
+                    ai_keywords,
+                    override_keywords
+                ) VALUES (
+                    new.id,
+                    new.full_name,
+                    new.name,
+                    new.description,
+                    new.topics,
+                    new.ai_tags,
+                    new.override_tags,
+                    new.star_users,
+                    new.summary_zh,
+                    new.override_summary_zh,
+                    new.ai_keywords,
+                    new.override_keywords
+                );
+            END;
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS repos_ad AFTER DELETE ON repos BEGIN
+                INSERT INTO repos_fts(
+                    repos_fts,
+                    rowid,
+                    full_name,
+                    name,
+                    description,
+                    topics,
+                    ai_tags,
+                    override_tags,
+                    star_users,
+                    summary_zh,
+                    override_summary_zh,
+                    ai_keywords,
+                    override_keywords
+                ) VALUES (
+                    'delete',
+                    old.id,
+                    old.full_name,
+                    old.name,
+                    old.description,
+                    old.topics,
+                    old.ai_tags,
+                    old.override_tags,
+                    old.star_users,
+                    old.summary_zh,
+                    old.override_summary_zh,
+                    old.ai_keywords,
+                    old.override_keywords
+                );
+            END;
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS repos_au AFTER UPDATE ON repos BEGIN
+                INSERT INTO repos_fts(
+                    repos_fts,
+                    rowid,
+                    full_name,
+                    name,
+                    description,
+                    topics,
+                    ai_tags,
+                    override_tags,
+                    star_users,
+                    summary_zh,
+                    override_summary_zh,
+                    ai_keywords,
+                    override_keywords
+                ) VALUES (
+                    'delete',
+                    old.id,
+                    old.full_name,
+                    old.name,
+                    old.description,
+                    old.topics,
+                    old.ai_tags,
+                    old.override_tags,
+                    old.star_users,
+                    old.summary_zh,
+                    old.override_summary_zh,
+                    old.ai_keywords,
+                    old.override_keywords
+                );
+                INSERT INTO repos_fts(
+                    rowid,
+                    full_name,
+                    name,
+                    description,
+                    topics,
+                    ai_tags,
+                    override_tags,
+                    star_users,
+                    summary_zh,
+                    override_summary_zh,
+                    ai_keywords,
+                    override_keywords
+                ) VALUES (
+                    new.id,
+                    new.full_name,
+                    new.name,
+                    new.description,
+                    new.topics,
+                    new.ai_tags,
+                    new.override_tags,
+                    new.star_users,
+                    new.summary_zh,
+                    new.override_summary_zh,
+                    new.ai_keywords,
+                    new.override_keywords
+                );
+            END;
+            """
+        )
+
+        repos_total = (await (await conn.execute("SELECT COUNT(*) FROM repos")).fetchone())[0]
+        fts_total = (await (await conn.execute("SELECT COUNT(*) FROM repos_fts")).fetchone())[0]
+        if repos_total != fts_total:
+            logger.info(
+                "Rebuilding repos_fts index (repos=%s, fts=%s)",
+                repos_total,
+                fts_total,
+            )
+            await conn.execute("INSERT INTO repos_fts(repos_fts) VALUES ('rebuild')")
+
+        _fts_enabled = True
+    except sqlite3.OperationalError as exc:
+        _fts_enabled = False
+        logger.warning("SQLite FTS5 unavailable, falling back to LIKE search: %s", exc)
+
+
 # SQLite configuration from environment
 SQLITE_JOURNAL_MODE = os.getenv("SQLITE_JOURNAL_MODE", "WAL").upper()
 SQLITE_SYNCHRONOUS = os.getenv("SQLITE_SYNCHRONOUS", "NORMAL").upper()
-SQLITE_BUSY_TIMEOUT = int(os.getenv("SQLITE_BUSY_TIMEOUT", "5000"))
+SQLITE_BUSY_TIMEOUT = _env_int("SQLITE_BUSY_TIMEOUT", 5000, minimum=1)
 
 
 async def _configure_connection(conn: aiosqlite.Connection) -> None:
@@ -125,7 +332,7 @@ class SQLitePool:
 async def init_db_pool(pool_size: Optional[int] = None) -> None:
     global _pool
     if pool_size is None:
-        pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
+        pool_size = _env_int("DB_POOL_SIZE", 5, minimum=1)
     settings = get_settings()
     db_path = _sqlite_path(settings.database_url)
     _ensure_parent_dir(db_path)
@@ -250,6 +457,7 @@ async def init_db() -> None:
         )
         await _ensure_columns(conn)
         await _ensure_task_columns(conn)
+        await _init_repos_fts(conn)
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_full_name ON repos(full_name)"
         )
@@ -279,6 +487,10 @@ async def init_db() -> None:
         # Index for stargazers_count sorting (used in most queries)
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_stargazers ON repos(stargazers_count DESC)"
+        )
+        # Composite index to support stable sorted pagination by stars/full_name
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repos_stargazers_full_name ON repos(stargazers_count DESC, full_name ASC)"
         )
         # Index for summary_zh search
         await conn.execute(
@@ -758,18 +970,23 @@ async def list_repos(
     params: List[Any] = []
 
     if q:
-        escaped_q = _escape_like(q)
-        like = f"%{escaped_q}%"
-        clauses.append(
-            "("
-            "name LIKE ? ESCAPE '\\' OR full_name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' "
-            "OR topics LIKE ? ESCAPE '\\' OR ai_tags LIKE ? ESCAPE '\\' OR override_tags LIKE ? ESCAPE '\\' "
-            "OR star_users LIKE ? ESCAPE '\\' OR summary_zh LIKE ? ESCAPE '\\' "
-            "OR override_summary_zh LIKE ? ESCAPE '\\' OR ai_keywords LIKE ? ESCAPE '\\' "
-            "OR override_keywords LIKE ? ESCAPE '\\'"
-            ")"
-        )
-        params.extend([like, like, like, like, like, like, like, like, like, like, like])
+        fts_query = _build_fts_query(q) if _fts_enabled else None
+        if fts_query:
+            clauses.append("id IN (SELECT rowid FROM repos_fts WHERE repos_fts MATCH ?)")
+            params.append(fts_query)
+        else:
+            escaped_q = _escape_like(q)
+            like = f"%{escaped_q}%"
+            clauses.append(
+                "("
+                "name LIKE ? ESCAPE '\\' OR full_name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' "
+                "OR topics LIKE ? ESCAPE '\\' OR ai_tags LIKE ? ESCAPE '\\' OR override_tags LIKE ? ESCAPE '\\' "
+                "OR star_users LIKE ? ESCAPE '\\' OR summary_zh LIKE ? ESCAPE '\\' "
+                "OR override_summary_zh LIKE ? ESCAPE '\\' OR ai_keywords LIKE ? ESCAPE '\\' "
+                "OR override_keywords LIKE ? ESCAPE '\\'"
+                ")"
+            )
+            params.extend([like, like, like, like, like, like, like, like, like, like, like])
 
     if language:
         clauses.append("language = ?")
@@ -850,12 +1067,29 @@ async def iter_repos_for_export(
             params.append(f'%"{t}"%')
         clauses.append("(" + " OR ".join(tag_clauses) + ")")
 
-    where_sql = ""
-    if clauses:
-        where_sql = "WHERE " + " AND ".join(clauses)
+    # Use keyset pagination to avoid expensive large OFFSET scans.
+    # Keep ordering identical to list_repos/export consumers:
+    # ORDER BY stargazers_count DESC, full_name ASC.
+    cursor_stars: Optional[int] = None
+    cursor_full_name: Optional[str] = None
 
-    offset = 0
     while True:
+        page_clauses = list(clauses)
+        page_params = list(params)
+
+        if cursor_full_name is not None and cursor_stars is not None:
+            page_clauses.append(
+                "("
+                "COALESCE(stargazers_count, -1) < ? "
+                "OR (COALESCE(stargazers_count, -1) = ? AND full_name > ?)"
+                ")"
+            )
+            page_params.extend([cursor_stars, cursor_stars, cursor_full_name])
+
+        page_where_sql = ""
+        if page_clauses:
+            page_where_sql = "WHERE " + " AND ".join(page_clauses)
+
         async with get_connection() as conn:
             rows = await (await conn.execute(
                 f"""
@@ -868,11 +1102,11 @@ async def iter_repos_for_export(
                     override_note, readme_summary, readme_fetched_at,
                     summary_zh, ai_keywords, override_summary_zh, override_keywords
                 FROM repos
-                {where_sql}
+                {page_where_sql}
                 ORDER BY stargazers_count DESC, full_name ASC
-                LIMIT ? OFFSET ?
+                LIMIT ?
                 """,
-                params + [batch_size, offset],
+                page_params + [batch_size],
             )).fetchall()
 
         if not rows:
@@ -884,7 +1118,9 @@ async def iter_repos_for_export(
         if len(rows) < batch_size:
             break
 
-        offset += batch_size
+        last = rows[-1]
+        cursor_stars = int(last["stargazers_count"] or -1)
+        cursor_full_name = str(last["full_name"])
 
 
 async def get_repo(full_name: str) -> Optional[RepoBase]:

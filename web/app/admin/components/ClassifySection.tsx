@@ -22,6 +22,18 @@ type BackgroundStatus = {
   last_error?: string | null;
 };
 
+type TaskQueued = {
+  task_id?: string;
+  status?: string;
+  message?: string | null;
+};
+
+type ClassifyResult = {
+  classified?: number;
+  total?: number;
+  failed?: number;
+};
+
 type Props = {
   t: TFunction;
   message: string | null;
@@ -113,11 +125,16 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
         const detail = await readApiError(res, t("classifyFailed"));
         throw new Error(detail);
       }
-      const data = await res.json();
-      const classified = data.classified ?? 0;
-      const total = data.total ?? 0;
-      const failed = data.failed ?? 0;
-      setMessage(t("classifiedWithValue", { classified, total, failed }));
+      const data = (await res.json()) as TaskQueued | ClassifyResult;
+      if (data && typeof data === "object" && "task_id" in data && data.task_id) {
+        setMessage(t("classifyQueued"));
+      } else {
+        const result = data as ClassifyResult;
+        const classified = typeof result.classified === "number" ? result.classified : 0;
+        const total = typeof result.total === "number" ? result.total : 0;
+        const failed = typeof result.failed === "number" ? result.failed : 0;
+        setMessage(t("classifiedWithValue", { classified, total, failed }));
+      }
       await loadStats();
     } catch (err) {
       setMessage(getErrorMessage(err, t("classifyFailed")));

@@ -287,6 +287,7 @@ export default function Home() {
   const pollFailureCountRef = useRef(0);
   const pollingPausedRef = useRef(false);
   const pollTickRef = useRef(0);
+  const reposRequestIdRef = useRef(0);
 
   const loadStats = useCallback(async () => {
     setError(null);
@@ -375,6 +376,9 @@ export default function Home() {
   }, []);
 
   const loadRepos = useCallback(async (append = false, offsetOverride?: number) => {
+    const requestId = reposRequestIdRef.current + 1;
+    reposRequestIdRef.current = requestId;
+
     if (append) {
       setLoadingMore(true);
     } else {
@@ -397,11 +401,13 @@ export default function Home() {
       if (sourceUser) params.set("star_user", sourceUser);
 
       const res = await fetch(`${API_BASE_URL}/repos?${params}`);
+      if (reposRequestIdRef.current !== requestId) return;
       if (!res.ok) {
         const detail = await readApiError(res, `Repos fetch failed (${res.status})`);
         throw new Error(detail);
       }
       const data = await res.json();
+      if (reposRequestIdRef.current !== requestId) return;
       const total = Number(data.total || 0);
       const items: Repo[] = data.items || [];
 
@@ -415,9 +421,11 @@ export default function Home() {
       });
       setHasMore(offset + items.length < total);
     } catch (err) {
+      if (reposRequestIdRef.current !== requestId) return;
       const message = getErrorMessage(err, unknownErrorMessage);
       setError(message);
     } finally {
+      if (reposRequestIdRef.current !== requestId) return;
       setLoading(false);
       setLoadingMore(false);
     }

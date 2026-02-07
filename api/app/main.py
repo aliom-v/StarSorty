@@ -8,10 +8,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -58,8 +58,34 @@ from .export import generate_obsidian_zip, generate_obsidian_zip_streaming
 import httpx
 import uuid
 
-API_SEMAPHORE_LIMIT = int(os.getenv("API_SEMAPHORE_LIMIT", "5"))
-TASK_STALE_MINUTES = int(os.getenv("TASK_STALE_MINUTES", "10"))
+
+def _env_int(name: str, default: int, minimum: int | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logging.getLogger("starsorty.api").warning(
+            "Invalid %s=%r, fallback to %s",
+            name,
+            raw,
+            default,
+        )
+        return default
+    if minimum is not None and value < minimum:
+        logging.getLogger("starsorty.api").warning(
+            "Out-of-range %s=%r, fallback to %s",
+            name,
+            raw,
+            default,
+        )
+        return default
+    return value
+
+
+API_SEMAPHORE_LIMIT = _env_int("API_SEMAPHORE_LIMIT", 5, minimum=1)
+TASK_STALE_MINUTES = _env_int("TASK_STALE_MINUTES", 10, minimum=1)
 
 
 @asynccontextmanager
@@ -93,12 +119,15 @@ app = FastAPI(title="StarSorty API", version="0.1.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 logger = logging.getLogger("starsorty.api")
-DEFAULT_CLASSIFY_BATCH_SIZE = int(os.getenv("CLASSIFY_BATCH_SIZE", "50"))
-DEFAULT_CLASSIFY_CONCURRENCY = int(os.getenv("CLASSIFY_CONCURRENCY", "3"))
-CLASSIFY_CONCURRENCY_MAX = int(os.getenv("CLASSIFY_CONCURRENCY_MAX", "10"))
-CLASSIFY_BATCH_DELAY_MS = int(os.getenv("CLASSIFY_BATCH_DELAY_MS", "0"))
-AI_CLASSIFY_BATCH_SIZE = int(os.getenv("AI_CLASSIFY_BATCH_SIZE", "5"))
-CLASSIFY_REMAINING_REFRESH_EVERY = int(os.getenv("CLASSIFY_REMAINING_REFRESH_EVERY", "5"))
+DEFAULT_CLASSIFY_BATCH_SIZE = _env_int("CLASSIFY_BATCH_SIZE", 50, minimum=1)
+DEFAULT_CLASSIFY_CONCURRENCY = _env_int("CLASSIFY_CONCURRENCY", 3, minimum=1)
+CLASSIFY_CONCURRENCY_MAX = _env_int("CLASSIFY_CONCURRENCY_MAX", 10, minimum=1)
+CLASSIFY_BATCH_SIZE_MAX = _env_int("CLASSIFY_BATCH_SIZE_MAX", 200, minimum=1)
+REPOS_PAGE_LIMIT_MAX = _env_int("REPOS_PAGE_LIMIT_MAX", 200, minimum=1)
+TAG_FILTER_COUNT_MAX = _env_int("TAG_FILTER_COUNT_MAX", 20, minimum=1)
+CLASSIFY_BATCH_DELAY_MS = _env_int("CLASSIFY_BATCH_DELAY_MS", 0, minimum=0)
+AI_CLASSIFY_BATCH_SIZE = _env_int("AI_CLASSIFY_BATCH_SIZE", 5, minimum=1)
+CLASSIFY_REMAINING_REFRESH_EVERY = _env_int("CLASSIFY_REMAINING_REFRESH_EVERY", 5, minimum=1)
 AI_BATCH_FALLBACK = (
     os.getenv("AI_BATCH_FALLBACK", "1").strip().lower()
     not in ("0", "false", "no")
@@ -321,7 +350,7 @@ class OverrideHistoryResponse(BaseModel):
 
 
 class ClassifyRequest(BaseModel):
-    limit: int = 20
+    limit: int = Field(default=20, ge=0)
     force: bool = False
     include_readme: bool = True
 
@@ -334,7 +363,7 @@ class ClassifyResponse(BaseModel):
 
 
 class BackgroundClassifyRequest(ClassifyRequest):
-    concurrency: Optional[int] = None
+    concurrency: Optional[int] = Field(default=None, ge=1)
     cursor_full_name: Optional[str] = None
 
 
@@ -365,7 +394,7 @@ class ReadmeResponse(BaseModel):
 
 class TaxonomyCategory(BaseModel):
     name: str
-    subcategories: List[str] = []
+    subcategories: List[str] = Field(default_factory=list)
 
 
 class TaxonomyResponse(BaseModel):
@@ -398,7 +427,7 @@ class SettingsRequest(BaseModel):
     auto_classify_after_sync: Optional[bool] = None
     rules_json: Optional[str] = None
     sync_cron: Optional[str] = None
-    sync_timeout: Optional[int] = None
+    sync_timeout: Optional[int] = Field(default=None, ge=1, le=3600)
 
 
 class ClientSettingsResponse(BaseModel):
@@ -454,6 +483,13 @@ def _repos_cache_key(
         "offset": offset,
     }
     return f"repos:{json.dumps(payload, sort_keys=True, separators=(',', ':'))}"
+
+
+def _normalized_optional(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 async def _register_task(
@@ -678,19 +714,28 @@ async def repos(
     request: Request,
     q: Optional[str] = None,
     language: Optional[str] = None,
-    min_stars: Optional[int] = None,
+    min_stars: Optional[int] = Query(default=None, ge=0),
     category: Optional[str] = None,
     subcategory: Optional[str] = None,
     tag: Optional[str] = None,
     tags: Optional[str] = None,
     star_user: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=REPOS_PAGE_LIMIT_MAX),
+    offset: int = Query(default=0, ge=0),
 ) -> RepoListResponse:
+    q = _normalized_optional(q)
+    language = _normalized_optional(language)
+    category = _normalized_optional(category)
+    subcategory = _normalized_optional(subcategory)
+    tag = _normalized_optional(tag)
+    star_user = _normalized_optional(star_user)
+
     tag_list = None
     normalized_tags = None
     if tags:
         tag_list = sorted({t.strip() for t in tags.split(",") if t.strip()})
+        if len(tag_list) > TAG_FILTER_COUNT_MAX:
+            tag_list = tag_list[:TAG_FILTER_COUNT_MAX]
         if tag_list:
             normalized_tags = ",".join(tag_list)
     cache_key = _repos_cache_key(
@@ -770,7 +815,7 @@ class ResetFailedResponse(BaseModel):
 
 
 @app.get("/repos/failed", response_model=FailedReposResponse)
-async def list_failed_repos(min_fail_count: int = 5) -> FailedReposResponse:
+async def list_failed_repos(min_fail_count: int = Query(default=5, ge=1, le=1000)) -> FailedReposResponse:
     """List repos that have failed classification multiple times."""
     items = await get_failed_repos(min_fail_count)
     return FailedReposResponse(items=items, total=len(items))
@@ -1346,6 +1391,14 @@ def _clamp_concurrency(value: int) -> int:
     return value
 
 
+def _clamp_batch_size(value: int) -> int:
+    if value < 1:
+        return 1
+    if value > CLASSIFY_BATCH_SIZE_MAX:
+        return CLASSIFY_BATCH_SIZE_MAX
+    return value
+
+
 async def _background_classify_loop(
     payload: BackgroundClassifyRequest,
     allow_fallback: bool,
@@ -1389,7 +1442,8 @@ async def _background_classify_loop(
         github_client: GitHubClient = app.state.github_client
         ai_client: AIClient = app.state.ai_client
 
-        batch_size = payload.limit if payload.limit and payload.limit > 0 else DEFAULT_CLASSIFY_BATCH_SIZE
+        requested_batch_size = payload.limit if payload.limit and payload.limit > 0 else DEFAULT_CLASSIFY_BATCH_SIZE
+        batch_size = _clamp_batch_size(requested_batch_size)
         concurrency_value = payload.concurrency if payload.concurrency and payload.concurrency > 0 else DEFAULT_CLASSIFY_CONCURRENCY
         concurrency = _clamp_concurrency(concurrency_value)
         force_mode = bool(payload.force)
@@ -1414,7 +1468,6 @@ async def _background_classify_loop(
             task_id=task_id,
         )
 
-        previous_remaining = None
         success_total = 0
         processed_total = 0
         failed_total = 0
@@ -1484,9 +1537,6 @@ async def _background_classify_loop(
 
             if processed == 0:
                 break
-            if not force_mode:
-                if refreshed:
-                    previous_remaining = remaining
             if CLASSIFY_BATCH_DELAY_MS > 0:
                 await asyncio.sleep(CLASSIFY_BATCH_DELAY_MS / 1000)
 
@@ -1504,15 +1554,16 @@ async def _background_classify_loop(
         await cache.invalidate_prefix("stats")
         await cache.invalidate_prefix("repos")
     except Exception as exc:
+        state = await _get_classification_state()
         await _update_classification_state(
             running=False,
             finished_at=datetime.now(timezone.utc).isoformat(),
-            processed=0,
-            failed=0,
-            remaining=0,
+            processed=state.get("processed", 0),
+            failed=state.get("failed", 0),
+            remaining=state.get("remaining", 0),
             last_error=str(exc),
-            batch_size=0,
-            concurrency=0,
+            batch_size=state.get("batch_size", 0),
+            concurrency=state.get("concurrency", 0),
             task_id=task_id,
         )
         await _set_task_status(
@@ -1533,9 +1584,10 @@ async def classify(request: Request, payload: ClassifyRequest) -> ClassifyRespon
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if payload.force:
+        force_limit = 0 if payload.limit == 0 else _clamp_batch_size(payload.limit)
         task_id = str(uuid.uuid4())
         force_payload = BackgroundClassifyRequest(
-            limit=payload.limit,
+            limit=force_limit,
             force=True,
             include_readme=payload.include_readme,
             concurrency=DEFAULT_CLASSIFY_CONCURRENCY,
@@ -1552,7 +1604,12 @@ async def classify(request: Request, payload: ClassifyRequest) -> ClassifyRespon
         response = TaskQueuedResponse(task_id=task_id, status="queued", message="Classification queued")
         return JSONResponse(status_code=202, content=response.model_dump())
 
-    repos_to_classify = await select_repos_for_classification(payload.limit, payload.force)
+    if payload.limit == 0:
+        classify_limit = 0
+    else:
+        requested_limit = payload.limit if payload.limit > 0 else DEFAULT_CLASSIFY_BATCH_SIZE
+        classify_limit = _clamp_batch_size(requested_limit)
+    repos_to_classify = await select_repos_for_classification(classify_limit, payload.force)
     rules_path = Path(__file__).resolve().parents[1] / "config" / "rules.json"
     rules = load_rules(current.rules_json, fallback_path=rules_path)
     try:
@@ -1579,6 +1636,10 @@ async def classify(request: Request, payload: ClassifyRequest) -> ClassifyRespon
         github_client=github_client,
         ai_client=ai_client,
     )
+
+    if repos_to_classify:
+        await cache.invalidate_prefix("stats")
+        await cache.invalidate_prefix("repos")
 
     return ClassifyResponse(
         total=len(repos_to_classify),

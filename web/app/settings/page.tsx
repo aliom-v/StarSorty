@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/apiBase";
 import { getErrorMessage, readApiError } from "../lib/apiError";
 import { useI18n } from "../lib/i18n";
@@ -25,23 +25,30 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const settingsRequestIdRef = useRef(0);
 
   const loadSettings = useCallback(async () => {
+    const requestId = settingsRequestIdRef.current + 1;
+    settingsRequestIdRef.current = requestId;
     setLoading(true);
     setMessage(null);
     try {
       const res = await fetch(`${API_BASE_URL}/settings`);
+      if (settingsRequestIdRef.current !== requestId) return;
       if (!res.ok) {
         const detail = await readApiError(res, t("unknownError"));
         throw new Error(detail);
       }
       const data = await res.json();
+      if (settingsRequestIdRef.current !== requestId) return;
       setSettings(data);
     } catch (err) {
+      if (settingsRequestIdRef.current !== requestId) return;
       const error = getErrorMessage(err, t("unknownError"));
       setSettings(null);
       setMessage(error);
     } finally {
+      if (settingsRequestIdRef.current !== requestId) return;
       setLoading(false);
     }
   }, [t]);

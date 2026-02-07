@@ -159,9 +159,20 @@ export default function SettingsSection({
           {t("syncTimeout")}
           <input
             type="number"
+            min={1}
+            max={3600}
+            step={1}
             className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
             value={settings.sync_timeout}
-            onChange={(e) => updateField("sync_timeout", Number(e.target.value))}
+            onChange={(e) => {
+              const parsed = Number.parseInt(e.target.value, 10);
+              if (Number.isNaN(parsed)) {
+                updateField("sync_timeout", 1);
+                return;
+              }
+              const normalized = Math.min(3600, Math.max(1, parsed));
+              updateField("sync_timeout", normalized);
+            }}
           />
         </label>
         <label className="text-sm md:col-span-2">

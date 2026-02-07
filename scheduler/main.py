@@ -6,9 +6,35 @@ import requests
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+
+def _env_float(name: str, default: float, minimum: float | None = None) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logging.getLogger("scheduler").warning(
+            "Invalid %s=%r, fallback to %.2f",
+            name,
+            raw,
+            default,
+        )
+        return default
+    if minimum is not None and value < minimum:
+        logging.getLogger("scheduler").warning(
+            "Out-of-range %s=%r, fallback to %.2f",
+            name,
+            raw,
+            default,
+        )
+        return default
+    return value
+
+
 API_BASE_URL = os.getenv("API_BASE_URL", "http://api:4321")
 SYNC_CRON = os.getenv("SYNC_CRON", "0 */6 * * *")
-SYNC_TIMEOUT = float(os.getenv("SYNC_TIMEOUT", "30"))
+SYNC_TIMEOUT = _env_float("SYNC_TIMEOUT", 30.0, minimum=0.1)
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
 
