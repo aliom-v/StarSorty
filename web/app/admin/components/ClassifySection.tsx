@@ -107,6 +107,7 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
   };
 
   const handleClassify = async (limit?: number) => {
+    if (backgroundRunning) return;
     setClassifying(true);
     setMessage(null);
     try {
@@ -148,6 +149,7 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
   const handleClassifyAll = () => handleClassify(0);
 
   const handleBackgroundStart = async () => {
+    if (classifying || backgroundRunning) return;
     setMessage(null);
     try {
       const payload: { limit?: number; force?: boolean; concurrency?: number } = {
@@ -174,6 +176,7 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
   };
 
   const handleBackgroundStop = async () => {
+    if (!backgroundRunning) return;
     setMessage(null);
     try {
       const res = await fetch(`${API_BASE_URL}/classify/stop`, {
@@ -193,6 +196,8 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
 
   const backgroundRunning = backgroundStatus?.running ?? false;
   const simpleStatus = backgroundRunning ? t("classifying") : t("backgroundIdle");
+  const disableBackgroundToggle = classifying;
+  const disableForegroundClassify = classifying || backgroundRunning;
 
   return (
     <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
@@ -286,16 +291,20 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
       <div className="mt-4 flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={handleClassifyBatch}
-          disabled={classifying}
-          className="rounded-full bg-moss px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          onClick={backgroundRunning ? handleBackgroundStop : handleBackgroundStart}
+          disabled={disableBackgroundToggle}
+          className={`rounded-full px-5 py-2 text-sm font-semibold disabled:opacity-60 ${
+            backgroundRunning
+              ? "border border-copper/40 bg-surface text-copper"
+              : "bg-moss text-white"
+          }`}
         >
-          {classifying ? t("classifying") : t("backgroundClassify")}
+          {backgroundRunning ? t("stop") : t("classify")}
         </button>
         <button
           type="button"
           onClick={handleClassifyAll}
-          disabled={classifying}
+          disabled={disableForegroundClassify}
           className="rounded-full border border-ink/10 bg-surface px-5 py-2 text-sm font-semibold text-ink disabled:opacity-60"
         >
           {t("classifyAll")}
@@ -303,21 +312,13 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
         {showAdvanced && (
           <button
             type="button"
-            onClick={handleBackgroundStart}
-            disabled={backgroundRunning}
+            onClick={handleClassifyBatch}
+            disabled={disableForegroundClassify}
             className="rounded-full border border-ink/10 bg-surface px-5 py-2 text-sm font-semibold text-ink disabled:opacity-60"
           >
-            {t("startBackground")}
+            {classifying ? t("classifying") : t("classifyNext")}
           </button>
         )}
-        <button
-          type="button"
-          onClick={handleBackgroundStop}
-          disabled={!backgroundRunning}
-          className="rounded-full border border-ink/10 bg-surface px-5 py-2 text-sm font-semibold text-ink disabled:opacity-60"
-        >
-          {t("stop")}
-        </button>
       </div>
       {message && <p className="mt-3 text-xs text-ink/70">{message}</p>}
     </div>

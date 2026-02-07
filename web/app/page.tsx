@@ -1154,24 +1154,26 @@ export default function Home() {
                       </div>
                     )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleBackgroundStart}
-                      disabled={backgroundRunning || syncing}
-                      className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
-                    >
-                      {t("backgroundClassify")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleBackgroundStop}
-                      disabled={!backgroundRunning}
-                      className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-copper hover:text-copper disabled:opacity-60"
-                    >
-                      {t("stop")}
-                    </button>
-                  </div>
+                  {showAdvancedStatus && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleBackgroundStart}
+                        disabled={backgroundRunning || syncing}
+                        className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
+                      >
+                        {t("classifyNext")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleBackgroundStop}
+                        disabled={!backgroundRunning}
+                        className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-copper hover:text-copper disabled:opacity-60"
+                      >
+                        {t("stop")}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
