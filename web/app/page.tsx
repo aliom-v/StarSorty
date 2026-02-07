@@ -1052,6 +1052,11 @@ export default function Home() {
                         <div className="flex flex-wrap items-center gap-2">
                           <span>{t("taskIdWithValue", { value: taskInfoId })}</span>
                           <span>
+                            {t("taskTypeWithValue", {
+                              value: taskInfo?.task_type || t("fetching"),
+                            })}
+                          </span>
+                          <span>
                             {t("taskStatusWithValue", {
                               value: taskInfo?.status || t("fetching"),
                             })}
