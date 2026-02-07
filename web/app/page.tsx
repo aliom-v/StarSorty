@@ -288,19 +288,34 @@ export default function Home() {
   const pollingPausedRef = useRef(false);
   const pollTickRef = useRef(0);
   const reposRequestIdRef = useRef(0);
+  const statsRequestIdRef = useRef(0);
 
-  const loadStats = useCallback(async () => {
+  const loadStats = useCallback(async (refresh = false) => {
+    const requestId = statsRequestIdRef.current + 1;
+    statsRequestIdRef.current = requestId;
     setError(null);
     try {
-      const statsRes = await fetch(`${API_BASE_URL}/stats`);
+      const params = new URLSearchParams();
+      if (refresh) {
+        params.set("refresh", "1");
+      }
+      const suffix = params.toString();
+      const statsRes = await fetch(
+        `${API_BASE_URL}/stats${suffix ? `?${suffix}` : ""}`,
+        { cache: "no-store" }
+      );
+      if (statsRequestIdRef.current !== requestId) return;
       if (!statsRes.ok) {
         const detail = await readApiError(statsRes, unknownErrorMessage);
+        if (statsRequestIdRef.current !== requestId) return;
         setError(detail);
         return;
       }
       const statsData = await statsRes.json();
+      if (statsRequestIdRef.current !== requestId) return;
       setStats(statsData);
     } catch {
+      if (statsRequestIdRef.current !== requestId) return;
       setStats(null);
     }
   }, [unknownErrorMessage]);
@@ -516,7 +531,7 @@ export default function Home() {
         setSyncing(false);
         setSyncTaskId(null);
         await loadStatus();
-        await loadStats();
+        await loadStats(true);
         setSourceUser(null);
         await loadRepos(false);
       } else if (data.status === "failed") {
@@ -630,7 +645,7 @@ export default function Home() {
     const wasRunning = wasBackgroundRunningRef.current;
     if (wasRunning && !running) {
       loadRepos(false);
-      loadStats();
+      loadStats(true);
       const lastError = backgroundStatus?.last_error;
       if (lastError) {
         const stoppedByUser = lastError === "Stopped by user";
@@ -691,7 +706,7 @@ export default function Home() {
         setActionMessage(t("syncedWithValue", { count }));
         setActionStatus("success");
         await loadStatus();
-        await loadStats();
+        await loadStats(true);
         setSourceUser(null);
         await loadRepos(false);
         setSyncing(false);

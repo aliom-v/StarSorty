@@ -1691,10 +1691,16 @@ async def classify_stop() -> dict:
 
 @app.get("/stats", response_model=StatsResponse)
 @limiter.limit(RATE_LIMIT_DEFAULT)
-async def stats(request: Request) -> StatsResponse:
-    cached = await cache.get("stats")
-    if cached:
-        return StatsResponse(**cached)
+async def stats(
+    request: Request,
+    response: Response,
+    refresh: bool = Query(default=False),
+) -> StatsResponse:
+    response.headers["Cache-Control"] = "no-store"
+    if not refresh:
+        cached = await cache.get("stats")
+        if cached:
+            return StatsResponse(**cached)
     data = await get_repo_stats()
     await cache.set("stats", data, CACHE_TTL_STATS)
     return StatsResponse(**data)
