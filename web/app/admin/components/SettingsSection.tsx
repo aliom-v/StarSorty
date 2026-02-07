@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { buildAdminHeaders } from "../../lib/admin";
 import { API_BASE_URL } from "../../lib/apiBase";
 import { getErrorMessage, readApiError } from "../../lib/apiError";
@@ -37,6 +38,8 @@ export default function SettingsSection({
   saving,
   setSaving,
 }: Props) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   const updateField = (key: keyof Settings, value: string | number | boolean) => {
     setSettings({ ...settings, [key]: value });
   };
@@ -78,24 +81,37 @@ export default function SettingsSection({
 
   return (
     <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
-      <h2 className="font-display text-lg font-semibold">{t("configSettings")}</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-display text-lg font-semibold">{t("configSettings")}</h2>
+        <button
+          type="button"
+          className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/70 transition hover:border-moss hover:text-moss"
+          onClick={() => setShowAdvanced((prev) => !prev)}
+        >
+          {showAdvanced ? t("hide") : t("advancedDetails")}
+        </button>
+      </div>
       <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <label className="text-sm">
-          {t("githubUsername")}
-          <input
-            className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
-            value={settings.github_username || ""}
-            onChange={(e) => updateField("github_username", e.target.value)}
-          />
-        </label>
-        <label className="text-sm">
-          {t("githubTargetUsername")}
-          <input
-            className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
-            value={settings.github_target_username || ""}
-            onChange={(e) => updateField("github_target_username", e.target.value)}
-          />
-        </label>
+        {showAdvanced && (
+          <label className="text-sm">
+            {t("githubUsername")}
+            <input
+              className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
+              value={settings.github_username || ""}
+              onChange={(e) => updateField("github_username", e.target.value)}
+            />
+          </label>
+        )}
+        {showAdvanced && (
+          <label className="text-sm">
+            {t("githubTargetUsername")}
+            <input
+              className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
+              value={settings.github_target_username || ""}
+              onChange={(e) => updateField("github_target_username", e.target.value)}
+            />
+          </label>
+        )}
         <label className="text-sm md:col-span-2">
           {t("githubUsernames")}
           <input
@@ -104,16 +120,18 @@ export default function SettingsSection({
             onChange={(e) => updateField("github_usernames", e.target.value)}
           />
         </label>
-        <label className="text-sm">
-          {t("githubIncludeSelf")}
-          <div className="mt-2 flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={settings.github_include_self}
-              onChange={(e) => updateField("github_include_self", e.target.checked)}
-            />
-          </div>
-        </label>
+        {showAdvanced && (
+          <label className="text-sm">
+            {t("githubIncludeSelf")}
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={settings.github_include_self}
+                onChange={(e) => updateField("github_include_self", e.target.checked)}
+              />
+            </div>
+          </label>
+        )}
         <label className="text-sm">
           {t("githubMode")}
           <select
@@ -175,15 +193,17 @@ export default function SettingsSection({
             }}
           />
         </label>
-        <label className="text-sm md:col-span-2">
-          {t("rulesJson")}
-          <textarea
-            className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-xs font-mono"
-            rows={4}
-            value={settings.rules_json || ""}
-            onChange={(e) => updateField("rules_json", e.target.value)}
-          />
-        </label>
+        {showAdvanced && (
+          <label className="text-sm md:col-span-2">
+            {t("rulesJson")}
+            <textarea
+              className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-xs font-mono"
+              rows={4}
+              value={settings.rules_json || ""}
+              onChange={(e) => updateField("rules_json", e.target.value)}
+            />
+          </label>
+        )}
       </div>
       <div className="mt-4">
         <button

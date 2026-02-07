@@ -45,6 +45,7 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
   const [statsError, setStatsError] = useState(false);
   const [statusError, setStatusError] = useState(false);
   const [classifying, setClassifying] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [classifyLimit, setClassifyLimit] = useState("20");
   const [concurrency, setConcurrency] = useState("3");
   const [forceReclassify, setForceReclassify] = useState(false);
@@ -191,6 +192,7 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
   };
 
   const backgroundRunning = backgroundStatus?.running ?? false;
+  const simpleStatus = backgroundRunning ? t("classifying") : t("backgroundIdle");
 
   return (
     <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
@@ -203,11 +205,22 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
         </p>
       )}
 
-      {statusError ? (
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-ink/10 bg-surface/70 px-4 py-3 text-xs text-ink/70">
+        <span>{t("operationStatusWithValue", { value: simpleStatus })}</span>
+        <button
+          type="button"
+          className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/70 transition hover:border-moss hover:text-moss"
+          onClick={() => setShowAdvanced((prev) => !prev)}
+        >
+          {showAdvanced ? t("hide") : t("advancedDetails")}
+        </button>
+      </div>
+
+      {showAdvanced && statusError ? (
         <div className="mt-4 rounded-2xl border border-copper/30 bg-copper/5 px-4 py-3">
           <p className="text-xs text-copper">{t("loadStatusError")}</p>
         </div>
-      ) : backgroundStatus && (
+      ) : showAdvanced && backgroundStatus && (
         <div className="mt-4 rounded-2xl border border-ink/10 bg-surface/70 px-4 py-3">
           <p className="text-xs uppercase tracking-[0.2em] text-ink/60">{t("backgroundStatus")}</p>
           <div className="mt-2 flex flex-wrap gap-3 text-xs text-ink/70">
@@ -224,49 +237,51 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
         </div>
       )}
 
-      <div className="mt-4 flex flex-wrap items-center gap-4">
-        <div className="flex items-center gap-2 rounded-full border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70">
-          <span>{t("batchSize")}</span>
-          <input
-            type="number"
-            min={1}
-            max={500}
-            value={classifyLimit}
-            onChange={(e) => {
-              const value = e.target.value;
-              if (/^\d*$/.test(value)) {
-                setClassifyLimit(value);
-              }
-            }}
-            className="w-14 bg-transparent text-right text-ink outline-none"
-          />
+      {showAdvanced && (
+        <div className="mt-4 flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2 rounded-full border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70">
+            <span>{t("batchSize")}</span>
+            <input
+              type="number"
+              min={1}
+              max={500}
+              value={classifyLimit}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (/^\d*$/.test(value)) {
+                  setClassifyLimit(value);
+                }
+              }}
+              className="w-14 bg-transparent text-right text-ink outline-none"
+            />
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70">
+            <span>{t("concurrency")}</span>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={concurrency}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (/^\d*$/.test(value)) {
+                  setConcurrency(value);
+                }
+              }}
+              className="w-12 bg-transparent text-right text-ink outline-none"
+            />
+          </div>
+          <label className="flex items-center gap-2 rounded-full border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70">
+            <input
+              type="checkbox"
+              checked={forceReclassify}
+              onChange={(e) => setForceReclassify(e.target.checked)}
+              className="accent-moss"
+            />
+            <span>{t("forceReclassify")}</span>
+          </label>
         </div>
-        <div className="flex items-center gap-2 rounded-full border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70">
-          <span>{t("concurrency")}</span>
-          <input
-            type="number"
-            min={1}
-            max={10}
-            value={concurrency}
-            onChange={(e) => {
-              const value = e.target.value;
-              if (/^\d*$/.test(value)) {
-                setConcurrency(value);
-              }
-            }}
-            className="w-12 bg-transparent text-right text-ink outline-none"
-          />
-        </div>
-        <label className="flex items-center gap-2 rounded-full border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70">
-          <input
-            type="checkbox"
-            checked={forceReclassify}
-            onChange={(e) => setForceReclassify(e.target.checked)}
-            className="accent-moss"
-          />
-          <span>{t("forceReclassify")}</span>
-        </label>
-      </div>
+      )}
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button
@@ -285,14 +300,16 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
         >
           {t("classifyAll")}
         </button>
-        <button
-          type="button"
-          onClick={handleBackgroundStart}
-          disabled={backgroundRunning}
-          className="rounded-full border border-ink/10 bg-surface px-5 py-2 text-sm font-semibold text-ink disabled:opacity-60"
-        >
-          {t("startBackground")}
-        </button>
+        {showAdvanced && (
+          <button
+            type="button"
+            onClick={handleBackgroundStart}
+            disabled={backgroundRunning}
+            className="rounded-full border border-ink/10 bg-surface px-5 py-2 text-sm font-semibold text-ink disabled:opacity-60"
+          >
+            {t("startBackground")}
+          </button>
+        )}
         <button
           type="button"
           onClick={handleBackgroundStop}
