@@ -241,6 +241,7 @@ export default function Home() {
   const [retryingTask, setRetryingTask] = useState(false);
   const [pollingPaused, setPollingPaused] = useState(false);
   const [showAdvancedStatus, setShowAdvancedStatus] = useState(false);
+  const [showTaskId, setShowTaskId] = useState(false);
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
@@ -1061,7 +1062,16 @@ export default function Home() {
                     {showAdvancedStatus && taskInfoId && (
                       <div className="mt-2 flex flex-col gap-2 text-xs text-ink/70">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span>{t("taskIdWithValue", { value: taskInfoId })}</span>
+                          <button
+                            type="button"
+                            className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/70 transition hover:border-moss hover:text-moss"
+                            onClick={() => setShowTaskId((prev) => !prev)}
+                          >
+                            {showTaskId ? t("hideTaskId") : t("showTaskId")}
+                          </button>
+                          {showTaskId && (
+                            <span>{t("taskIdWithValue", { value: taskInfoId })}</span>
+                          )}
                           <span>
                             {t("taskTypeWithValue", {
                               value: taskTypeLabel,
