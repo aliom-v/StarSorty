@@ -707,6 +707,7 @@ export default function Home() {
   }, [actionMessage, pollingPaused]);
 
   const handleSync = async () => {
+    if (backgroundStatus?.running) return;
     setSyncing(true);
     setActionMessage(null);
     setActionStatus(null);
@@ -782,6 +783,7 @@ export default function Home() {
   };
 
   const handleBackgroundStart = async () => {
+    if (syncing || backgroundStatus?.running) return;
     setActionMessage(null);
     setActionStatus(null);
     try {
@@ -805,6 +807,7 @@ export default function Home() {
   };
 
   const handleBackgroundStop = async () => {
+    if (!backgroundStatus?.running) return;
     setActionMessage(null);
     setActionStatus(null);
     try {
@@ -927,6 +930,8 @@ export default function Home() {
     : syncRunning
       ? t("syncing")
       : t("backgroundIdle");
+  const disableSyncAction = syncing || backgroundRunning;
+  const disableClassifyAction = syncing;
   const hasActiveFilters =
     !!query ||
     !!category ||
@@ -1012,18 +1017,18 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={handleSync}
-                  disabled={syncing}
+                  disabled={disableSyncAction}
                   className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
                 >
                   {syncing ? t("syncing") : t("syncNow")}
                 </button>
                 <button
                   type="button"
-                  onClick={handleBackgroundStart}
-                  disabled={backgroundRunning}
+                  onClick={backgroundRunning ? handleBackgroundStop : handleBackgroundStart}
+                  disabled={disableClassifyAction}
                   className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
                 >
-                  {backgroundRunning ? t("classifying") : t("classify")}
+                  {backgroundRunning ? t("stop") : t("classify")}
                 </button>
                 <a
                   href="/settings/"
@@ -1153,7 +1158,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={handleBackgroundStart}
-                      disabled={backgroundRunning}
+                      disabled={backgroundRunning || syncing}
                       className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
                     >
                       {t("backgroundClassify")}
