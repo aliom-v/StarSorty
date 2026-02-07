@@ -536,15 +536,21 @@ async def auth_check(request: Request) -> dict:
 async def task_status(task_id: str) -> TaskStatusResponse:
     task = await get_task(task_id)
     if not task:
+        inferred_type = "missing"
+        try:
+            uuid.UUID(task_id)
+            inferred_type = "expired"
+        except (ValueError, TypeError, AttributeError):
+            inferred_type = "missing"
         now = _now_iso()
         return TaskStatusResponse(
             task_id=task_id,
             status="failed",
-            task_type="unknown",
+            task_type=inferred_type,
             created_at=now,
             started_at=None,
             finished_at=now,
-            message="Task not found or expired",
+            message="Task record unavailable (expired or cleaned)",
             result=None,
             cursor_full_name=None,
             retry_from_task_id=None,

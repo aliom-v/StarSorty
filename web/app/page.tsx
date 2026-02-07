@@ -902,6 +902,10 @@ export default function Home() {
     ? t("taskTypeSync")
     : taskType === "classify"
       ? t("taskTypeClassify")
+      : taskType === "expired"
+        ? t("taskTypeExpired")
+        : taskType === "missing"
+          ? t("taskTypeMissing")
       : taskType
         ? taskType
         : t("taskTypeUnknown");
