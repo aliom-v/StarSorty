@@ -18,16 +18,22 @@ class RepoBase(BaseModel):
     category: str | None = None
     subcategory: str | None = None
     tags: list[str] = Field(default_factory=list)
+    tag_ids: list[str] = Field(default_factory=list)
     ai_category: str | None = None
     ai_subcategory: str | None = None
     ai_confidence: float | None = None
     ai_tags: list[str] = Field(default_factory=list)
+    ai_tag_ids: list[str] = Field(default_factory=list)
     ai_provider: str | None = None
     ai_model: str | None = None
     ai_updated_at: str | None = None
+    ai_reason: str | None = None
+    ai_decision_source: str | None = None
+    ai_rule_candidates: list[dict] = Field(default_factory=list)
     override_category: str | None = None
     override_subcategory: str | None = None
     override_tags: list[str] = Field(default_factory=list)
+    override_tag_ids: list[str] = Field(default_factory=list)
     override_note: str | None = None
     readme_summary: str | None = None
     readme_fetched_at: str | None = None
@@ -39,6 +45,8 @@ class RepoBase(BaseModel):
     ai_keywords: list[str] = Field(default_factory=list)
     override_summary_zh: str | None = None
     override_keywords: list[str] = Field(default_factory=list)
+    search_score: float | None = None
+    match_reasons: list[str] = Field(default_factory=list)
 
 
 class ReadmeResult(BaseModel):

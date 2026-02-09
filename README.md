@@ -48,6 +48,22 @@
 - 📝 **人工干预机制**：支持手动覆盖 AI 分类并记录修改历史。
 - 🐳 **隐私至上**：Docker 私有化部署，数据完全掌握在自己手中。
 
+### 2026 重构增强
+
+- `CLASSIFY_ENGINE_V2_ENABLED`: 启用“规则候选 + AI 仲裁 + 回退”分类链路。
+- `SEARCH_RANKER_V2_ENABLED`: 启用相关度排序与命中解释。
+- `/repos` 新增参数：
+  - `tag_mode=and|or`（多标签交集/并集）
+  - `sort=relevance|stars|updated`
+- `/metrics/quality`：输出 `classification_total`、`rule_hit_rate`、`ai_fallback_rate`、`empty_tag_rate`、`search_zero_result_rate` 等指标。
+- `api/scripts/migrate_tag_ids.py`：扫描 `ai_tags/override_tags/rules`，输出迁移报告，并可写入 `*_tag_ids`。
+- `evaluation/replay.py`：基于 `evaluation/golden_set.json` 做离线回放评测并输出 diff。
+- Phase 4（个性化）能力：
+  - `GET/PATCH /preferences/{user_id}`：用户自定义 `tag_mapping` 与 `rule_priority`。
+  - `POST /feedback/search`、`POST /feedback/click`：记录检索/点击反馈并更新兴趣画像。
+  - `GET /interest/{user_id}`：读取最近关注主题画像。
+  - `GET /training/samples`、`GET /training/fewshot`：将人工覆盖沉淀为训练样本与 few-shot 数据。
+
 ---
 
 ## 🏗️ 系统架构

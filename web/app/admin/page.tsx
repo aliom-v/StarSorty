@@ -15,6 +15,7 @@ import ClassifySection from "./components/ClassifySection";
 import FailedReposSection from "./components/FailedReposSection";
 import ExportSection from "./components/ExportSection";
 import SettingsSection from "./components/SettingsSection";
+import PersonalizationSection from "./components/PersonalizationSection";
 
 type Settings = {
   github_username: string;
@@ -123,6 +124,8 @@ export default function AdminPage() {
         <ClassifySection t={t} message={message} setMessage={setMessage} />
 
         <FailedReposSection t={t} setMessage={setMessage} />
+
+        <PersonalizationSection t={t} setMessage={setMessage} />
 
         <ExportSection t={t} setMessage={setMessage} />
 

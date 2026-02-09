@@ -1,0 +1,30 @@
+{
+  "database_path": "/home/aliom/project/StarSorty/data/app.db",
+  "taxonomy_path": "api/config/taxonomy.yaml",
+  "rules_path": "api/config/rules.json",
+  "applied": false,
+  "repo_stats": {
+    "repos_total": 537,
+    "ai_rows_seen": 493,
+    "override_rows_seen": 0,
+    "ai_tag_ids_updated": 492,
+    "override_tag_ids_updated": 0,
+    "has_ai_tag_ids_column": 0,
+    "has_override_tag_ids_column": 0
+  },
+  "rule_stats": {
+    "rules_total": 46,
+    "rules_with_unknown_tags": 1
+  },
+  "unknown_tags_total": 23,
+  "unknown_tags_top": [
+    [
+      "API调试",
+      22
+    ],
+    [
+      "api-debug",
+      1
+    ]
+  ]
+}

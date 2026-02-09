@@ -1,0 +1,1054 @@
+{
+  "version": 2,
+  "rules": [
+    {
+      "rule_id": "rule_1",
+      "must_keywords": [],
+      "should_keywords": [
+        "clash",
+        "v2ray",
+        "xray",
+        "sing-box",
+        "shadowsocks",
+        "ssr",
+        "trojan",
+        "vless",
+        "reality",
+        "hysteria",
+        "tuic",
+        "surge",
+        "quantumult",
+        "loon",
+        "shadowrocket",
+        "stash",
+        "subconverter"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "network",
+      "candidate_subcategory": "proxy",
+      "tag_ids": [
+        "代理"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_2",
+      "must_keywords": [],
+      "should_keywords": [
+        "vpn",
+        "wireguard",
+        "tailscale",
+        "zerotier",
+        "openvpn",
+        "cloudflare",
+        "warp",
+        "1.1.1.1",
+        "ipsec",
+        "protonvpn"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "network",
+      "candidate_subcategory": "vpn",
+      "tag_ids": [
+        "vpn"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_3",
+      "must_keywords": [],
+      "should_keywords": [
+        "aria2",
+        "motrix",
+        "qbittorrent",
+        "transmission",
+        "idm",
+        "thunder",
+        "xunlei",
+        "yt-dlp",
+        "youtube-dl",
+        "lux",
+        "downie"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "media",
+      "candidate_subcategory": "downloader",
+      "tag_ids": [
+        "视频下载"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_4",
+      "must_keywords": [],
+      "should_keywords": [
+        "nas",
+        "synology",
+        "qnap",
+        "unraid",
+        "truenas",
+        "alist",
+        "rclone",
+        "webdav",
+        "smb",
+        "nfs",
+        "filebrowser",
+        "nextcloud",
+        "owncloud"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "media",
+      "candidate_subcategory": "storage",
+      "tag_ids": [
+        "nas"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_5",
+      "must_keywords": [],
+      "should_keywords": [
+        "emby",
+        "jellyfin",
+        "plex",
+        "kodi",
+        "infuse",
+        "tmm",
+        "tinymediamanager",
+        "sonarr",
+        "radarr",
+        "jackett",
+        "prowlarr"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "media",
+      "candidate_subcategory": "server",
+      "tag_ids": [
+        "后台服务"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_6",
+      "must_keywords": [],
+      "should_keywords": [
+        "baidunetdisk",
+        "115",
+        "quark",
+        "aliyundrive",
+        "googledrive",
+        "onedrive",
+        "dropbox",
+        "mega",
+        "pikpak",
+        "terabox"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "media",
+      "candidate_subcategory": "cloud-drive",
+      "tag_ids": [
+        "网盘"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_7",
+      "must_keywords": [],
+      "should_keywords": [
+        "chatgpt",
+        "openai",
+        "gpt-4",
+        "gpt-3.5",
+        "dall-e",
+        "sora",
+        "whisper",
+        "api-key",
+        "sam altman"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "ai",
+      "candidate_subcategory": "openai",
+      "tag_ids": [
+        "llm",
+        "chatgpt"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_8",
+      "must_keywords": [],
+      "should_keywords": [
+        "claude",
+        "anthropic",
+        "gemini",
+        "bard",
+        "google-ai",
+        "copilot",
+        "bing-chat",
+        "deepseek",
+        "qwen",
+        "yi-34b",
+        "chatglm",
+        "llama",
+        "mistral"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "ai",
+      "candidate_subcategory": "llm",
+      "tag_ids": [
+        "llm"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_9",
+      "must_keywords": [],
+      "should_keywords": [
+        "midjourney",
+        "stable-diffusion",
+        "comfyui",
+        "webui",
+        "civitai",
+        "lora",
+        "controlnet",
+        "huggingface",
+        "replicate",
+        "runway",
+        "pika"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "ai",
+      "candidate_subcategory": "generation",
+      "tag_ids": [
+        "llm",
+        "图像生成"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_10",
+      "must_keywords": [],
+      "should_keywords": [
+        "flowise",
+        "dify",
+        "coze",
+        "fastgpt",
+        "promptflow",
+        "llm-app"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "ai",
+      "candidate_subcategory": "devtools",
+      "tag_ids": [
+        "llm",
+        "代码生成"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_11",
+      "must_keywords": [],
+      "should_keywords": [
+        "autogpt",
+        "babyagi",
+        "autogen",
+        "crewai",
+        "langgraph",
+        "agentops"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "ai",
+      "candidate_subcategory": "agent",
+      "tag_ids": [
+        "llm",
+        "agent"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_12",
+      "must_keywords": [],
+      "should_keywords": [
+        "langchain",
+        "llamaindex",
+        "haystack",
+        "chroma",
+        "qdrant",
+        "weaviate",
+        "pinecone",
+        "milvus",
+        "faiss",
+        "vector-db",
+        "retrieval-augmented",
+        "retrieval augmented"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "ai",
+      "candidate_subcategory": "rag",
+      "tag_ids": [
+        "llm",
+        "rag",
+        "向量数据库"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_13",
+      "must_keywords": [],
+      "should_keywords": [
+        "obsidian",
+        "logseq",
+        "notion",
+        "heptabase",
+        "roam",
+        "typora",
+        "joplin",
+        "evernote",
+        "onenote",
+        "wolai",
+        "siyuan"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "productivity",
+      "candidate_subcategory": "notes",
+      "tag_ids": [
+        "笔记"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_14",
+      "must_keywords": [],
+      "should_keywords": [
+        "rss",
+        "feedly",
+        "inoreader",
+        "freshrss",
+        "miniflux",
+        "qireader",
+        "follow",
+        "readwise",
+        "omnivore",
+        "pocket",
+        "instapaper"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "productivity",
+      "candidate_subcategory": "reader",
+      "tag_ids": [
+        "rss"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_15",
+      "must_keywords": [],
+      "should_keywords": [
+        "hexo",
+        "hugo",
+        "jekyll",
+        "wordpress",
+        "typecho",
+        "ghost",
+        "vitepress",
+        "vuepress",
+        "docusaurus",
+        "vercel",
+        "netlify",
+        "zeabur"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "productivity",
+      "candidate_subcategory": "blog",
+      "tag_ids": [
+        "博客"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_16",
+      "must_keywords": [],
+      "should_keywords": [
+        "docker",
+        "kubernetes",
+        "k8s",
+        "docker-compose",
+        "podman",
+        "portainer",
+        "registry",
+        "image",
+        "container"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "devops",
+      "candidate_subcategory": "container",
+      "tag_ids": [
+        "docker"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_17",
+      "must_keywords": [],
+      "should_keywords": [
+        "nginx",
+        "caddy",
+        "traefik",
+        "apache",
+        "openresty",
+        "haproxy",
+        "nginx-proxy-manager"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "devops",
+      "candidate_subcategory": "webserver",
+      "tag_ids": [
+        "反向代理"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_18",
+      "must_keywords": [],
+      "should_keywords": [
+        "vps",
+        "racknerd",
+        "bandwagon",
+        "dmit",
+        "aws",
+        "ec2",
+        "lightsail",
+        "aliyun",
+        "tencent",
+        "digitalocean",
+        "linode",
+        "vultr",
+        "hetzner",
+        "cloudcone"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "devops",
+      "candidate_subcategory": "cloud-provider",
+      "tag_ids": [
+        "云服务"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_19",
+      "must_keywords": [],
+      "should_keywords": [
+        "1panel",
+        "bt.cn",
+        "pagoda",
+        "aa_panel",
+        "casaos",
+        "uptime-kuma",
+        "grafana",
+        "prometheus",
+        "zabbix",
+        "probe",
+        "nezha"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "devops",
+      "candidate_subcategory": "monitor",
+      "tag_ids": [
+        "监控"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_20",
+      "must_keywords": [],
+      "should_keywords": [
+        "github actions",
+        "gitlab ci",
+        "jenkins",
+        "circleci",
+        "travis",
+        "drone",
+        "buildkite",
+        "teamcity",
+        "azure devops"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "devops",
+      "candidate_subcategory": "ci-cd",
+      "tag_ids": [
+        "ci_cd"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_21",
+      "must_keywords": [],
+      "should_keywords": [
+        "terraform",
+        "pulumi",
+        "ansible",
+        "saltstack",
+        "chef",
+        "puppet",
+        "packer",
+        "crossplane",
+        "helm"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "devops",
+      "candidate_subcategory": "iac",
+      "tag_ids": [
+        "配置管理"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_22",
+      "must_keywords": [],
+      "should_keywords": [
+        "opentelemetry",
+        "jaeger",
+        "zipkin",
+        "tempo",
+        "loki",
+        "sentry"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "devops",
+      "candidate_subcategory": "observability",
+      "tag_ids": [
+        "监控"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_23",
+      "must_keywords": [],
+      "should_keywords": [
+        "kali",
+        "metasploit",
+        "burpsuite",
+        "wireshark",
+        "nmap",
+        "sqlmap",
+        "ctf",
+        "exploit",
+        "cve",
+        "pentest"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "security",
+      "candidate_subcategory": "hacking",
+      "tag_ids": [
+        "隐私保护"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_24",
+      "must_keywords": [],
+      "should_keywords": [
+        "tor",
+        "duckduckgo",
+        "startpage",
+        "privacy",
+        "encrypt",
+        "pgp",
+        "gpg",
+        "bitwarden",
+        "1password",
+        "keepass",
+        "vaultwarden"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "security",
+      "candidate_subcategory": "privacy",
+      "tag_ids": [
+        "隐私保护"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_25",
+      "must_keywords": [],
+      "should_keywords": [
+        "linux",
+        "ubuntu",
+        "debian",
+        "centos",
+        "archlinux",
+        "alpine",
+        "fedora",
+        "redhat",
+        "wsl",
+        "wsl2"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "os",
+      "candidate_subcategory": "linux",
+      "tag_ids": [
+        "本地运行"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_26",
+      "must_keywords": [],
+      "should_keywords": [
+        "shell",
+        "bash",
+        "zsh",
+        "powershell",
+        "terminal",
+        "ssh",
+        "termux",
+        "oh-my-zsh",
+        "fish-shell",
+        "tmux"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "os",
+      "candidate_subcategory": "terminal",
+      "tag_ids": [
+        "命令行"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_27",
+      "must_keywords": [],
+      "should_keywords": [
+        "windows",
+        "macos",
+        "hackintosh",
+        "ios",
+        "android",
+        "harmonyos",
+        "firmware",
+        "bios",
+        "uefi"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "os",
+      "candidate_subcategory": "platform",
+      "tag_ids": [
+        "本地运行"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_28",
+      "must_keywords": [],
+      "should_keywords": [
+        "leetcode",
+        "codeforces",
+        "atcoder",
+        "niuke",
+        "luogu",
+        "algorithm",
+        "data structure"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "learning",
+      "candidate_subcategory": "algorithm",
+      "tag_ids": [
+        "教程"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_29",
+      "must_keywords": [],
+      "should_keywords": [
+        "arxiv",
+        "ieee",
+        "acm",
+        "springer",
+        "researchgate",
+        "scihub",
+        "google scholar",
+        "overleaf",
+        "latex"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "learning",
+      "candidate_subcategory": "academic",
+      "tag_ids": [
+        "教程"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_30",
+      "must_keywords": [],
+      "should_keywords": [
+        "coursera",
+        "udemy",
+        "edx",
+        "khan academy",
+        "runoob",
+        "geeksforgeeks",
+        "freecodecamp",
+        "mooc"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "learning",
+      "candidate_subcategory": "course",
+      "tag_ids": [
+        "教程"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_31",
+      "must_keywords": [],
+      "should_keywords": [
+        "github",
+        "gitlab",
+        "gitee",
+        "bitbucket",
+        "gist",
+        "stackoverflow",
+        "csdn",
+        "juejin",
+        "zhihu",
+        "segmentfault"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "community",
+      "tag_ids": [
+        "资源合集"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_32",
+      "must_keywords": [],
+      "should_keywords": [
+        "react",
+        "vue",
+        "angular",
+        "svelte",
+        "nextjs",
+        "nuxt",
+        "astro",
+        "tailwind",
+        "bootstrap",
+        "element-ui",
+        "antd",
+        "shadcn"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "frontend",
+      "tag_ids": [
+        "web"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_33",
+      "must_keywords": [],
+      "should_keywords": [
+        "fastapi",
+        "django",
+        "flask",
+        "spring",
+        "spring boot",
+        "express",
+        "nestjs",
+        "gin",
+        "fiber",
+        "laravel",
+        "rails",
+        "asp.net",
+        "phoenix"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "backend",
+      "tag_ids": [
+        "后台服务"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_34",
+      "must_keywords": [],
+      "should_keywords": [
+        "pytest",
+        "jest",
+        "mocha",
+        "vitest",
+        "cypress",
+        "playwright",
+        "selenium",
+        "junit",
+        "testng"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "testing",
+      "tag_ids": [
+        "调试器"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_35",
+      "must_keywords": [],
+      "should_keywords": [
+        "webpack",
+        "vite",
+        "rollup",
+        "esbuild",
+        "parcel",
+        "gulp",
+        "grunt",
+        "nx",
+        "turbo",
+        "bazel",
+        "buck"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "build",
+      "tag_ids": [
+        "脚手架"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_36",
+      "must_keywords": [],
+      "should_keywords": [
+        "mkdocs",
+        "sphinx",
+        "docsify",
+        "gitbook",
+        "readthedocs",
+        "mdbook"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "docs",
+      "tag_ids": [
+        "文档生成"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_37",
+      "must_keywords": [],
+      "should_keywords": [
+        "vscode",
+        "visual studio",
+        "jetbrains",
+        "intellij",
+        "idea",
+        "pycharm",
+        "clion",
+        "goland",
+        "webstorm",
+        "cursor",
+        "zed",
+        "fleet"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "ide",
+      "tag_ids": [
+        "工具"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_38",
+      "must_keywords": [],
+      "should_keywords": [
+        "vim",
+        "neovim",
+        "emacs",
+        "sublime",
+        "atom",
+        "notepad++",
+        "hbuilder"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "editor",
+      "tag_ids": [
+        "编辑器"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_39",
+      "must_keywords": [],
+      "should_keywords": [
+        "postman",
+        "apifox",
+        "swagger",
+        "charles",
+        "fiddler",
+        "insomnia"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "api-tools",
+      "tag_ids": [],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_40",
+      "must_keywords": [],
+      "should_keywords": [
+        "android studio",
+        "gradle",
+        "apk",
+        "adb",
+        "xposed",
+        "magisk",
+        "frida",
+        "ndk",
+        "sdk"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "android",
+      "tag_ids": [
+        "app"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_41",
+      "must_keywords": [],
+      "should_keywords": [
+        "xcode",
+        "swift",
+        "objective-c",
+        "flutter",
+        "react native",
+        "uniapp",
+        "taro"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "cross-platform",
+      "tag_ids": [
+        "app"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_42",
+      "must_keywords": [],
+      "should_keywords": [
+        "mysql",
+        "postgresql",
+        "mariadb",
+        "sqlite",
+        "oracle",
+        "mssql",
+        "sql"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "sql",
+      "tag_ids": [
+        "数据库"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_43",
+      "must_keywords": [],
+      "should_keywords": [
+        "redis",
+        "mongodb",
+        "cassandra",
+        "elasticsearch",
+        "kafka",
+        "rabbitmq",
+        "activemq",
+        "rocketmq",
+        "neo4j"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "nosql",
+      "tag_ids": [
+        "数据库"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_44",
+      "must_keywords": [],
+      "should_keywords": [
+        "python",
+        "javascript",
+        "typescript",
+        "golang",
+        "rust",
+        "java",
+        "c++",
+        "php",
+        "nodejs",
+        "deno",
+        "bun",
+        "pypi",
+        "npm",
+        "yarn"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "dev",
+      "candidate_subcategory": "language",
+      "tag_ids": [
+        "库"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_45",
+      "must_keywords": [],
+      "should_keywords": [
+        "twitter",
+        "x.com",
+        "reddit",
+        "hacker news",
+        "product hunt",
+        "discord",
+        "telegram",
+        "slack"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "info",
+      "candidate_subcategory": "social",
+      "tag_ids": [
+        "订阅"
+      ],
+      "priority": 0
+    },
+    {
+      "rule_id": "rule_46",
+      "must_keywords": [],
+      "should_keywords": [
+        "bilibili",
+        "youtube",
+        "twitch",
+        "tiktok",
+        "douyin"
+      ],
+      "exclude_keywords": [],
+      "candidate_category": "info",
+      "candidate_subcategory": "video",
+      "tag_ids": [
+        "视频处理"
+      ],
+      "priority": 0
+    }
+  ]
+}

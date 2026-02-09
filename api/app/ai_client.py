@@ -177,59 +177,81 @@ def _extract_json_list(text: str) -> Optional[List[Any]]:
 
 
 def _build_repo_context(repo: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+    context = {
         "name": repo.get("name"),
         "full_name": repo.get("full_name"),
         "description": repo.get("description"),
         "topics": repo.get("topics") or [],
         "readme_summary": repo.get("readme_summary"),
     }
+    candidates = repo.get("rule_candidates")
+    if isinstance(candidates, list) and candidates:
+        context["rule_candidates"] = candidates[:3]
+    return context
 
 
-def _build_prompts(repo: Dict[str, Any], taxonomy_text: str, allowed_tags: List[str]) -> Dict[str, str]:
+def _build_prompts(
+    repo: Dict[str, Any],
+    taxonomy_text: str,
+    allowed_tags: List[str],
+    allowed_tag_ids: List[str],
+) -> Dict[str, str]:
     repo_context = _build_repo_context(repo)
     tags_line = ", ".join(allowed_tags) if allowed_tags else "free-form"
+    tag_ids_line = ", ".join(allowed_tag_ids) if allowed_tag_ids else "free-form"
     system_prompt = (
         "You classify GitHub repositories into a fixed taxonomy.\n"
         "Return ONLY valid JSON with this schema:\n"
-        '{\"category\":\"...\",\"subcategory\":\"...\",\"tags\":[\"...\"],\"confidence\":0.0,\"summary_zh\":\"...\",\"keywords\":[\"...\"]}\n'
+        '{\"category\":\"...\",\"subcategory\":\"...\",\"tag_ids\":[\"...\"],\"tags\":[\"...\"],\"confidence\":0.0,\"reason\":\"...\",\"summary_zh\":\"...\",\"keywords\":[\"...\"]}\n'
         "Rules:\n"
         "- category and subcategory must be from the taxonomy list.\n"
         "- Ignore programming language; classify by product functionality or use case.\n"
         "- If unsure, use category 'uncategorized' and subcategory 'other'.\n"
-        "- tags must be chosen from the allowed tags list if provided; otherwise return [] or reasonable tags.\n"
+        "- Prefer tag_ids from the allowed tag ID list. tags should be optional display labels.\n"
+        "- tags must be chosen from the allowed tags list if provided.\n"
         "- confidence is between 0 and 1.\n"
+        "- reason should briefly explain why the category is chosen.\n"
         "- summary_zh: A one-sentence Chinese summary (20-50 characters) describing the project's core functionality.\n"
         "- keywords: 3-5 search keywords in Chinese or English.\n\n"
         "Taxonomy:\n"
         f"{taxonomy_text}\n\n"
+        f"Allowed tag_ids: {tag_ids_line}\n"
         f"Allowed tags: {tags_line}\n"
     )
     user_prompt = json.dumps(repo_context, ensure_ascii=True)
     return {"system": system_prompt, "user": user_prompt}
 
 
-def _build_batch_prompts(repos: List[Dict[str, Any]], taxonomy_text: str, allowed_tags: List[str]) -> Dict[str, str]:
+def _build_batch_prompts(
+    repos: List[Dict[str, Any]],
+    taxonomy_text: str,
+    allowed_tags: List[str],
+    allowed_tag_ids: List[str],
+) -> Dict[str, str]:
     items = []
     for index, repo in enumerate(repos):
         context = _build_repo_context(repo)
         context["index"] = index
         items.append(context)
     tags_line = ", ".join(allowed_tags) if allowed_tags else "free-form"
+    tag_ids_line = ", ".join(allowed_tag_ids) if allowed_tag_ids else "free-form"
     system_prompt = (
         "You classify GitHub repositories into a fixed taxonomy.\n"
         "Return ONLY valid JSON array with one object per input, same order:\n"
-        "[{\"index\":0,\"category\":\"...\",\"subcategory\":\"...\",\"tags\":[\"...\"],\"confidence\":0.0,\"summary_zh\":\"...\",\"keywords\":[\"...\"]}]\n"
+        "[{\"index\":0,\"category\":\"...\",\"subcategory\":\"...\",\"tag_ids\":[\"...\"],\"tags\":[\"...\"],\"confidence\":0.0,\"reason\":\"...\",\"summary_zh\":\"...\",\"keywords\":[\"...\"]}]\n"
         "Rules:\n"
         "- category and subcategory must be from the taxonomy list.\n"
         "- Ignore programming language; classify by product functionality or use case.\n"
         "- If unsure, use category 'uncategorized' and subcategory 'other'.\n"
-        "- tags must be chosen from the allowed tags list if provided; otherwise return [] or reasonable tags.\n"
+        "- Prefer tag_ids from the allowed tag ID list. tags should be optional display labels.\n"
+        "- tags must be chosen from the allowed tags list if provided.\n"
         "- confidence is between 0 and 1.\n"
+        "- reason should briefly explain why the category is chosen.\n"
         "- summary_zh: A one-sentence Chinese summary (20-50 characters) describing the project's core functionality.\n"
         "- keywords: 3-5 search keywords in Chinese or English.\n\n"
         "Taxonomy:\n"
         f"{taxonomy_text}\n\n"
+        f"Allowed tag_ids: {tag_ids_line}\n"
         f"Allowed tags: {tags_line}\n"
     )
     user_prompt = json.dumps(items, ensure_ascii=True)
@@ -350,6 +372,7 @@ class AIClient:
             repo,
             format_taxonomy_for_prompt(taxonomy),
             taxonomy.get("tags") or [],
+            [item.get("id") for item in (taxonomy.get("tag_defs") or []) if isinstance(item, dict) and item.get("id")],
         )
         headers = _headers(provider)
         payload: Dict[str, Any]
@@ -440,6 +463,7 @@ class AIClient:
             repos,
             format_taxonomy_for_prompt(taxonomy),
             taxonomy.get("tags") or [],
+            [item.get("id") for item in (taxonomy.get("tag_defs") or []) if isinstance(item, dict) and item.get("id")],
         )
         headers = _headers(provider)
         payload: Dict[str, Any]

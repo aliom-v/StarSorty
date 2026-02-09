@@ -2,6 +2,7 @@ import asyncio
 import functools
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -14,6 +15,7 @@ import aiosqlite
 
 from .config import get_settings
 from .models import RepoBase
+from .search.ranker import rank_repo_matches
 
 logger = logging.getLogger("starsorty.db")
 _pool: "SQLitePool | None" = None
@@ -100,15 +102,23 @@ def _build_fts_query(raw_query: str) -> str | None:
 async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
     global _fts_enabled
     try:
+        # Recreate FTS table/triggers to keep schema in sync across upgrades.
+        await conn.execute("DROP TRIGGER IF EXISTS repos_ai")
+        await conn.execute("DROP TRIGGER IF EXISTS repos_ad")
+        await conn.execute("DROP TRIGGER IF EXISTS repos_au")
+        await conn.execute("DROP TABLE IF EXISTS repos_fts")
         await conn.execute(
             """
-            CREATE VIRTUAL TABLE IF NOT EXISTS repos_fts USING fts5(
+            CREATE VIRTUAL TABLE repos_fts USING fts5(
                 full_name,
                 name,
                 description,
                 topics,
+                readme_summary,
                 ai_tags,
+                ai_tag_ids,
                 override_tags,
+                override_tag_ids,
                 star_users,
                 summary_zh,
                 override_summary_zh,
@@ -128,8 +138,11 @@ async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
                     name,
                     description,
                     topics,
+                    readme_summary,
                     ai_tags,
+                    ai_tag_ids,
                     override_tags,
+                    override_tag_ids,
                     star_users,
                     summary_zh,
                     override_summary_zh,
@@ -141,8 +154,11 @@ async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
                     new.name,
                     new.description,
                     new.topics,
+                    new.readme_summary,
                     new.ai_tags,
+                    new.ai_tag_ids,
                     new.override_tags,
+                    new.override_tag_ids,
                     new.star_users,
                     new.summary_zh,
                     new.override_summary_zh,
@@ -162,8 +178,11 @@ async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
                     name,
                     description,
                     topics,
+                    readme_summary,
                     ai_tags,
+                    ai_tag_ids,
                     override_tags,
+                    override_tag_ids,
                     star_users,
                     summary_zh,
                     override_summary_zh,
@@ -176,8 +195,11 @@ async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
                     old.name,
                     old.description,
                     old.topics,
+                    old.readme_summary,
                     old.ai_tags,
+                    old.ai_tag_ids,
                     old.override_tags,
+                    old.override_tag_ids,
                     old.star_users,
                     old.summary_zh,
                     old.override_summary_zh,
@@ -197,8 +219,11 @@ async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
                     name,
                     description,
                     topics,
+                    readme_summary,
                     ai_tags,
+                    ai_tag_ids,
                     override_tags,
+                    override_tag_ids,
                     star_users,
                     summary_zh,
                     override_summary_zh,
@@ -211,8 +236,11 @@ async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
                     old.name,
                     old.description,
                     old.topics,
+                    old.readme_summary,
                     old.ai_tags,
+                    old.ai_tag_ids,
                     old.override_tags,
+                    old.override_tag_ids,
                     old.star_users,
                     old.summary_zh,
                     old.override_summary_zh,
@@ -225,8 +253,11 @@ async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
                     name,
                     description,
                     topics,
+                    readme_summary,
                     ai_tags,
+                    ai_tag_ids,
                     override_tags,
+                    override_tag_ids,
                     star_users,
                     summary_zh,
                     override_summary_zh,
@@ -238,8 +269,11 @@ async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
                     new.name,
                     new.description,
                     new.topics,
+                    new.readme_summary,
                     new.ai_tags,
+                    new.ai_tag_ids,
                     new.override_tags,
+                    new.override_tag_ids,
                     new.star_users,
                     new.summary_zh,
                     new.override_summary_zh,
@@ -400,12 +434,17 @@ async def init_db() -> None:
                 subcategory TEXT,
                 ai_confidence REAL,
                 ai_tags TEXT,
+                ai_tag_ids TEXT,
                 ai_provider TEXT,
                 ai_model TEXT,
+                ai_reason TEXT,
+                ai_decision_source TEXT,
+                ai_rule_candidates TEXT,
                 ai_updated_at TEXT,
                 override_category TEXT,
                 override_subcategory TEXT,
                 override_tags TEXT,
+                override_tag_ids TEXT,
                 override_note TEXT,
                 readme_summary TEXT,
                 readme_fetched_at TEXT,
@@ -455,6 +494,56 @@ async def init_db() -> None:
             )
             """
         )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_preferences (
+                user_id TEXT PRIMARY KEY,
+                tag_mapping_json TEXT NOT NULL DEFAULT '{}',
+                rule_priority_json TEXT NOT NULL DEFAULT '{}',
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_feedback_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                query TEXT,
+                full_name TEXT,
+                payload TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_interest_profiles (
+                user_id TEXT PRIMARY KEY,
+                topic_scores TEXT NOT NULL DEFAULT '{}',
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS training_samples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                full_name TEXT NOT NULL,
+                before_category TEXT,
+                before_subcategory TEXT,
+                before_tag_ids TEXT,
+                after_category TEXT,
+                after_subcategory TEXT,
+                after_tag_ids TEXT,
+                note TEXT,
+                source TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
         await _ensure_columns(conn)
         await _ensure_task_columns(conn)
         await _init_repos_fts(conn)
@@ -482,7 +571,16 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_tasks_status_updated_at ON tasks(status, updated_at)"
         )
         await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_feedback_user_created ON user_feedback_events(user_id, created_at DESC)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_training_samples_user_created ON training_samples(user_id, created_at DESC)"
+        )
+        await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_ai_keywords ON repos(ai_keywords)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repos_ai_tag_ids ON repos(ai_tag_ids)"
         )
         # Index for stargazers_count sorting (used in most queries)
         await conn.execute(
@@ -696,12 +794,17 @@ async def _ensure_columns(conn: aiosqlite.Connection) -> None:
         ("subcategory", "subcategory TEXT"),
         ("ai_confidence", "ai_confidence REAL"),
         ("ai_tags", "ai_tags TEXT"),
+        ("ai_tag_ids", "ai_tag_ids TEXT"),
         ("ai_provider", "ai_provider TEXT"),
         ("ai_model", "ai_model TEXT"),
+        ("ai_reason", "ai_reason TEXT"),
+        ("ai_decision_source", "ai_decision_source TEXT"),
+        ("ai_rule_candidates", "ai_rule_candidates TEXT"),
         ("ai_updated_at", "ai_updated_at TEXT"),
         ("override_category", "override_category TEXT"),
         ("override_subcategory", "override_subcategory TEXT"),
         ("override_tags", "override_tags TEXT"),
+        ("override_tag_ids", "override_tag_ids TEXT"),
         ("override_note", "override_note TEXT"),
         ("readme_summary", "readme_summary TEXT"),
         ("readme_fetched_at", "readme_fetched_at TEXT"),
@@ -803,6 +906,22 @@ def _load_json_list_optional(value: Optional[str]) -> Optional[List[str]]:
     return _load_json_list(value)
 
 
+def _load_json_dict_list(value: Optional[str]) -> List[Dict[str, Any]]:
+    if not value:
+        return []
+    try:
+        loaded = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(loaded, list):
+        return []
+    result: List[Dict[str, Any]] = []
+    for item in loaded:
+        if isinstance(item, dict):
+            result.append(item)
+    return result
+
+
 def _load_json_object(value: Optional[str]) -> Optional[Dict[str, Any]]:
     if not value:
         return None
@@ -835,14 +954,29 @@ def _row_to_repo(row: aiosqlite.Row, include_internal: bool = False) -> RepoBase
     topics = _load_json_list(row["topics"])
     star_users = _load_json_list(row["star_users"])
     ai_tags = _load_json_list(row["ai_tags"])
+    ai_tag_ids = _load_json_list(row["ai_tag_ids"]) if "ai_tag_ids" in row.keys() else []
     override_tags = _load_json_list_optional(row["override_tags"])
+    override_tag_ids = (
+        _load_json_list_optional(row["override_tag_ids"]) if "override_tag_ids" in row.keys() else None
+    )
     ai_keywords = _load_json_list(row["ai_keywords"]) if "ai_keywords" in row.keys() else []
     override_keywords = _load_json_list_optional(row["override_keywords"]) if "override_keywords" in row.keys() else None
+    ai_rule_candidates = (
+        _load_json_dict_list(row["ai_rule_candidates"]) if "ai_rule_candidates" in row.keys() else []
+    )
     effective_category = row["override_category"] or row["category"]
     effective_subcategory = row["override_subcategory"] or row["subcategory"]
     effective_tags = ai_tags if override_tags is None else override_tags
+    effective_tag_ids = ai_tag_ids if override_tag_ids is None else override_tag_ids
     effective_summary_zh = (row["override_summary_zh"] or row["summary_zh"]) if "summary_zh" in row.keys() else None
     effective_keywords = ai_keywords if override_keywords is None else override_keywords
+    search_score = None
+    if "search_score" in row.keys():
+        try:
+            search_score = float(row["search_score"])
+        except (TypeError, ValueError):
+            search_score = None
+    match_reasons = _load_json_list(row["match_reasons"]) if "match_reasons" in row.keys() else []
     repo = RepoBase(
         full_name=row["full_name"],
         name=row["name"],
@@ -857,17 +991,23 @@ def _row_to_repo(row: aiosqlite.Row, include_internal: bool = False) -> RepoBase
         category=effective_category,
         subcategory=effective_subcategory,
         tags=effective_tags,
+        tag_ids=effective_tag_ids,
         ai_category=row["category"],
         ai_subcategory=row["subcategory"],
         ai_confidence=row["ai_confidence"],
         ai_tags=ai_tags,
+        ai_tag_ids=ai_tag_ids,
         ai_keywords=ai_keywords,
         ai_provider=row["ai_provider"],
         ai_model=row["ai_model"],
+        ai_reason=row["ai_reason"] if "ai_reason" in row.keys() else None,
+        ai_decision_source=row["ai_decision_source"] if "ai_decision_source" in row.keys() else None,
+        ai_rule_candidates=ai_rule_candidates,
         ai_updated_at=row["ai_updated_at"],
         override_category=row["override_category"],
         override_subcategory=row["override_subcategory"],
         override_tags=override_tags or [],
+        override_tag_ids=override_tag_ids or [],
         override_note=row["override_note"],
         override_summary_zh=row["override_summary_zh"] if "override_summary_zh" in row.keys() else None,
         override_keywords=override_keywords or [],
@@ -878,6 +1018,8 @@ def _row_to_repo(row: aiosqlite.Row, include_internal: bool = False) -> RepoBase
         starred_at=row["starred_at"],
         summary_zh=effective_summary_zh,
         keywords=effective_keywords,
+        search_score=search_score,
+        match_reasons=match_reasons,
         readme_last_attempt_at=row["readme_last_attempt_at"] if include_internal else None,
         readme_failures=(row["readme_failures"] or 0) if include_internal else None,
         readme_empty=bool(row["readme_empty"] or 0) if include_internal else None,
@@ -954,6 +1096,37 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _parse_sort_timestamp(value: Any) -> float:
+    if not value:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def _interest_boost(row: Dict[str, Any], topic_scores: Dict[str, float]) -> float:
+    if not topic_scores:
+        return 0.0
+    candidates: List[str] = []
+    for key in ("category", "subcategory"):
+        token = str(row.get(key) or "").strip().lower()
+        if token:
+            candidates.append(token)
+    for field in ("ai_tags", "override_tags", "ai_keywords", "override_keywords"):
+        for token in _load_json_list(row.get(field)):
+            normalized = str(token).strip().lower()
+            if normalized:
+                candidates.append(normalized)
+    total = 0.0
+    for token in candidates:
+        total += float(topic_scores.get(token, 0.0))
+    return min(3.0, total * 0.12)
+
+
 async def list_repos(
     q: Optional[str] = None,
     language: Optional[str] = None,
@@ -962,6 +1135,9 @@ async def list_repos(
     subcategory: Optional[str] = None,
     tag: Optional[str] = None,
     tags: Optional[List[str]] = None,
+    tag_mode: str = "or",
+    sort: str = "stars",
+    topic_scores: Optional[Dict[str, float]] = None,
     star_user: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
@@ -981,12 +1157,13 @@ async def list_repos(
                 "("
                 "name LIKE ? ESCAPE '\\' OR full_name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' "
                 "OR topics LIKE ? ESCAPE '\\' OR ai_tags LIKE ? ESCAPE '\\' OR override_tags LIKE ? ESCAPE '\\' "
-                "OR star_users LIKE ? ESCAPE '\\' OR summary_zh LIKE ? ESCAPE '\\' "
+                "OR ai_tag_ids LIKE ? ESCAPE '\\' OR override_tag_ids LIKE ? ESCAPE '\\' "
+                "OR readme_summary LIKE ? ESCAPE '\\' OR star_users LIKE ? ESCAPE '\\' OR summary_zh LIKE ? ESCAPE '\\' "
                 "OR override_summary_zh LIKE ? ESCAPE '\\' OR ai_keywords LIKE ? ESCAPE '\\' "
                 "OR override_keywords LIKE ? ESCAPE '\\'"
                 ")"
             )
-            params.extend([like, like, like, like, like, like, like, like, like, like, like])
+            params.extend([like, like, like, like, like, like, like, like, like, like, like, like, like, like])
 
     if language:
         clauses.append("language = ?")
@@ -1005,15 +1182,28 @@ async def list_repos(
         params.append(subcategory)
 
     if tag:
-        clauses.append("COALESCE(NULLIF(override_tags, ''), ai_tags) LIKE ?")
+        clauses.append(
+            "("
+            "COALESCE(NULLIF(override_tag_ids, ''), ai_tag_ids, '') LIKE ? "
+            "OR COALESCE(NULLIF(override_tags, ''), ai_tags, '') LIKE ?"
+            ")"
+        )
+        params.append(f"%\"{tag}\"%")
         params.append(f"%\"{tag}\"%")
 
     if tags:
         tag_clauses = []
         for t in tags:
-            tag_clauses.append("(COALESCE(NULLIF(override_tags, ''), ai_tags) LIKE ?)")
+            tag_clauses.append(
+                "("
+                "COALESCE(NULLIF(override_tag_ids, ''), ai_tag_ids, '') LIKE ? "
+                "OR COALESCE(NULLIF(override_tags, ''), ai_tags, '') LIKE ?"
+                ")"
+            )
             params.append(f'%"{t}"%')
-        clauses.append("(" + " OR ".join(tag_clauses) + ")")
+            params.append(f'%"{t}"%')
+        joiner = " AND " if str(tag_mode).lower() == "and" else " OR "
+        clauses.append("(" + joiner.join(tag_clauses) + ")")
 
     if star_user:
         clauses.append("star_users LIKE ?")
@@ -1023,28 +1213,80 @@ async def list_repos(
     if clauses:
         where_sql = "WHERE " + " AND ".join(clauses)
 
+    select_sql = f"""
+        SELECT
+            full_name, name, owner, html_url, description, language,
+            stargazers_count, forks_count, topics, pushed_at, updated_at, starred_at,
+            star_users,
+            category, subcategory, ai_confidence, ai_tags, ai_tag_ids, ai_provider, ai_model,
+            ai_reason, ai_decision_source, ai_rule_candidates, ai_updated_at,
+            override_category, override_subcategory, override_tags, override_tag_ids,
+            override_note, readme_summary, readme_fetched_at,
+            summary_zh, ai_keywords, override_summary_zh, override_keywords
+        FROM repos
+        {where_sql}
+    """
+    normalized_sort = str(sort or "stars").strip().lower()
+    if normalized_sort not in ("relevance", "stars", "updated"):
+        normalized_sort = "stars"
+
     async with get_connection() as conn:
         total = (await (await conn.execute(
             f"SELECT COUNT(*) FROM repos {where_sql}", params
         )).fetchone())[0]
+        if normalized_sort == "updated":
+            rows = await (await conn.execute(
+                f"""
+                {select_sql}
+                ORDER BY updated_at DESC, stargazers_count DESC, full_name ASC
+                LIMIT ? OFFSET ?
+                """,
+                params + [limit, offset],
+            )).fetchall()
+            return total, [_row_to_repo(row) for row in rows]
+
+        if normalized_sort != "relevance" or not q:
+            rows = await (await conn.execute(
+                f"""
+                {select_sql}
+                ORDER BY stargazers_count DESC, full_name ASC
+                LIMIT ? OFFSET ?
+                """,
+                params + [limit, offset],
+            )).fetchall()
+            return total, [_row_to_repo(row) for row in rows]
+
+        # Relevance re-ranking with explainable match reasons.
         rows = await (await conn.execute(
             f"""
-            SELECT
-                full_name, name, owner, html_url, description, language,
-                stargazers_count, forks_count, topics, pushed_at, updated_at, starred_at,
-                star_users,
-                category, subcategory, ai_confidence, ai_tags, ai_provider, ai_model,
-                ai_updated_at, override_category, override_subcategory, override_tags,
-                override_note, readme_summary, readme_fetched_at,
-                summary_zh, ai_keywords, override_summary_zh, override_keywords
-            FROM repos
-            {where_sql}
+            {select_sql}
             ORDER BY stargazers_count DESC, full_name ASC
-            LIMIT ? OFFSET ?
             """,
-            params + [limit, offset],
+            params,
         )).fetchall()
-    return total, [_row_to_repo(row) for row in rows]
+
+    ranked_rows: List[Dict[str, Any]] = []
+    for row in rows:
+        row_dict: Dict[str, Any] = dict(row)
+        score, reasons = rank_repo_matches(row_dict, q or "")
+        personalization = _interest_boost(row_dict, topic_scores or {})
+        if personalization > 0:
+            score += personalization
+            reasons.append("interest_profile")
+        row_dict["search_score"] = score
+        row_dict["match_reasons"] = json.dumps(reasons, ensure_ascii=False)
+        ranked_rows.append(row_dict)
+
+    ranked_rows.sort(
+        key=lambda item: (
+            -float(item.get("search_score") or 0.0),
+            -int(item.get("stargazers_count") or 0),
+            -(math.floor(_parse_sort_timestamp(item.get("updated_at")))),
+            str(item.get("full_name") or ""),
+        )
+    )
+    paged_rows = ranked_rows[offset : offset + limit]
+    return total, [_row_to_repo(row) for row in paged_rows]
 
 
 async def iter_repos_for_export(
@@ -1063,7 +1305,13 @@ async def iter_repos_for_export(
     if tags:
         tag_clauses = []
         for t in tags:
-            tag_clauses.append("(COALESCE(NULLIF(override_tags, ''), ai_tags) LIKE ?)")
+            tag_clauses.append(
+                "("
+                "COALESCE(NULLIF(override_tag_ids, ''), ai_tag_ids, '') LIKE ? "
+                "OR COALESCE(NULLIF(override_tags, ''), ai_tags, '') LIKE ?"
+                ")"
+            )
+            params.append(f'%"{t}"%')
             params.append(f'%"{t}"%')
         clauses.append("(" + " OR ".join(tag_clauses) + ")")
 
@@ -1097,8 +1345,9 @@ async def iter_repos_for_export(
                     full_name, name, owner, html_url, description, language,
                     stargazers_count, forks_count, topics, pushed_at, updated_at, starred_at,
                     star_users,
-                    category, subcategory, ai_confidence, ai_tags, ai_provider, ai_model,
-                    ai_updated_at, override_category, override_subcategory, override_tags,
+                    category, subcategory, ai_confidence, ai_tags, ai_tag_ids, ai_provider, ai_model,
+                    ai_reason, ai_decision_source, ai_rule_candidates, ai_updated_at,
+                    override_category, override_subcategory, override_tags, override_tag_ids,
                     override_note, readme_summary, readme_fetched_at,
                     summary_zh, ai_keywords, override_summary_zh, override_keywords
                 FROM repos
@@ -1131,8 +1380,9 @@ async def get_repo(full_name: str) -> Optional[RepoBase]:
                 full_name, name, owner, html_url, description, language,
                 stargazers_count, forks_count, topics, pushed_at, updated_at, starred_at,
                 star_users,
-                category, subcategory, ai_confidence, ai_tags, ai_provider, ai_model,
-                ai_updated_at, override_category, override_subcategory, override_tags,
+                category, subcategory, ai_confidence, ai_tags, ai_tag_ids, ai_provider, ai_model,
+                ai_reason, ai_decision_source, ai_rule_candidates, ai_updated_at,
+                override_category, override_subcategory, override_tags, override_tag_ids,
                 override_note, readme_summary, readme_fetched_at,
                 summary_zh, ai_keywords, override_summary_zh, override_keywords
             FROM repos
@@ -1154,6 +1404,7 @@ async def update_override(full_name: str, updates: Dict[str, Any]) -> bool:
         "category": "override_category",
         "subcategory": "override_subcategory",
         "tags": "override_tags",
+        "tag_ids": "override_tag_ids",
         "note": "override_note",
     }
     sets = []
@@ -1163,7 +1414,7 @@ async def update_override(full_name: str, updates: Dict[str, Any]) -> bool:
         column = mapping.get(key)
         if not column:
             continue
-        if key == "tags":
+        if key in ("tags", "tag_ids"):
             params.append(json.dumps(value, ensure_ascii=False) if value is not None else None)
         else:
             params.append(value)
@@ -1174,6 +1425,17 @@ async def update_override(full_name: str, updates: Dict[str, Any]) -> bool:
 
     params.append(full_name)
     async with get_connection() as conn:
+        before = await (await conn.execute(
+            """
+            SELECT
+                COALESCE(NULLIF(override_category, ''), category) AS category,
+                COALESCE(NULLIF(override_subcategory, ''), subcategory) AS subcategory,
+                COALESCE(NULLIF(override_tag_ids, ''), ai_tag_ids) AS tag_ids
+            FROM repos
+            WHERE full_name = ?
+            """,
+            (full_name,),
+        )).fetchone()
         cur = await conn.execute(
             f"UPDATE repos SET {', '.join(sets)} WHERE full_name = ?",
             params,
@@ -1182,7 +1444,11 @@ async def update_override(full_name: str, updates: Dict[str, Any]) -> bool:
             timestamp = datetime.now(timezone.utc).isoformat()
             row = await (await conn.execute(
                 """
-                SELECT override_category, override_subcategory, override_tags, override_note
+                SELECT
+                    override_category, override_subcategory, override_tags, override_tag_ids, override_note,
+                    COALESCE(NULLIF(override_category, ''), category) AS effective_category,
+                    COALESCE(NULLIF(override_subcategory, ''), subcategory) AS effective_subcategory,
+                    COALESCE(NULLIF(override_tag_ids, ''), ai_tag_ids) AS effective_tag_ids
                 FROM repos
                 WHERE full_name = ?
                 """,
@@ -1204,6 +1470,36 @@ async def update_override(full_name: str, updates: Dict[str, Any]) -> bool:
                         timestamp,
                     ),
                 )
+                await conn.execute(
+                    """
+                    INSERT INTO training_samples (
+                        user_id,
+                        full_name,
+                        before_category,
+                        before_subcategory,
+                        before_tag_ids,
+                        after_category,
+                        after_subcategory,
+                        after_tag_ids,
+                        note,
+                        source,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "global",
+                        full_name,
+                        before["category"] if before else None,
+                        before["subcategory"] if before else None,
+                        before["tag_ids"] if before else None,
+                        row["effective_category"],
+                        row["effective_subcategory"],
+                        row["effective_tag_ids"],
+                        row["override_note"],
+                        "manual_override",
+                        timestamp,
+                    ),
+                )
         await conn.commit()
         return cur.rowcount > 0
 
@@ -1215,19 +1511,29 @@ async def update_classification(
     subcategory: str,
     confidence: float,
     tags: List[str],
+    tag_ids: Optional[List[str]],
     provider: str,
     model: str,
     summary_zh: Optional[str] = None,
     keywords: Optional[List[str]] = None,
+    reason: Optional[str] = None,
+    decision_source: Optional[str] = None,
+    rule_candidates: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
+    serialized_tag_ids = json.dumps(tag_ids or [], ensure_ascii=False)
+    serialized_rule_candidates = (
+        json.dumps(rule_candidates, ensure_ascii=False) if rule_candidates is not None else None
+    )
     async with get_connection() as conn:
         if summary_zh is not None or keywords is not None:
             await conn.execute(
                 """
                 UPDATE repos
-                SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?,
-                    ai_provider = ?, ai_model = ?, ai_updated_at = ?, classify_fail_count = 0,
+                SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?, ai_tag_ids = ?,
+                    ai_provider = ?, ai_model = ?, ai_reason = ?, ai_decision_source = ?,
+                    ai_rule_candidates = COALESCE(?, ai_rule_candidates),
+                    ai_updated_at = ?, classify_fail_count = 0,
                     summary_zh = ?, ai_keywords = ?
                 WHERE full_name = ?
                 """,
@@ -1236,8 +1542,12 @@ async def update_classification(
                     subcategory,
                     confidence,
                     json.dumps(tags, ensure_ascii=False),
+                    serialized_tag_ids,
                     provider,
                     model,
+                    reason,
+                    decision_source,
+                    serialized_rule_candidates,
                     timestamp,
                     summary_zh,
                     json.dumps(keywords, ensure_ascii=False) if keywords is not None else None,
@@ -1248,8 +1558,10 @@ async def update_classification(
             await conn.execute(
                 """
                 UPDATE repos
-                SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?,
-                    ai_provider = ?, ai_model = ?, ai_updated_at = ?, classify_fail_count = 0
+                SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?, ai_tag_ids = ?,
+                    ai_provider = ?, ai_model = ?, ai_reason = ?, ai_decision_source = ?,
+                    ai_rule_candidates = COALESCE(?, ai_rule_candidates),
+                    ai_updated_at = ?, classify_fail_count = 0
                 WHERE full_name = ?
                 """,
                 (
@@ -1257,8 +1569,12 @@ async def update_classification(
                     subcategory,
                     confidence,
                     json.dumps(tags, ensure_ascii=False),
+                    serialized_tag_ids,
                     provider,
                     model,
+                    reason,
+                    decision_source,
+                    serialized_rule_candidates,
                     timestamp,
                     full_name,
                 ),
@@ -1281,14 +1597,19 @@ async def update_classifications_bulk(items: List[Dict[str, Any]]) -> int:
         if not full_name:
             continue
         keywords = item.get("keywords")
+        rule_candidates = item.get("rule_candidates")
         rows.append(
             (
                 item.get("category"),
                 item.get("subcategory"),
                 item.get("confidence", 0.0),
                 json.dumps(item.get("tags") or [], ensure_ascii=False),
+                json.dumps(item.get("tag_ids") or [], ensure_ascii=False),
                 item.get("provider"),
                 item.get("model"),
+                item.get("reason"),
+                item.get("decision_source"),
+                json.dumps(rule_candidates, ensure_ascii=False) if rule_candidates is not None else None,
                 timestamp,
                 item.get("summary_zh"),
                 json.dumps(keywords, ensure_ascii=False) if keywords is not None else None,
@@ -1302,8 +1623,10 @@ async def update_classifications_bulk(items: List[Dict[str, Any]]) -> int:
             await conn.executemany(
                 """
                 UPDATE repos
-                SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?,
-                    ai_provider = ?, ai_model = ?, ai_updated_at = ?, classify_fail_count = 0,
+                SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?, ai_tag_ids = ?,
+                    ai_provider = ?, ai_model = ?, ai_reason = ?, ai_decision_source = ?,
+                    ai_rule_candidates = COALESCE(?, ai_rule_candidates),
+                    ai_updated_at = ?, classify_fail_count = 0,
                     summary_zh = ?, ai_keywords = ?
                 WHERE full_name = ?
                 """,
@@ -1449,8 +1772,9 @@ async def select_repos_for_classification(
                 full_name, name, owner, html_url, description, language,
                 stargazers_count, forks_count, topics, pushed_at, updated_at, starred_at,
                 star_users,
-                category, subcategory, ai_confidence, ai_tags, ai_provider, ai_model,
-                ai_updated_at, override_category, override_subcategory, override_tags,
+                category, subcategory, ai_confidence, ai_tags, ai_tag_ids, ai_provider, ai_model,
+                ai_reason, ai_decision_source, ai_rule_candidates, ai_updated_at,
+                override_category, override_subcategory, override_tags, override_tag_ids,
                 override_note, readme_summary, readme_fetched_at, readme_last_attempt_at,
                 readme_failures, readme_empty,
                 summary_zh, ai_keywords, override_summary_zh, override_keywords
@@ -1670,3 +1994,308 @@ async def get_repo_stats() -> Dict[str, Any]:
         "tags": tag_counts,
         "users": user_counts,
     }
+
+
+def _safe_json_dict(value: Optional[str]) -> Dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        loaded = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(loaded, dict):
+        return loaded
+    return {}
+
+
+async def get_user_preferences(user_id: str = "global") -> Dict[str, Any]:
+    normalized = str(user_id or "global").strip() or "global"
+    async with get_connection() as conn:
+        row = await (await conn.execute(
+            """
+            SELECT user_id, tag_mapping_json, rule_priority_json, updated_at
+            FROM user_preferences
+            WHERE user_id = ?
+            """,
+            (normalized,),
+        )).fetchone()
+    if not row:
+        return {
+            "user_id": normalized,
+            "tag_mapping": {},
+            "rule_priority": {},
+            "updated_at": None,
+        }
+    return {
+        "user_id": row["user_id"],
+        "tag_mapping": _safe_json_dict(row["tag_mapping_json"]),
+        "rule_priority": _safe_json_dict(row["rule_priority_json"]),
+        "updated_at": row["updated_at"],
+    }
+
+
+@_retry_on_lock()
+async def update_user_preferences(
+    user_id: str,
+    tag_mapping: Optional[Dict[str, str]] = None,
+    rule_priority: Optional[Dict[str, int]] = None,
+) -> Dict[str, Any]:
+    normalized = str(user_id or "global").strip() or "global"
+    current = await get_user_preferences(normalized)
+    merged_tag_mapping = dict(current.get("tag_mapping") or {})
+    merged_rule_priority = dict(current.get("rule_priority") or {})
+    if tag_mapping is not None:
+        merged_tag_mapping = {
+            str(k): str(v)
+            for k, v in tag_mapping.items()
+            if str(k).strip() and str(v).strip()
+        }
+    if rule_priority is not None:
+        filtered: Dict[str, int] = {}
+        for key, value in rule_priority.items():
+            k = str(key).strip()
+            if not k:
+                continue
+            try:
+                filtered[k] = int(value)
+            except (TypeError, ValueError):
+                continue
+        merged_rule_priority = filtered
+
+    timestamp = datetime.now(timezone.utc).isoformat()
+    async with get_connection() as conn:
+        await conn.execute(
+            """
+            INSERT INTO user_preferences (user_id, tag_mapping_json, rule_priority_json, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                tag_mapping_json = excluded.tag_mapping_json,
+                rule_priority_json = excluded.rule_priority_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                normalized,
+                json.dumps(merged_tag_mapping, ensure_ascii=False),
+                json.dumps(merged_rule_priority, ensure_ascii=False),
+                timestamp,
+            ),
+        )
+        await conn.commit()
+
+    return {
+        "user_id": normalized,
+        "tag_mapping": merged_tag_mapping,
+        "rule_priority": merged_rule_priority,
+        "updated_at": timestamp,
+    }
+
+
+def _extract_interest_terms(payload: Dict[str, Any]) -> Dict[str, float]:
+    terms: Dict[str, float] = {}
+    tags = payload.get("tags")
+    if isinstance(tags, list):
+        for tag in tags:
+            token = str(tag).strip().lower()
+            if token:
+                terms[token] = terms.get(token, 0.0) + 2.0
+    category = str(payload.get("category") or "").strip().lower()
+    if category:
+        terms[category] = terms.get(category, 0.0) + 1.5
+    subcategory = str(payload.get("subcategory") or "").strip().lower()
+    if subcategory:
+        terms[subcategory] = terms.get(subcategory, 0.0) + 1.2
+    keywords = payload.get("keywords")
+    if isinstance(keywords, list):
+        for item in keywords:
+            token = str(item).strip().lower()
+            if token:
+                terms[token] = terms.get(token, 0.0) + 1.0
+    query = str(payload.get("query") or "").strip().lower()
+    if query:
+        for token in re.split(r"[^\w\u4e00-\u9fff]+", query):
+            normalized = token.strip()
+            if normalized:
+                terms[normalized] = terms.get(normalized, 0.0) + 0.6
+    return terms
+
+
+async def _load_repo_interest_payload(conn: aiosqlite.Connection, full_name: str) -> Dict[str, Any]:
+    row = await (await conn.execute(
+        """
+        SELECT
+            COALESCE(NULLIF(override_category, ''), category) AS category,
+            COALESCE(NULLIF(override_subcategory, ''), subcategory) AS subcategory,
+            COALESCE(NULLIF(override_tags, ''), ai_tags) AS tags,
+            COALESCE(NULLIF(override_keywords, ''), ai_keywords) AS keywords
+        FROM repos
+        WHERE full_name = ?
+        """,
+        (full_name,),
+    )).fetchone()
+    if not row:
+        return {}
+    return {
+        "category": row["category"],
+        "subcategory": row["subcategory"],
+        "tags": _load_json_list(row["tags"]),
+        "keywords": _load_json_list(row["keywords"]),
+    }
+
+
+@_retry_on_lock()
+async def record_user_feedback_event(
+    user_id: str,
+    event_type: str,
+    query: Optional[str] = None,
+    full_name: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = None,
+) -> None:
+    normalized_user = str(user_id or "global").strip() or "global"
+    normalized_event = str(event_type or "").strip().lower()
+    if normalized_event not in ("search", "click"):
+        return
+    timestamp = datetime.now(timezone.utc).isoformat()
+    payload_obj = dict(payload or {})
+    if query and not payload_obj.get("query"):
+        payload_obj["query"] = query
+
+    async with get_connection() as conn:
+        if normalized_event == "click" and full_name:
+            repo_payload = await _load_repo_interest_payload(conn, full_name)
+            for key, value in repo_payload.items():
+                payload_obj.setdefault(key, value)
+
+        await conn.execute(
+            """
+            INSERT INTO user_feedback_events (user_id, event_type, query, full_name, payload, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                normalized_user,
+                normalized_event,
+                query,
+                full_name,
+                json.dumps(payload_obj, ensure_ascii=False),
+                timestamp,
+            ),
+        )
+
+        current_profile_row = await (await conn.execute(
+            """
+            SELECT topic_scores
+            FROM user_interest_profiles
+            WHERE user_id = ?
+            """,
+            (normalized_user,),
+        )).fetchone()
+        current_scores = _safe_json_dict(current_profile_row["topic_scores"]) if current_profile_row else {}
+        updated_scores: Dict[str, float] = {}
+        for key, value in current_scores.items():
+            try:
+                updated_scores[str(key)] = float(value) * 0.98
+            except (TypeError, ValueError):
+                continue
+        for term, inc in _extract_interest_terms(payload_obj).items():
+            updated_scores[term] = updated_scores.get(term, 0.0) + float(inc)
+        # keep profile compact
+        top_items = sorted(updated_scores.items(), key=lambda item: item[1], reverse=True)[:200]
+        compact_scores = {k: round(v, 4) for k, v in top_items if v > 0}
+
+        await conn.execute(
+            """
+            INSERT INTO user_interest_profiles (user_id, topic_scores, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                topic_scores = excluded.topic_scores,
+                updated_at = excluded.updated_at
+            """,
+            (
+                normalized_user,
+                json.dumps(compact_scores, ensure_ascii=False),
+                timestamp,
+            ),
+        )
+        await conn.commit()
+
+
+async def get_user_interest_profile(user_id: str = "global") -> Dict[str, Any]:
+    normalized = str(user_id or "global").strip() or "global"
+    async with get_connection() as conn:
+        row = await (await conn.execute(
+            """
+            SELECT user_id, topic_scores, updated_at
+            FROM user_interest_profiles
+            WHERE user_id = ?
+            """,
+            (normalized,),
+        )).fetchone()
+    if not row:
+        return {"user_id": normalized, "topic_scores": {}, "top_topics": [], "updated_at": None}
+    scores = _safe_json_dict(row["topic_scores"])
+    normalized_scores: Dict[str, float] = {}
+    for key, value in scores.items():
+        try:
+            normalized_scores[str(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    top_topics = sorted(normalized_scores.items(), key=lambda item: item[1], reverse=True)[:20]
+    return {
+        "user_id": row["user_id"],
+        "topic_scores": normalized_scores,
+        "top_topics": [{"topic": key, "score": score} for key, score in top_topics],
+        "updated_at": row["updated_at"],
+    }
+
+
+async def list_training_samples(
+    user_id: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    clauses = []
+    params: List[Any] = []
+    if user_id:
+        clauses.append("(user_id = ? OR user_id IS NULL)")
+        params.append(str(user_id))
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    async with get_connection() as conn:
+        rows = await (await conn.execute(
+            f"""
+            SELECT
+                id,
+                user_id,
+                full_name,
+                before_category,
+                before_subcategory,
+                before_tag_ids,
+                after_category,
+                after_subcategory,
+                after_tag_ids,
+                note,
+                source,
+                created_at
+            FROM training_samples
+            {where_sql}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            params + [limit],
+        )).fetchall()
+    output: List[Dict[str, Any]] = []
+    for row in rows:
+        output.append(
+            {
+                "id": row["id"],
+                "user_id": row["user_id"],
+                "full_name": row["full_name"],
+                "before_category": row["before_category"],
+                "before_subcategory": row["before_subcategory"],
+                "before_tag_ids": _load_json_list(row["before_tag_ids"]),
+                "after_category": row["after_category"],
+                "after_subcategory": row["after_subcategory"],
+                "after_tag_ids": _load_json_list(row["after_tag_ids"]),
+                "note": row["note"],
+                "source": row["source"],
+                "created_at": row["created_at"],
+            }
+        )
+    return output

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import secrets
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,6 +23,8 @@ from .db import (
     count_unclassified_repos,
     count_repos_for_classification,
     create_task,
+    get_user_interest_profile,
+    get_user_preferences,
     get_repo_stats,
     get_repo,
     get_task,
@@ -40,10 +43,13 @@ from .db import (
     record_readme_fetches,
     reset_classify_fail_count,
     reset_stale_tasks,
+    record_user_feedback_event,
     select_repos_for_classification,
+    list_training_samples,
     update_task,
     update_classification,
     update_classifications_bulk,
+    update_user_preferences,
     update_override,
     update_sync_status,
     upsert_repos,
@@ -51,8 +57,10 @@ from .db import (
 from .github import GitHubClient
 from .models import RepoBase
 from .ai_client import AIClient
-from .taxonomy import load_taxonomy, validate_classification
-from .rules import load_rules, match_rule
+from .taxonomy import load_taxonomy, normalize_tags_to_ids
+from .rules import load_rules
+from .classification.engine import ClassificationEngine
+from .classification.decision import DecisionPolicy
 from .settings_store import write_settings
 from .export import generate_obsidian_zip, generate_obsidian_zip_streaming
 import httpx
@@ -82,6 +90,34 @@ def _env_int(name: str, default: int, minimum: int | None = None) -> int:
         )
         return default
     return value
+
+
+def _env_float(name: str, default: float, minimum: float | None = None, maximum: float | None = None) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logging.getLogger("starsorty.api").warning(
+            "Invalid %s=%r, fallback to %s",
+            name,
+            raw,
+            default,
+        )
+        return default
+    if minimum is not None and value < minimum:
+        return default
+    if maximum is not None and value > maximum:
+        return default
+    return value
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
 API_SEMAPHORE_LIMIT = _env_int("API_SEMAPHORE_LIMIT", 5, minimum=1)
@@ -128,10 +164,10 @@ TAG_FILTER_COUNT_MAX = _env_int("TAG_FILTER_COUNT_MAX", 20, minimum=1)
 CLASSIFY_BATCH_DELAY_MS = _env_int("CLASSIFY_BATCH_DELAY_MS", 0, minimum=0)
 AI_CLASSIFY_BATCH_SIZE = _env_int("AI_CLASSIFY_BATCH_SIZE", 5, minimum=1)
 CLASSIFY_REMAINING_REFRESH_EVERY = _env_int("CLASSIFY_REMAINING_REFRESH_EVERY", 5, minimum=1)
-AI_BATCH_FALLBACK = (
-    os.getenv("AI_BATCH_FALLBACK", "1").strip().lower()
-    not in ("0", "false", "no")
-)
+CLASSIFY_ENGINE_V2_ENABLED = _env_bool("CLASSIFY_ENGINE_V2_ENABLED", True)
+SEARCH_RANKER_V2_ENABLED = _env_bool("SEARCH_RANKER_V2_ENABLED", True)
+RULE_DIRECT_THRESHOLD = _env_float("RULE_DIRECT_THRESHOLD", 0.88, minimum=0.0, maximum=1.0)
+RULE_AI_THRESHOLD = _env_float("RULE_AI_THRESHOLD", 0.45, minimum=0.0, maximum=1.0)
 
 _init_settings = get_settings()
 origins: List[str] = [origin.strip() for origin in _init_settings.cors_origins.split(",") if origin.strip()]
@@ -161,6 +197,16 @@ classification_state = {
     "batch_size": 0,
     "concurrency": 0,
     "task_id": None,
+}
+quality_metrics_lock = asyncio.Lock()
+quality_metrics = {
+    "classification_total": 0,
+    "rule_hit_total": 0,
+    "ai_fallback_total": 0,
+    "empty_tag_total": 0,
+    "uncategorized_total": 0,
+    "search_total": 0,
+    "search_zero_result_total": 0,
 }
 
 _admin_token_warned = False
@@ -298,17 +344,23 @@ class RepoOut(BaseModel):
     category: str | None
     subcategory: str | None
     tags: List[str]
+    tag_ids: List[str] = Field(default_factory=list)
     ai_category: str | None
     ai_subcategory: str | None
     ai_confidence: float | None
     ai_tags: List[str]
+    ai_tag_ids: List[str] = Field(default_factory=list)
     ai_keywords: List[str]
     ai_provider: str | None
     ai_model: str | None
+    ai_reason: str | None = None
+    ai_decision_source: str | None = None
+    ai_rule_candidates: List[Dict[str, object]] = Field(default_factory=list)
     ai_updated_at: str | None
     override_category: str | None
     override_subcategory: str | None
     override_tags: List[str]
+    override_tag_ids: List[str] = Field(default_factory=list)
     override_note: str | None
     override_summary_zh: str | None
     override_keywords: List[str]
@@ -319,6 +371,8 @@ class RepoOut(BaseModel):
     starred_at: str | None
     summary_zh: str | None
     keywords: List[str]
+    search_score: float | None = None
+    match_reasons: List[str] = Field(default_factory=list)
 
 
 class RepoListResponse(BaseModel):
@@ -330,6 +384,7 @@ class OverrideRequest(BaseModel):
     category: Optional[str] = None
     subcategory: Optional[str] = None
     tags: Optional[List[str]] = None
+    tag_ids: Optional[List[str]] = None
     note: Optional[str] = None
 
 
@@ -353,6 +408,7 @@ class ClassifyRequest(BaseModel):
     limit: int = Field(default=20, ge=0)
     force: bool = False
     include_readme: bool = True
+    preference_user: Optional[str] = "global"
 
 
 class ClassifyResponse(BaseModel):
@@ -387,6 +443,80 @@ class BackgroundClassifyStatusResponse(BaseModel):
     task_id: str | None = None
 
 
+class UserPreferencesRequest(BaseModel):
+    tag_mapping: Optional[Dict[str, str]] = None
+    rule_priority: Optional[Dict[str, int]] = None
+
+
+class UserPreferencesResponse(BaseModel):
+    user_id: str
+    tag_mapping: Dict[str, str]
+    rule_priority: Dict[str, int]
+    updated_at: str | None = None
+
+
+class SearchFeedbackRequest(BaseModel):
+    user_id: str = "global"
+    query: str
+    results_count: int = Field(default=0, ge=0)
+    selected_tags: List[str] = Field(default_factory=list)
+    category: Optional[str] = None
+    subcategory: Optional[str] = None
+
+
+class ClickFeedbackRequest(BaseModel):
+    user_id: str = "global"
+    full_name: str
+    query: Optional[str] = None
+
+
+class FeedbackResponse(BaseModel):
+    ok: bool
+
+
+class InterestTopicItem(BaseModel):
+    topic: str
+    score: float
+
+
+class InterestProfileResponse(BaseModel):
+    user_id: str
+    topic_scores: Dict[str, float]
+    top_topics: List[InterestTopicItem]
+    updated_at: str | None = None
+
+
+class TrainingSampleItem(BaseModel):
+    id: int
+    user_id: str | None = None
+    full_name: str
+    before_category: str | None = None
+    before_subcategory: str | None = None
+    before_tag_ids: List[str] = Field(default_factory=list)
+    after_category: str | None = None
+    after_subcategory: str | None = None
+    after_tag_ids: List[str] = Field(default_factory=list)
+    note: str | None = None
+    source: str | None = None
+    created_at: str
+
+
+class TrainingSamplesResponse(BaseModel):
+    items: List[TrainingSampleItem]
+    total: int
+
+
+class FewShotItem(BaseModel):
+    input: Dict[str, object]
+    output: Dict[str, object]
+    note: Optional[str] = None
+
+
+class FewShotResponse(BaseModel):
+    items: List[FewShotItem]
+    total: int
+
+
 class ReadmeResponse(BaseModel):
     updated: bool
     summary: str
@@ -397,9 +527,16 @@ class TaxonomyCategory(BaseModel):
     subcategories: List[str] = Field(default_factory=list)
 
 
+class TaxonomyTagDef(BaseModel):
+    id: str
+    zh: str
+    group: str
+
+
 class TaxonomyResponse(BaseModel):
     categories: List[TaxonomyCategory]
     tags: List[str]
+    tag_defs: List[TaxonomyTagDef] = Field(default_factory=list)
 
 
 class SettingsResponse(BaseModel):
@@ -466,6 +603,9 @@ def _repos_cache_key(
     subcategory: Optional[str],
     tag: Optional[str],
     tags: Optional[str],
+    tag_mode: str,
+    sort: str,
+    user_id: str,
     star_user: Optional[str],
     limit: int,
     offset: int,
@@ -478,6 +618,9 @@ def _repos_cache_key(
         "subcategory": subcategory,
         "tag": tag,
         "tags": tags,
+        "tag_mode": tag_mode,
+        "sort": sort,
+        "user_id": user_id,
         "star_user": star_user,
         "limit": limit,
         "offset": offset,
@@ -490,6 +633,71 @@ def _normalized_optional(value: Optional[str]) -> Optional[str]:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _normalize_preference_user(value: Optional[str]) -> str:
+    normalized = str(value or "global").strip()
+    return normalized or "global"
+
+
+def _apply_rule_priority_overrides(
+    rules: List[Dict[str, object]],
+    preference: Dict[str, object],
+) -> List[Dict[str, object]]:
+    priority_map_raw = preference.get("rule_priority") if isinstance(preference, dict) else {}
+    if not isinstance(priority_map_raw, dict) or not priority_map_raw:
+        return list(rules)
+    adjusted: List[Dict[str, object]] = []
+    for rule in rules:
+        copied = dict(rule)
+        rule_id = str(copied.get("rule_id") or "").strip()
+        delta = priority_map_raw.get(rule_id)
+        if delta is not None:
+            try:
+                copied["priority"] = int(copied.get("priority", 0)) + int(delta)
+            except (TypeError, ValueError):
+                pass
+        adjusted.append(copied)
+    return adjusted
+
+
+def _resolve_tag_mapping(
+    taxonomy: dict,
+    preference: Dict[str, object],
+) -> Dict[str, str]:
+    mapping_raw = preference.get("tag_mapping") if isinstance(preference, dict) else {}
+    if not isinstance(mapping_raw, dict):
+        return {}
+    tag_mapping: Dict[str, str] = {}
+    for source, target in mapping_raw.items():
+        source_ids = normalize_tags_to_ids([str(source)], taxonomy)
+        target_ids = normalize_tags_to_ids([str(target)], taxonomy)
+        if not source_ids or not target_ids:
+            continue
+        tag_mapping[source_ids[0]] = target_ids[0]
+    return tag_mapping
+
+
+def _apply_tag_mapping_to_result(result: Dict[str, object], mapping: Dict[str, str], taxonomy: dict) -> Dict[str, object]:
+    if not mapping:
+        return result
+    tag_ids = [str(v) for v in (result.get("tag_ids") or []) if str(v).strip()]
+    if not tag_ids:
+        tag_ids = normalize_tags_to_ids([str(v) for v in (result.get("tags") or [])], taxonomy)
+    remapped: List[str] = []
+    seen: set[str] = set()
+    for tag_id in tag_ids:
+        mapped = mapping.get(tag_id, tag_id)
+        if mapped in seen:
+            continue
+        seen.add(mapped)
+        remapped.append(mapped)
+    tag_id_to_name = taxonomy.get("tag_id_to_name") or {}
+    mapped_tags = [tag_id_to_name.get(tag_id, tag_id) for tag_id in remapped]
+    updated = dict(result)
+    updated["tag_ids"] = remapped
+    updated["tags"] = mapped_tags
+    return updated
 
 
 async def _register_task(
@@ -737,6 +945,9 @@ async def repos(
     subcategory: Optional[str] = None,
     tag: Optional[str] = None,
     tags: Optional[str] = None,
+    tag_mode: str = Query(default="or", pattern="^(and|or)$"),
+    sort: str = Query(default="stars", pattern="^(relevance|stars|updated)$"),
+    user_id: str = Query(default="global"),
     star_user: Optional[str] = None,
     limit: int = Query(default=50, ge=1, le=REPOS_PAGE_LIMIT_MAX),
     offset: int = Query(default=0, ge=0),
@@ -747,6 +958,11 @@ async def repos(
     subcategory = _normalized_optional(subcategory)
     tag = _normalized_optional(tag)
     star_user = _normalized_optional(star_user)
+    tag_mode = (tag_mode or "or").strip().lower()
+    sort = (sort or "stars").strip().lower()
+    user_id = _normalize_preference_user(user_id)
+    if not SEARCH_RANKER_V2_ENABLED and sort == "relevance":
+        sort = "stars"
 
     tag_list = None
     normalized_tags = None
@@ -764,6 +980,9 @@ async def repos(
         subcategory=subcategory,
         tag=tag,
         tags=normalized_tags,
+        tag_mode=tag_mode,
+        sort=sort,
+        user_id=user_id,
         star_user=star_user,
         limit=limit,
         offset=offset,
@@ -771,6 +990,8 @@ async def repos(
     cached = await cache.get(cache_key)
     if cached is not None:
         return RepoListResponse(**cached)
+    profile = await get_user_interest_profile(user_id)
+    topic_scores = profile.get("topic_scores") if isinstance(profile, dict) else {}
     total, items = await list_repos(
         q=q,
         language=language,
@@ -779,10 +1000,18 @@ async def repos(
         subcategory=subcategory,
         tag=tag,
         tags=tag_list,
+        tag_mode=tag_mode,
+        sort=sort,
+        topic_scores=topic_scores if isinstance(topic_scores, dict) else None,
         star_user=star_user,
         limit=limit,
         offset=offset,
     )
+    if q:
+        await _add_quality_metrics(
+            search_total=1,
+            search_zero_result_total=1 if total == 0 else 0,
+        )
     items_payload: List[dict] = []
     for item in items:
         payload = item.model_dump() if isinstance(item, RepoBase) else item
@@ -881,6 +1110,11 @@ async def repo_override(full_name: str, payload: OverrideRequest) -> OverrideRes
             updates["tags"] = None
         else:
             updates["tags"] = [tag for tag in payload.tags if str(tag).strip()]
+    if "tag_ids" in fields:
+        if payload.tag_ids is None:
+            updates["tag_ids"] = None
+        else:
+            updates["tag_ids"] = [tag for tag in payload.tag_ids if str(tag).strip()]
     if "note" in fields:
         if payload.note is not None and not str(payload.note).strip():
             raise HTTPException(status_code=400, detail="note cannot be empty")
@@ -939,7 +1173,119 @@ async def repo_readme(full_name: str) -> ReadmeResponse:
 async def taxonomy() -> TaxonomyResponse:
     current = get_settings()
     data = load_taxonomy(current.ai_taxonomy_path)
-    return TaxonomyResponse(categories=data.get("categories", []), tags=data.get("tags", []))
+    return TaxonomyResponse(
+        categories=data.get("categories", []),
+        tags=data.get("tags", []),
+        tag_defs=data.get("tag_defs", []),
+    )
+
+
+@app.get("/preferences/{user_id}", response_model=UserPreferencesResponse)
+async def get_preferences(user_id: str) -> UserPreferencesResponse:
+    preference = await get_user_preferences(_normalize_preference_user(user_id))
+    return UserPreferencesResponse(**preference)
+
+
+@app.patch(
+    "/preferences/{user_id}",
+    response_model=UserPreferencesResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def patch_preferences(user_id: str, payload: UserPreferencesRequest) -> UserPreferencesResponse:
+    updated = await update_user_preferences(
+        _normalize_preference_user(user_id),
+        tag_mapping=payload.tag_mapping,
+        rule_priority=payload.rule_priority,
+    )
+    return UserPreferencesResponse(**updated)
+
+
+@app.post("/feedback/search", response_model=FeedbackResponse)
+@limiter.limit(RATE_LIMIT_DEFAULT)
+async def feedback_search(request: Request, payload: SearchFeedbackRequest) -> FeedbackResponse:
+    await record_user_feedback_event(
+        user_id=_normalize_preference_user(payload.user_id),
+        event_type="search",
+        query=payload.query,
+        payload={
+            "query": payload.query,
+            "results_count": payload.results_count,
+            "tags": payload.selected_tags,
+            "category": payload.category,
+            "subcategory": payload.subcategory,
+        },
+    )
+    return FeedbackResponse(ok=True)
+
+
+@app.post("/feedback/click", response_model=FeedbackResponse)
+@limiter.limit(RATE_LIMIT_DEFAULT)
+async def feedback_click(request: Request, payload: ClickFeedbackRequest) -> FeedbackResponse:
+    await record_user_feedback_event(
+        user_id=_normalize_preference_user(payload.user_id),
+        event_type="click",
+        query=payload.query,
+        full_name=payload.full_name,
+        payload={
+            "query": payload.query,
+        },
+    )
+    return FeedbackResponse(ok=True)
+
+
+@app.get("/interest/{user_id}", response_model=InterestProfileResponse)
+async def interest_profile(user_id: str) -> InterestProfileResponse:
+    profile = await get_user_interest_profile(_normalize_preference_user(user_id))
+    return InterestProfileResponse(**profile)
+
+
+@app.get(
+    "/training/samples",
+    response_model=TrainingSamplesResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def training_samples(
+    user_id: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> TrainingSamplesResponse:
+    items = await list_training_samples(_normalized_optional(user_id), limit=limit)
+    return TrainingSamplesResponse(items=[TrainingSampleItem(**item) for item in items], total=len(items))
+
+
+@app.get(
+    "/training/fewshot",
+    response_model=FewShotResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def training_fewshot(
+    user_id: Optional[str] = None,
+    limit: int = Query(default=50, ge=1, le=500),
+) -> FewShotResponse:
+    samples = await list_training_samples(_normalized_optional(user_id), limit=limit)
+    items: List[FewShotItem] = []
+    for sample in samples:
+        repo = await get_repo(sample["full_name"])
+        if not repo:
+            continue
+        repo_payload = repo.model_dump() if isinstance(repo, RepoBase) else dict(repo)
+        items.append(
+            FewShotItem(
+                input={
+                    "full_name": repo_payload.get("full_name"),
+                    "name": repo_payload.get("name"),
+                    "description": repo_payload.get("description"),
+                    "topics": repo_payload.get("topics") or [],
+                    "readme_summary": repo_payload.get("readme_summary"),
+                },
+                output={
+                    "category": sample.get("after_category"),
+                    "subcategory": sample.get("after_subcategory"),
+                    "tag_ids": sample.get("after_tag_ids") or [],
+                },
+                note=sample.get("note"),
+            )
+        )
+    return FewShotResponse(items=items, total=len(items))
 
 
 async def _update_classification_state(**updates: object) -> None:
@@ -950,6 +1296,27 @@ async def _update_classification_state(**updates: object) -> None:
 async def _get_classification_state() -> dict:
     async with classification_lock:
         return dict(classification_state)
+
+
+async def _add_quality_metrics(**delta: int) -> None:
+    async with quality_metrics_lock:
+        for key, value in delta.items():
+            if key not in quality_metrics:
+                continue
+            quality_metrics[key] = int(quality_metrics.get(key, 0) or 0) + int(value or 0)
+
+
+async def _get_quality_metrics() -> dict:
+    async with quality_metrics_lock:
+        data = dict(quality_metrics)
+    classification_total = max(1, int(data.get("classification_total", 0)))
+    search_total = max(1, int(data.get("search_total", 0)))
+    data["rule_hit_rate"] = data.get("rule_hit_total", 0) / classification_total
+    data["ai_fallback_rate"] = data.get("ai_fallback_total", 0) / classification_total
+    data["empty_tag_rate"] = data.get("empty_tag_total", 0) / classification_total
+    data["uncategorized_rate"] = data.get("uncategorized_total", 0) / classification_total
+    data["search_zero_result_rate"] = data.get("search_zero_result_total", 0) / search_total
+    return data
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -1027,42 +1394,52 @@ async def _classify_repo_once(
                     )
             if summary:
                 repo_data["readme_summary"] = summary
-    use_rules = classify_mode != "ai_only"
-    if use_rules:
-        rule = match_rule(repo_data, rules)
-        if rule:
-            validated = validate_classification(
-                {
-                    "category": rule.get("category"),
-                    "subcategory": rule.get("subcategory"),
-                    "tags": rule.get("tags") or [],
-                    "confidence": 1.0,
-                },
-                data,
-            )
-            await update_classification(
-                repo_data["full_name"],
-                validated["category"],
-                validated["subcategory"],
-                validated["confidence"],
-                validated["tags"],
-                "rules",
-                "rules",
-            )
-            return True
-    if not use_ai:
-        return False
-    result = await ai_client.classify_repo_with_retry(repo_data, data, retries=2)
+    if CLASSIFY_ENGINE_V2_ENABLED:
+        policy = DecisionPolicy(
+            direct_rule_threshold=RULE_DIRECT_THRESHOLD,
+            ai_required_threshold=RULE_AI_THRESHOLD,
+        )
+    else:
+        policy = DecisionPolicy(direct_rule_threshold=0.0, ai_required_threshold=1.0)
+    engine = ClassificationEngine(
+        taxonomy=data,
+        rules=rules,
+        classify_mode=classify_mode,
+        use_ai=use_ai,
+        policy=policy,
+    )
+    outcome = await engine.classify_repo(repo_data, ai_client, ai_retries=2)
+    result = outcome.result
+    provider = result.get("provider") if outcome.source == "ai" else "rules"
+    model = result.get("model") if outcome.source == "ai" else "rules"
+    if outcome.source == "manual_review":
+        provider = "manual"
+        model = "manual"
+    rule_candidates = [
+        {
+            "rule_id": candidate.rule_id,
+            "score": candidate.score,
+            "category": candidate.category,
+            "subcategory": candidate.subcategory,
+            "evidence": candidate.evidence,
+            "tag_ids": candidate.tag_ids,
+        }
+        for candidate in outcome.rule_candidates[:5]
+    ]
     await update_classification(
         repo_data["full_name"],
         result["category"],
         result["subcategory"],
         result["confidence"],
         result["tags"],
-        result["provider"],
-        result["model"],
+        result.get("tag_ids"),
+        provider,
+        model,
         summary_zh=result.get("summary_zh"),
         keywords=result.get("keywords"),
+        reason=str(result.get("reason") or outcome.reason or "")[:500],
+        decision_source=outcome.source,
+        rule_candidates=rule_candidates,
     )
     return True
 
@@ -1073,9 +1450,11 @@ async def _classify_repos_batch(
     rules: list,
     classify_mode: str,
     use_ai: bool,
+    preference: dict,
     include_readme: bool,
     github_client: GitHubClient,
     ai_client: AIClient,
+    task_id: str | None = None,
 ) -> tuple[int, int]:
     classified = 0
     failed = 0
@@ -1152,51 +1531,113 @@ async def _classify_repos_batch(
                             full_name,
                         )
 
-    use_rules = classify_mode != "ai_only"
-    pending_ai: list[dict] = []
-    rule_updates: list[dict] = []
+    effective_rules = _apply_rule_priority_overrides(rules, preference)
+    tag_mapping = _resolve_tag_mapping(data, preference)
+
+    if CLASSIFY_ENGINE_V2_ENABLED:
+        policy = DecisionPolicy(
+            direct_rule_threshold=RULE_DIRECT_THRESHOLD,
+            ai_required_threshold=RULE_AI_THRESHOLD,
+        )
+    else:
+        policy = DecisionPolicy(direct_rule_threshold=0.0, ai_required_threshold=1.0)
+    engine = ClassificationEngine(
+        taxonomy=data,
+        rules=effective_rules,
+        classify_mode=classify_mode,
+        use_ai=use_ai,
+        policy=policy,
+    )
+    updates: list[dict] = []
+    metric_classification_total = 0
+    metric_rule_hit_total = 0
+    metric_ai_fallback_total = 0
+    metric_empty_tag_total = 0
+    metric_uncategorized_total = 0
 
     for repo_data in repo_datas:
-        if use_rules:
-            rule = match_rule(repo_data, rules)
-            if rule:
-                validated = validate_classification(
+        full_name = repo_data.get("full_name")
+        if not full_name:
+            failed += 1
+            continue
+        started = time.perf_counter()
+        try:
+            outcome = await engine.classify_repo(repo_data, ai_client, ai_retries=2)
+            result = _apply_tag_mapping_to_result(outcome.result, tag_mapping, data)
+            provider = result.get("provider") if outcome.source == "ai" else "rules"
+            model = result.get("model") if outcome.source == "ai" else "rules"
+            if outcome.source == "manual_review":
+                provider = "manual"
+                model = "manual"
+            updates.append(
+                {
+                    "full_name": full_name,
+                    "category": result["category"],
+                    "subcategory": result["subcategory"],
+                    "confidence": result["confidence"],
+                    "tags": result["tags"],
+                    "tag_ids": result.get("tag_ids") or [],
+                    "provider": provider,
+                    "model": model,
+                    "summary_zh": result.get("summary_zh"),
+                    "keywords": result.get("keywords"),
+                    "reason": str(result.get("reason") or outcome.reason or "")[:500],
+                    "decision_source": outcome.source,
+                    "rule_candidates": [
+                        {
+                            "rule_id": candidate.rule_id,
+                            "score": candidate.score,
+                            "category": candidate.category,
+                            "subcategory": candidate.subcategory,
+                            "evidence": candidate.evidence,
+                            "tag_ids": candidate.tag_ids,
+                        }
+                        for candidate in outcome.rule_candidates[:5]
+                    ],
+                }
+            )
+            metric_classification_total += 1
+            if outcome.source in ("rules", "rules_fallback"):
+                metric_rule_hit_total += 1
+            if outcome.source == "rules_fallback":
+                metric_ai_fallback_total += 1
+            if not result.get("tags"):
+                metric_empty_tag_total += 1
+            if str(result.get("category") or "") in ("uncategorized", "other", ""):
+                metric_uncategorized_total += 1
+            latency_ms = (time.perf_counter() - started) * 1000
+            logger.info(
+                "classification_event %s",
+                json.dumps(
                     {
-                        "category": rule.get("category"),
-                        "subcategory": rule.get("subcategory"),
-                        "tags": rule.get("tags") or [],
-                        "confidence": 1.0,
+                        "task_id": task_id,
+                        "repo": full_name,
+                        "rule_candidates": updates[-1]["rule_candidates"],
+                        "final_decision": {
+                            "source": outcome.source,
+                            "category": result.get("category"),
+                            "subcategory": result.get("subcategory"),
+                            "confidence": result.get("confidence"),
+                        },
+                        "latency_ms": round(latency_ms, 2),
                     },
-                    data,
-                )
-                rule_updates.append(
-                    {
-                        "full_name": repo_data.get("full_name"),
-                        "category": validated["category"],
-                        "subcategory": validated["subcategory"],
-                        "confidence": validated["confidence"],
-                        "tags": validated["tags"],
-                        "provider": "rules",
-                        "model": "rules",
-                    }
-                )
-                continue
-        if use_ai:
-            pending_ai.append(repo_data)
-        else:
+                    ensure_ascii=False,
+                ),
+            )
+        except Exception as exc:
+            logger.warning("Classification failed for %s: %s", full_name, exc)
             failed += 1
 
-    # Bulk write rule classifications
-    if rule_updates:
+    if updates:
         try:
-            await update_classifications_bulk(rule_updates)
-            classified += len(rule_updates)
-            for item in rule_updates:
+            await update_classifications_bulk(updates)
+            classified += len(updates)
+            for item in updates:
                 if item.get("full_name"):
                     success_full_names.add(item["full_name"])
         except Exception as exc:
-            logger.warning("Bulk rule classification update failed: %s", exc)
-            for item in rule_updates:
+            logger.warning("Bulk classification update failed: %s", exc)
+            for item in updates:
                 full_name = item.get("full_name")
                 if not full_name:
                     failed += 1
@@ -1208,111 +1649,19 @@ async def _classify_repos_batch(
                         item["subcategory"],
                         item["confidence"],
                         item["tags"],
+                        item.get("tag_ids"),
                         item["provider"],
                         item["model"],
+                        summary_zh=item.get("summary_zh"),
+                        keywords=item.get("keywords"),
+                        reason=item.get("reason"),
+                        decision_source=item.get("decision_source"),
+                        rule_candidates=item.get("rule_candidates"),
                     )
                     classified += 1
                     success_full_names.add(full_name)
                 except Exception:
                     failed += 1
-
-    # AI classification with fallback
-    if pending_ai:
-        ai_updates: list[dict] = []
-        fallback_targets: list[dict] = []
-        batch_error: Exception | None = None
-        try:
-            results = await ai_client.classify_repos_with_retry(pending_ai, data, retries=2)
-        except Exception as exc:
-            batch_error = exc
-            results = [None for _ in pending_ai]
-
-        for repo_data, result in zip(pending_ai, results):
-            if result:
-                ai_updates.append(
-                    {
-                        "full_name": repo_data.get("full_name"),
-                        "category": result["category"],
-                        "subcategory": result["subcategory"],
-                        "confidence": result["confidence"],
-                        "tags": result["tags"],
-                        "provider": result["provider"],
-                        "model": result["model"],
-                        "summary_zh": result.get("summary_zh"),
-                        "keywords": result.get("keywords"),
-                    }
-                )
-            else:
-                fallback_targets.append(repo_data)
-
-        # Fallback: retry failed items individually
-        if fallback_targets:
-            if AI_BATCH_FALLBACK:
-                if batch_error:
-                    logger.warning(
-                        "AI batch classify failed, falling back to single-repo requests: %s",
-                        batch_error,
-                    )
-                fallback_results = await asyncio.gather(
-                    *(
-                        ai_client.classify_repo_with_retry(repo_data, data, retries=1)
-                        for repo_data in fallback_targets
-                    ),
-                    return_exceptions=True,
-                )
-                for repo_data, result in zip(fallback_targets, fallback_results):
-                    if isinstance(result, Exception) or not result:
-                        failed += 1
-                        continue
-                    ai_updates.append(
-                        {
-                            "full_name": repo_data.get("full_name"),
-                            "category": result["category"],
-                            "subcategory": result["subcategory"],
-                            "confidence": result["confidence"],
-                            "tags": result["tags"],
-                            "provider": result["provider"],
-                            "model": result["model"],
-                            "summary_zh": result.get("summary_zh"),
-                            "keywords": result.get("keywords"),
-                        }
-                    )
-            else:
-                if batch_error:
-                    logger.warning("AI batch classify failed: %s", batch_error)
-                failed += len(fallback_targets)
-
-        # Bulk write AI classifications
-        if ai_updates:
-            try:
-                await update_classifications_bulk(ai_updates)
-                classified += len(ai_updates)
-                for item in ai_updates:
-                    if item.get("full_name"):
-                        success_full_names.add(item["full_name"])
-            except Exception as exc:
-                logger.warning("Bulk AI classification update failed: %s", exc)
-                for item in ai_updates:
-                    full_name = item.get("full_name")
-                    if not full_name:
-                        failed += 1
-                        continue
-                    try:
-                        await update_classification(
-                            full_name,
-                            item["category"],
-                            item["subcategory"],
-                            item["confidence"],
-                            item["tags"],
-                            item["provider"],
-                            item["model"],
-                            summary_zh=item.get("summary_zh"),
-                            keywords=item.get("keywords"),
-                        )
-                        classified += 1
-                        success_full_names.add(full_name)
-                    except Exception:
-                        failed += 1
 
     # Increment fail count for repos that failed classification
     failed_full_names = list(all_full_names - success_full_names)
@@ -1323,6 +1672,15 @@ async def _classify_repos_batch(
         except Exception as exc:
             logger.warning("Failed to increment classify_fail_count: %s", exc)
 
+    if metric_classification_total > 0:
+        await _add_quality_metrics(
+            classification_total=metric_classification_total,
+            rule_hit_total=metric_rule_hit_total,
+            ai_fallback_total=metric_ai_fallback_total,
+            empty_tag_total=metric_empty_tag_total,
+            uncategorized_total=metric_uncategorized_total,
+        )
+
     return (classified, failed)
 
 
@@ -1332,10 +1690,12 @@ async def _classify_repos_concurrent(
     rules: list,
     classify_mode: str,
     use_ai: bool,
+    preference: dict,
     include_readme: bool,
     concurrency: int,
     github_client: GitHubClient,
     ai_client: AIClient,
+    task_id: str | None = None,
 ) -> tuple[int, int]:
     batches = _chunk_repos(repos_to_classify, AI_CLASSIFY_BATCH_SIZE)
     if concurrency <= 1 or len(batches) <= 1:
@@ -1349,9 +1709,11 @@ async def _classify_repos_concurrent(
                     rules,
                     classify_mode,
                     use_ai,
+                    preference,
                     include_readme,
                     github_client,
                     ai_client,
+                    task_id,
                 )
                 classified += batch_classified
                 failed += batch_failed
@@ -1382,9 +1744,11 @@ async def _classify_repos_concurrent(
                     rules,
                     classify_mode,
                     use_ai,
+                    preference,
                     include_readme,
                     github_client,
                     ai_client,
+                    task_id,
                 )
                 async with counter_lock:
                     classified += batch_classified
@@ -1457,6 +1821,8 @@ async def _background_classify_loop(
             return
 
         data = load_taxonomy(current.ai_taxonomy_path)
+        preference_user = _normalize_preference_user(payload.preference_user)
+        preference = await get_user_preferences(preference_user)
         github_client: GitHubClient = app.state.github_client
         ai_client: AIClient = app.state.ai_client
 
@@ -1509,10 +1875,12 @@ async def _background_classify_loop(
                 rules,
                 classify_mode,
                 use_ai,
+                preference,
                 payload.include_readme,
                 concurrency,
                 github_client,
                 ai_client,
+                task_id,
             )
             processed = batch_classified + batch_failed
             success_total += batch_classified
@@ -1608,6 +1976,7 @@ async def classify(request: Request, payload: ClassifyRequest) -> ClassifyRespon
             limit=force_limit,
             force=True,
             include_readme=payload.include_readme,
+            preference_user=payload.preference_user,
             concurrency=DEFAULT_CLASSIFY_CONCURRENCY,
         )
         await _register_task(
@@ -1630,6 +1999,8 @@ async def classify(request: Request, payload: ClassifyRequest) -> ClassifyRespon
     repos_to_classify = await select_repos_for_classification(classify_limit, payload.force)
     rules_path = Path(__file__).resolve().parents[1] / "config" / "rules.json"
     rules = load_rules(current.rules_json, fallback_path=rules_path)
+    preference_user = _normalize_preference_user(payload.preference_user)
+    preference = await get_user_preferences(preference_user)
     try:
         classify_mode, use_ai, warning = _resolve_classify_context(
             current,
@@ -1649,10 +2020,12 @@ async def classify(request: Request, payload: ClassifyRequest) -> ClassifyRespon
         rules,
         classify_mode,
         use_ai,
+        preference,
         payload.include_readme,
         concurrency=1,
         github_client=github_client,
         ai_client=ai_client,
+        task_id=None,
     )
 
     if repos_to_classify:
@@ -1707,6 +2080,11 @@ async def classify_stop() -> dict:
     classification_stop.set()
     await _update_classification_state(last_error="Stopped by user")
     return {"stopped": True}
+
+
+@app.get("/metrics/quality")
+async def quality_metrics_endpoint() -> dict:
+    return await _get_quality_metrics()
 
 
 @app.get("/stats", response_model=StatsResponse)

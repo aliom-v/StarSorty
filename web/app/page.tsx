@@ -22,8 +22,11 @@ type Repo = {
   category?: string | null;
   subcategory?: string | null;
   tags?: string[];
+  tag_ids?: string[];
   summary_zh?: string | null;
   keywords?: string[];
+  search_score?: number | null;
+  match_reasons?: string[];
   pushed_at?: string | null;
   updated_at?: string | null;
   starred_at?: string | null;
@@ -112,10 +115,12 @@ const formatDate = (value?: string | null) => {
 type RepoCardProps = {
   repo: Repo;
   index: number;
+  queryActive: boolean;
+  onRepoClick: (repo: Repo) => void;
   t: (key: keyof Messages, params?: MessageValues) => string;
 };
 
-const RepoCard = memo(function RepoCard({ repo, index, t }: RepoCardProps) {
+const RepoCard = memo(function RepoCard({ repo, index, queryActive, onRepoClick, t }: RepoCardProps) {
   const displayDescription = repo.summary_zh || repo.description;
   return (
     <article
@@ -131,6 +136,7 @@ const RepoCard = memo(function RepoCard({ repo, index, t }: RepoCardProps) {
               target="_blank"
               rel="noreferrer"
               className="transition hover:text-moss"
+              onClick={() => onRepoClick(repo)}
             >
               {repo.name}
             </a>
@@ -151,12 +157,14 @@ const RepoCard = memo(function RepoCard({ repo, index, t }: RepoCardProps) {
             target="_blank"
             rel="noreferrer"
             className="rounded-full border border-ink/10 bg-surface px-3 py-1 text-ink/70 transition hover:border-moss hover:text-moss"
+            onClick={() => onRepoClick(repo)}
           >
             {t("viewOnGithub")}
           </a>
           <a
             href={`/repo/?full_name=${encodeURIComponent(repo.full_name)}`}
             className="rounded-full border border-ink/10 bg-surface px-3 py-1 text-ink/70 transition hover:border-moss hover:text-moss"
+            onClick={() => onRepoClick(repo)}
           >
             {t("details")}
           </a>
@@ -210,6 +218,11 @@ const RepoCard = memo(function RepoCard({ repo, index, t }: RepoCardProps) {
             ))}
           </div>
         )}
+        {queryActive && repo.match_reasons && repo.match_reasons.length > 0 && (
+          <span className="rounded-full border border-ink/10 bg-surface px-2 py-1">
+            {t("matchedByWithValue", { value: repo.match_reasons.join(", ") })}
+          </span>
+        )}
       </div>
     </article>
   );
@@ -247,6 +260,10 @@ export default function Home() {
   const [category, setCategory] = useState<string | null>(null);
   const [subcategory, setSubcategory] = useState<string | null>(null);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagMode, setTagMode] = useState<"or" | "and">("or");
+  const [sortMode, setSortMode] = useState<"relevance" | "stars" | "updated">(
+    "stars"
+  );
   const [minStars, setMinStars] = useState<number | null>(null);
   const [sourceUser, setSourceUser] = useState<string | null>(null);
   const [groupMode, setGroupMode] = useState(false);
@@ -254,6 +271,7 @@ export default function Home() {
   const wasBackgroundRunningRef = useRef(false);
   const activeError = configError || error;
   const unknownErrorMessage = t("unknownError");
+  const activePreferenceUser = sourceUser || "global";
 
   const handleTagToggle = useCallback((tag: string) => {
     setSelectedTags((prev) =>
@@ -267,9 +285,27 @@ export default function Home() {
     setCategory(null);
     setSubcategory(null);
     setSelectedTags([]);
+    setTagMode("or");
+    setSortMode("stars");
     setMinStars(null);
     setSourceUser(null);
   }, []);
+
+  const handleRepoClick = useCallback(
+    (repo: Repo) => {
+      const payload = {
+        user_id: activePreferenceUser,
+        full_name: repo.full_name,
+        query: query || null,
+      };
+      void fetch(`${API_BASE_URL}/feedback/click`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }).catch(() => {});
+    },
+    [activePreferenceUser, query]
+  );
 
   const loadStatus = useCallback(async () => {
     setError(null);
@@ -424,6 +460,9 @@ export default function Home() {
       if (category) params.set("category", category);
       if (subcategory) params.set("subcategory", subcategory);
       if (selectedTags.length > 0) params.set("tags", selectedTags.join(","));
+      params.set("tag_mode", tagMode);
+      params.set("sort", sortMode);
+      params.set("user_id", activePreferenceUser);
       if (minStars) params.set("min_stars", String(minStars));
       if (sourceUser) params.set("star_user", sourceUser);
 
@@ -447,6 +486,21 @@ export default function Home() {
         return [...prev, ...newItems];
       });
       setHasMore(offset + items.length < total);
+
+      if (!append && query) {
+        void fetch(`${API_BASE_URL}/feedback/search`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: activePreferenceUser,
+            query,
+            results_count: total,
+            selected_tags: selectedTags,
+            category,
+            subcategory,
+          }),
+        }).catch(() => {});
+      }
     } catch (err) {
       if (reposRequestIdRef.current !== requestId) return;
       const message = getErrorMessage(err, unknownErrorMessage);
@@ -456,7 +510,7 @@ export default function Home() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [category, minStars, query, selectedTags, sourceUser, subcategory, unknownErrorMessage]);
+  }, [activePreferenceUser, category, minStars, query, selectedTags, sourceUser, subcategory, tagMode, sortMode, unknownErrorMessage]);
 
   const handleMissingTaskRecovery = useCallback(async () => {
     pollTargetIdRef.current = null;
@@ -694,7 +748,7 @@ export default function Home() {
 
   useEffect(() => {
     loadRepos(false);
-  }, [category, loadRepos, minStars, query, selectedTags, sourceUser, subcategory]);
+  }, [category, loadRepos, minStars, query, selectedTags, sourceUser, subcategory, tagMode, sortMode]);
 
   useEffect(() => {
     if (!actionMessage) return;
@@ -1201,6 +1255,9 @@ export default function Home() {
                   <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
                     {t("selectedTags")}
                   </p>
+                  <p className="mt-1 text-xs text-ink/50">
+                    {t("tagFilterModeWithValue", { value: tagMode.toUpperCase() })}
+                  </p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {selectedTags.map((tag) => (
                       <button
@@ -1222,6 +1279,36 @@ export default function Home() {
                   </div>
                 </div>
               )}
+
+              <div className="mt-4 rounded-2xl border border-ink/10 bg-surface/70 p-3">
+                <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
+                  {t("tagFilterMode")}
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    className={`rounded-full px-3 py-1 text-xs transition ${
+                      tagMode === "or"
+                        ? "bg-moss text-white"
+                        : "border border-ink/10 bg-surface text-ink/70 hover:border-moss hover:text-moss"
+                    }`}
+                    onClick={() => setTagMode("or")}
+                  >
+                    OR
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded-full px-3 py-1 text-xs transition ${
+                      tagMode === "and"
+                        ? "bg-moss text-white"
+                        : "border border-ink/10 bg-surface text-ink/70 hover:border-moss hover:text-moss"
+                    }`}
+                    onClick={() => setTagMode("and")}
+                  >
+                    AND
+                  </button>
+                </div>
+              </div>
 
               <div className="mt-6 space-y-4">
                 {tagGroupsWithCounts.map((group) => (
@@ -1313,6 +1400,17 @@ export default function Home() {
                 >
                   {t("search")}
                 </button>
+                <select
+                  className="rounded-full border border-ink/10 bg-surface px-4 py-3 text-sm text-ink/80 outline-none focus:border-moss"
+                  value={sortMode}
+                  onChange={(event) =>
+                    setSortMode(event.target.value as "relevance" | "stars" | "updated")
+                  }
+                >
+                  <option value="stars">{t("sortStars")}</option>
+                  <option value="updated">{t("sortUpdated")}</option>
+                  <option value="relevance">{t("sortRelevance")}</option>
+                </select>
               </div>
               {activeError && (
                 <p className="mt-3 text-xs text-copper">
@@ -1343,7 +1441,14 @@ export default function Home() {
                 </div>
               )}
               {repos.map((repo, index) => (
-                <RepoCard key={repo.full_name} repo={repo} index={index} t={t} />
+                <RepoCard
+                  key={repo.full_name}
+                  repo={repo}
+                  index={index}
+                  queryActive={!!query}
+                  onRepoClick={handleRepoClick}
+                  t={t}
+                />
               ))}
             </div>
             {hasMore && (

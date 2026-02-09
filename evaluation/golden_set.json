@@ -1,0 +1,29 @@
+[
+  {
+    "full_name": "example/open-webui",
+    "expected": {
+      "category": "ai",
+      "subcategory": "llm",
+      "tags": ["Web应用", "LLM", "自托管"]
+    },
+    "query_samples": ["openai web ui", "llm self hosted"]
+  },
+  {
+    "full_name": "example/langchain",
+    "expected": {
+      "category": "ai",
+      "subcategory": "rag",
+      "tags": ["RAG", "库"]
+    },
+    "query_samples": ["rag framework", "langchain"]
+  },
+  {
+    "full_name": "example/uptime-kuma",
+    "expected": {
+      "category": "devops",
+      "subcategory": "monitor",
+      "tags": ["监控", "自托管"]
+    },
+    "query_samples": ["uptime monitor", "status page"]
+  }
+]
