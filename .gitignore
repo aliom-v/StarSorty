@@ -51,3 +51,4 @@ scripts/test_ai.ps1
 .claude/
 openspec/
 **/openspec/
+CLAUDE.md
