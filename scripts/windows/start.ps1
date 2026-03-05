@@ -1,4 +1,4 @@
-$root = Split-Path -Parent $PSScriptRoot
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $apiPort = 4321
 $webPort = 1234
 

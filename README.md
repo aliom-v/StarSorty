@@ -14,7 +14,7 @@
 - [快速开始](#-快速开始)
 - [使用指南](#-使用指南)
 - [本地开发](#-本地开发)
-- [Roadmap](#-roadmap)
+- [文档导航](#-文档导航)
 - [License](#-license)
 
 ---
@@ -40,12 +40,14 @@
 - 🤖 **多模型 AI 支持**：
   - 原生支持 OpenAI（GPT-4o 等）与 Anthropic（Claude 3.5）。
   - 完全兼容 OpenAI 格式的第三方模型（DeepSeek、GLM、Moonshot、OneAPI）。
+<<<<<<< HEAD
 - 🏷️ **标签云系统**：
   - AI 自动生成中文摘要（`summary_zh`）、自由标签（`tags`）和搜索关键词（`keywords`）。
   - 16 个标签分组，覆盖项目类型、运行形态、AI 相关、开发工具等场景。
   - 支持多标签 OR 筛选，快速定位目标项目。
-- 🔍 **深度检索**：按语言、标签、用户筛选，支持全文关键词搜索。
+- 🔍 **深度检索**：支持关键词检索 + 语义检索（混合排序、命中原因展示）。
 - 📝 **人工干预机制**：支持手动覆盖 AI 分类并记录修改历史。
+- 🧠 **语义索引维护**：支持 embedding 回填任务（断点续跑 + 任务重试）。
 - 🐳 **隐私至上**：Docker 私有化部署，数据完全掌握在自己手中。
 
 ### 2026 重构增强
@@ -204,9 +206,56 @@ curl -X POST "http://localhost:4321/classify/background" \
 curl "http://localhost:4321/classify/status"
 ```
 
+### 4. 语义检索（混合排序 + 可解释原因）
+
+```bash
+curl "http://localhost:4321/search/semantic?q=go%20crawler&limit=20"
+```
+
+### 5. 触发 embedding 回填（管理员）
+
+```bash
+curl -X POST "http://localhost:4321/embedding/backfill" \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: <你设置的ADMIN_TOKEN>" \
+  -d '{"batch_size": 200, "only_missing": true}'
+```
+
+回填任务状态查询（示例）：
+
+```bash
+curl "http://localhost:4321/tasks/<task_id>"
+```
+
+语义检索可选配置（`.env`）：
+
+```env
+SEMANTIC_MAX_TOKENS=96
+SEMANTIC_CANDIDATE_LIMIT=1500
+SEMANTIC_CACHE_TTL_SECONDS=90
+SEMANTIC_CACHE_MAX_ENTRIES=300
+```
+
 ---
 
 ## 💻 本地开发
+
+### 一键启停（跨平台）
+
+```bash
+# 启动 API + Web
+npm run start
+
+# 查看运行状态
+npm run status
+
+# 停止服务
+npm run stop
+```
+
+- Windows 使用 `scripts/windows/*.ps1`
+- macOS/Linux 使用 `scripts/unix/*.sh`
+- 日志输出在 `logs/` 目录
 
 ### 后端 (Python/FastAPI)
 
@@ -230,6 +279,16 @@ npm install
 npm run dev
 # 访问 http://localhost:1234
 ```
+
+---
+
+## 📚 文档导航
+
+- `docs/README.md`：文档目录与入口
+- `docs/guides/project-structure.md`：项目结构说明
+- `docs/roadmap/practical-optimization-plan.md`：实用性优化实施方案（MVP）
+- `docs/roadmap/semantic-search-optimization-phase1.md`：语义检索 Phase 1（混合排序 + 回填）
+- `docs/roadmap/semantic-search-optimization-phase2.md`：语义检索 Phase 2（可解释原因 + 缓存）
 
 ---
 

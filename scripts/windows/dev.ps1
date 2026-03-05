@@ -1,4 +1,4 @@
-$root = Split-Path -Parent $PSScriptRoot
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 $apiPython = Join-Path $root "api\\.venv\\Scripts\\python.exe"
 $webNodeModules = Join-Path $root "web\\node_modules"
