@@ -133,7 +133,11 @@ async def repos(
     return RepoListResponse(total=total, items=items_out)
 
 
-@router.get("/repos/failed", response_model=FailedReposResponse)
+@router.get(
+    "/repos/failed",
+    response_model=FailedReposResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def list_failed_repos_endpoint(min_fail_count: int = Query(default=5, ge=1, le=1000)) -> FailedReposResponse:
     items = await get_failed_repos(min_fail_count)
     return FailedReposResponse(items=items, total=len(items))

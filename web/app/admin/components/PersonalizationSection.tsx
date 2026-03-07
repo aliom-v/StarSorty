@@ -136,8 +136,12 @@ export default function PersonalizationSection({ t, setMessage }: Props) {
     setLocalError(null);
     try {
       const [prefRes, profileRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/preferences/${encodeURIComponent(activeUserId)}`),
-        fetch(`${API_BASE_URL}/interest/${encodeURIComponent(activeUserId)}`),
+        fetch(`${API_BASE_URL}/preferences/${encodeURIComponent(activeUserId)}`, {
+          headers: buildAdminHeaders(),
+        }),
+        fetch(`${API_BASE_URL}/interest/${encodeURIComponent(activeUserId)}`, {
+          headers: buildAdminHeaders(),
+        }),
       ]);
       if (!prefRes.ok) {
         const detail = await readApiError(prefRes, t("unknownError"));

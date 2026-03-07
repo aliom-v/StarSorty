@@ -31,7 +31,9 @@ export default function FailedReposSection({ t, setMessage }: Props) {
     setLoadingFailedRepos(true);
     setLocalError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/repos/failed`);
+      const res = await fetch(`${API_BASE_URL}/repos/failed`, {
+        headers: buildAdminHeaders(),
+      });
       if (res.ok) {
         const data = await res.json();
         setFailedRepos(data.items ?? []);

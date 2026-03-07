@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  buildAdminHeaders,
   clearSessionToken,
   isSessionAuthenticated,
 } from "../lib/admin";
@@ -54,7 +55,9 @@ export default function AdminPage() {
   const loadSettings = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/settings`);
+      const res = await fetch(`${API_BASE_URL}/settings`, {
+        headers: buildAdminHeaders(),
+      });
       if (!res.ok) {
         const detail = await readApiError(res, t("unknownError"));
         throw new Error(detail);

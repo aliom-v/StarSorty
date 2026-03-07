@@ -18,6 +18,24 @@ from ..settings_store import write_settings
 router = APIRouter()
 
 
+def _build_settings_response() -> SettingsResponse:
+    current = get_settings()
+    return SettingsResponse(
+        github_username=current.github_username,
+        github_target_username=current.github_target_username,
+        github_usernames=current.github_usernames,
+        github_include_self=current.github_include_self,
+        github_mode=current.github_mode,
+        classify_mode=current.classify_mode,
+        auto_classify_after_sync=current.auto_classify_after_sync,
+        rules_json=current.rules_json,
+        sync_cron=current.sync_cron,
+        sync_timeout=current.sync_timeout,
+        github_token_set=bool(os.getenv("GITHUB_TOKEN")),
+        ai_api_key_set=bool(os.getenv("AI_API_KEY")),
+    )
+
+
 def _resolve_classify_context_for_validation(current, rules: list) -> None:
     from .classify import _resolve_classify_context
     _resolve_classify_context(current, rules, allow_fallback=False)
@@ -42,23 +60,9 @@ async def client_settings() -> ClientSettingsResponse:
     )
 
 
-@router.get("/settings", response_model=SettingsResponse)
+@router.get("/settings", response_model=SettingsResponse, dependencies=[Depends(require_admin)])
 async def settings() -> SettingsResponse:
-    current = get_settings()
-    return SettingsResponse(
-        github_username=current.github_username,
-        github_target_username=current.github_target_username,
-        github_usernames=current.github_usernames,
-        github_include_self=current.github_include_self,
-        github_mode=current.github_mode,
-        classify_mode=current.classify_mode,
-        auto_classify_after_sync=current.auto_classify_after_sync,
-        rules_json=current.rules_json,
-        sync_cron=current.sync_cron,
-        sync_timeout=current.sync_timeout,
-        github_token_set=bool(os.getenv("GITHUB_TOKEN")),
-        ai_api_key_set=bool(os.getenv("AI_API_KEY")),
-    )
+    return _build_settings_response()
 
 
 @router.patch("/settings", response_model=SettingsResponse, dependencies=[Depends(require_admin)])
@@ -73,18 +77,4 @@ async def update_settings(payload: SettingsRequest) -> SettingsResponse:
         raise HTTPException(status_code=400, detail="No fields provided")
 
     await asyncio.to_thread(write_settings, updates)
-    current = get_settings()
-    return SettingsResponse(
-        github_username=current.github_username,
-        github_target_username=current.github_target_username,
-        github_usernames=current.github_usernames,
-        github_include_self=current.github_include_self,
-        github_mode=current.github_mode,
-        classify_mode=current.classify_mode,
-        auto_classify_after_sync=current.auto_classify_after_sync,
-        rules_json=current.rules_json,
-        sync_cron=current.sync_cron,
-        sync_timeout=current.sync_timeout,
-        github_token_set=bool(os.getenv("GITHUB_TOKEN")),
-        ai_api_key_set=bool(os.getenv("AI_API_KEY")),
-    )
+    return _build_settings_response()

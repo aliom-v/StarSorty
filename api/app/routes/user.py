@@ -20,7 +20,11 @@ from ..schemas import (
 router = APIRouter()
 
 
-@router.get("/preferences/{user_id}", response_model=UserPreferencesResponse)
+@router.get(
+    "/preferences/{user_id}",
+    response_model=UserPreferencesResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def get_preferences(user_id: str) -> UserPreferencesResponse:
     preference = await get_user_preferences(_normalize_preference_user(user_id))
     return UserPreferencesResponse(**preference)
@@ -71,7 +75,11 @@ async def feedback_click(request: Request, payload: ClickFeedbackRequest) -> Fee
     return FeedbackResponse(ok=True)
 
 
-@router.get("/interest/{user_id}", response_model=InterestProfileResponse)
+@router.get(
+    "/interest/{user_id}",
+    response_model=InterestProfileResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def interest_profile(user_id: str) -> InterestProfileResponse:
     profile = await get_user_interest_profile(_normalize_preference_user(user_id))
     return InterestProfileResponse(**profile)
