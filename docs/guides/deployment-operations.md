@@ -168,6 +168,8 @@ npm run api:test
 npm run api:bench
 ```
 
+两者都会优先使用本地可用 Python；若当前环境不适合运行，会自动回退到 Docker Python 3.11 容器。
+
 ## 常见问题
 
 ### API 容器启动失败

@@ -30,6 +30,7 @@ StarSorty 的文档按“入门 → 配置/接口 → 部署 → 规划”组织
 - `guides/README.md`：使用、开发、配置、运维文档索引
 - `../CONTRIBUTING.md`：本地开发、测试与提交流程
 - `../CHANGELOG.md`：版本变更记录与发布摘要
+- `archive/README.md`：已归档文档索引与历史记录入口
 - `roadmap/README.md`：路线图与规划文档索引
 
 ### Guides

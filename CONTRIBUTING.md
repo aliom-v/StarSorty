@@ -100,7 +100,7 @@ npm run web:build
 
 ### 压测脚本
 
-仅在需要验证性能相关改动时运行：
+仅在需要验证性能相关改动时运行；命令会优先使用本地可用 Python，不适合时回退到 Docker Python 3.11 容器。
 
 ```bash
 npm run api:bench

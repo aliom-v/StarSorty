@@ -15,7 +15,7 @@
     "stop:unix": "bash scripts/unix/stop.sh",
     "status:unix": "bash scripts/unix/status.sh",
     "api:test": "node scripts/run-api-tests.js",
-    "api:bench": "python evaluation/benchmark_api_perf.py",
+    "api:bench": "node scripts/run-api-bench.js",
     "web:dev": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build",
     "web:lint": "npm --prefix web run lint",

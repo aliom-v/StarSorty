@@ -238,7 +238,7 @@ def main() -> None:
         default="",
         help="Optional output path for normalized rules.json with tag_ids.",
     )
-    parser.add_argument("--report", default="api/migration/tag_id_migration_report.json")
+    parser.add_argument("--report", default="archive/tag-id-migration/tag_id_migration_report.json")
     args = parser.parse_args()
 
     taxonomy = _load_taxonomy_with_fallback(args.taxonomy)

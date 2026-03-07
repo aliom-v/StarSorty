@@ -6,6 +6,7 @@ node_modules/
 .next/
 *.tsbuildinfo
 out/
+evaluation/benchmarks/
 __pycache__/
 *.pyc
 *.pyo

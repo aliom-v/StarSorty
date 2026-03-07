@@ -4,7 +4,11 @@ const { existsSync } = require('node:fs');
 const path = require('node:path');
 
 const root = process.cwd();
-const testArgs = ['-m', 'pytest', '-q', 'api/tests'];
+const benchmarkArgs = ['evaluation/benchmark_api_perf.py', ...process.argv.slice(2)];
+const dockerInstallAndRun = [
+  'pip install --no-cache-dir -r api/requirements-dev.txt >/tmp/pip-install.log',
+  'python evaluation/benchmark_api_perf.py "$@"',
+].join(' && ');
 
 function runCommand(command, args, options = {}) {
   return spawnSync(command, args, {
@@ -56,7 +60,7 @@ function isUsablePython(command) {
   }
   const imports = runCapture(
     command,
-    ['-c', 'import aiosqlite, fastapi, pytest, yaml'],
+    ['-c', 'import aiosqlite, fastapi, yaml'],
     { timeout: 5000 }
   );
   return !imports.error && imports.status === 0;
@@ -73,15 +77,17 @@ function runDockerFallback() {
     '-w', '/work',
     'python:3.11-slim',
     'sh', '-lc',
-    'pip install --no-cache-dir -r api/requirements-dev.txt >/tmp/pip-install.log && python -m pytest -q api/tests',
-  ]);
+    dockerInstallAndRun,
+    'sh',
+    ...process.argv.slice(2),
+  ], { timeout: 900000 });
 }
 
 for (const candidate of getPythonCandidates()) {
   if (!isUsablePython(candidate)) {
     continue;
   }
-  const result = runCommand(candidate, testArgs, { timeout: 120000 });
+  const result = runCommand(candidate, benchmarkArgs, { timeout: 900000 });
   if (result.error && (result.error.code === 'ENOENT' || result.error.code === 'ETIMEDOUT')) {
     continue;
   }
@@ -93,5 +99,5 @@ if (dockerResult) {
   process.exit(dockerResult.status ?? 1);
 }
 
-console.error('No usable Python environment or Docker runtime found for API tests.');
+console.error('No usable Python environment or Docker runtime found for API benchmarks.');
 process.exit(1);
