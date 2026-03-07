@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import List
 
 import httpx
 from fastapi import FastAPI
@@ -15,6 +14,7 @@ from .github import GitHubClient
 from .ai_client import AIClient
 from .rate_limit import limiter
 from .routes import api_router
+from .security import resolve_cors_policy, validate_security_baseline
 from .state import (
     API_SEMAPHORE_LIMIT,
     TASK_STALE_MINUTES,
@@ -27,6 +27,7 @@ logger = logging.getLogger("starsorty.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_security_baseline(_init_settings.cors_origins)
     await init_db_pool()
     await init_db()
     stale = await reset_stale_tasks(TASK_STALE_MINUTES)
@@ -52,15 +53,12 @@ async def lifespan(app: FastAPI):
         await close_db_pool()
 
 
-app = FastAPI(title="StarSorty API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="StarSorty API", version="0.2.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 _init_settings = get_settings()
-origins: List[str] = [origin.strip() for origin in _init_settings.cors_origins.split(",") if origin.strip()]
-allow_credentials = True
-if not origins or "*" in origins:
-    allow_credentials = False
+origins, allow_credentials = resolve_cors_policy(_init_settings.cors_origins)
 
 app.add_middleware(
     CORSMiddleware,
