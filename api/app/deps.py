@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import os
 import secrets
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -9,6 +8,7 @@ from typing import Dict, List, Optional
 from fastapi import Header, HTTPException
 
 from .db import create_task, update_task
+from .security import get_admin_token
 
 logger = logging.getLogger("starsorty.api")
 
@@ -17,7 +17,7 @@ _admin_token_warned = False
 
 def require_admin(x_admin_token: str | None = Header(default=None, alias="X-Admin-Token")) -> None:
     global _admin_token_warned
-    admin_token = os.getenv("ADMIN_TOKEN", "").strip()
+    admin_token = get_admin_token()
     if not admin_token:
         if not _admin_token_warned:
             logger.warning(

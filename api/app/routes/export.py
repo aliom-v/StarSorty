@@ -1,16 +1,17 @@
 from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 
 from ..db import iter_repos_for_export
+from ..deps import require_admin
 from ..export import generate_obsidian_zip_streaming
 from ..rate_limit import limiter, RATE_LIMIT_HEAVY
 
 router = APIRouter()
 
 
-@router.get("/export/obsidian")
+@router.get("/export/obsidian", dependencies=[Depends(require_admin)])
 @limiter.limit(RATE_LIMIT_HEAVY)
 async def export_obsidian(
     request: Request,
