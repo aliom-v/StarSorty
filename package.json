@@ -14,9 +14,11 @@
     "start:unix": "bash scripts/unix/start.sh",
     "stop:unix": "bash scripts/unix/stop.sh",
     "status:unix": "bash scripts/unix/status.sh",
-    "api:test": "python -m pytest -q api",
+    "api:test": "node scripts/run-api-tests.js",
+    "api:bench": "python evaluation/benchmark_api_perf.py",
     "web:dev": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build",
-    "web:lint": "npm --prefix web run lint"
+    "web:lint": "npm --prefix web run lint",
+    "web:smoke": "npm --prefix web run smoke"
   }
 }
