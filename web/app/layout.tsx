@@ -1,21 +1,6 @@
 import "./globals.css";
 import type { Metadata } from "next";
-import { Space_Grotesk, IBM_Plex_Sans } from "next/font/google";
 import Providers from "./providers";
-
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
-  variable: "--font-space-grotesk",
-  display: "swap",
-  weight: ["400", "600", "700"],
-});
-
-const ibmPlexSans = IBM_Plex_Sans({
-  subsets: ["latin"],
-  variable: "--font-ibm-plex-sans",
-  display: "swap",
-  weight: ["400", "500", "600"],
-});
 
 export const metadata: Metadata = {
   title: "StarSorty",
@@ -46,7 +31,7 @@ export default function RootLayout({
       <head>
         <script suppressHydrationWarning dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body className={`font-body text-ink ${spaceGrotesk.variable} ${ibmPlexSans.variable}`}>
+      <body className="font-body text-ink">
         <Providers>{children}</Providers>
       </body>
     </html>
