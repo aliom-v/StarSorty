@@ -1,12 +1,19 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildAdminHeaders } from "./lib/admin";
 import { API_BASE_URL } from "./lib/apiBase";
 import { getErrorMessage, readApiError } from "./lib/apiError";
-import { useI18n, type Messages, type MessageValues } from "./lib/i18n";
+import { useI18n } from "./lib/i18n";
 import { useTheme } from "./lib/theme";
 import { TAG_GROUPS } from "./lib/tagGroups";
+
+// Components
+import RepoCard from "./components/RepoCard";
+import Sidebar from "./components/Sidebar";
+import Header from "./components/Header";
+import SearchSection from "./components/SearchSection";
+import StatusBanner from "./components/StatusBanner";
 
 type Repo = {
   full_name: string;
@@ -93,146 +100,21 @@ type ClientSettings = {
   auto_classify_after_sync: boolean;
 };
 
+type TagGroupWithCounts = {
+  id: string;
+  name: string;
+  tags: string[];
+  tagCounts: StatsItem[];
+};
+
 const PAGE_SIZE = 60;
-const STAR_FILTERS = [100, 500, 1000, 5000];
-
-const formatStars = (value?: number | null) => {
-  const count = value ?? 0;
-  return new Intl.NumberFormat("en-US", {
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(count);
-};
-
-const formatDate = (value?: string | null) => {
-  if (!value) return "n/a";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "n/a";
-  return date.toLocaleDateString();
-};
-
-// Memoized RepoCard component to prevent unnecessary re-renders
-type RepoCardProps = {
-  repo: Repo;
-  index: number;
-  queryActive: boolean;
-  onRepoClick: (repo: Repo) => void;
-  t: (key: keyof Messages, params?: MessageValues) => string;
-};
-
-const RepoCard = memo(function RepoCard({ repo, index, queryActive, onRepoClick, t }: RepoCardProps) {
-  const displayDescription = repo.summary_zh || repo.description;
-  return (
-    <article
-      className={`rounded-3xl border border-ink/10 bg-surface/90 p-6 shadow-soft animate-fade-up stagger-${
-        (index % 4) + 1
-      }`}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h3 className="font-display text-xl font-semibold break-words">
-            <a
-              href={repo.html_url}
-              target="_blank"
-              rel="noreferrer"
-              className="transition hover:text-moss"
-              onClick={() => onRepoClick(repo)}
-            >
-              {repo.name}
-            </a>
-          </h3>
-          {displayDescription ? (
-            <p className="mt-2 text-sm text-ink/80 break-words">
-              {displayDescription}
-            </p>
-          ) : (
-            <p className="mt-2 text-sm text-ink/80 break-words">
-              {t("noDescription")}
-            </p>
-          )}
-        </div>
-        <div className="flex shrink-0 flex-col items-start gap-2 text-xs sm:items-end">
-          <a
-            href={repo.html_url}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-full border border-ink/10 bg-surface px-3 py-1 text-ink/70 transition hover:border-moss hover:text-moss"
-            onClick={() => onRepoClick(repo)}
-          >
-            {t("viewOnGithub")}
-          </a>
-          <a
-            href={`/repo/?full_name=${encodeURIComponent(repo.full_name)}`}
-            className="rounded-full border border-ink/10 bg-surface px-3 py-1 text-ink/70 transition hover:border-moss hover:text-moss"
-            onClick={() => onRepoClick(repo)}
-          >
-            {t("details")}
-          </a>
-          <span className="rounded-full border border-ink/10 bg-sand px-3 py-1 text-xs">
-            {repo.language ? repo.language : t("unknown")}
-          </span>
-        </div>
-      </div>
-      <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-ink/70">
-        <span>
-          {t("starsWithValue", {
-            count: formatStars(repo.stargazers_count),
-          })}
-        </span>
-        <span>
-          {t("updatedWithValue", { date: formatDate(repo.updated_at) })}
-        </span>
-        {repo.star_users && repo.star_users.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {repo.star_users.slice(0, 3).map((user) => (
-              <span
-                key={user}
-                className="rounded-full border border-ink/10 bg-surface px-2 py-1"
-              >
-                @{user}
-              </span>
-            ))}
-          </div>
-        )}
-        {repo.tags && repo.tags.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {repo.tags.slice(0, 6).map((repoTag) => (
-              <span
-                key={repoTag}
-                className="rounded-full bg-moss/10 px-2 py-1 text-moss"
-              >
-                {repoTag}
-              </span>
-            ))}
-          </div>
-        )}
-        {repo.keywords && repo.keywords.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {repo.keywords.slice(0, 4).map((keyword) => (
-              <span
-                key={keyword}
-                className="rounded-full border border-ink/10 bg-surface px-2 py-1"
-              >
-                {keyword}
-              </span>
-            ))}
-          </div>
-        )}
-        {queryActive && repo.match_reasons && repo.match_reasons.length > 0 && (
-          <span className="rounded-full border border-ink/10 bg-surface px-2 py-1">
-            {t("matchedByWithValue", { value: repo.match_reasons.join(", ") })}
-          </span>
-        )}
-      </div>
-    </article>
-  );
-});
 
 export default function Home() {
-  const { t, locale, setLocale } = useI18n();
+  const { t } = useI18n();
   const { theme, toggleTheme } = useTheme();
+  
+  // State
   const [repos, setRepos] = useState<Repo[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
   const [stats, setStats] = useState<Stats | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(true);
@@ -241,9 +123,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [actionStatus, setActionStatus] = useState<"success" | "error" | null>(
-    null
-  );
+  const [actionStatus, setActionStatus] = useState<"success" | "error" | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncTaskId, setSyncTaskId] = useState<string | null>(null);
   const [backgroundStatus, setBackgroundStatus] = useState<BackgroundStatus | null>(null);
@@ -251,28 +131,37 @@ export default function Home() {
   const [taskInfo, setTaskInfo] = useState<TaskStatus | null>(null);
   const [followActiveTask, setFollowActiveTask] = useState(true);
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
-  const [retryingTask, setRetryingTask] = useState(false);
   const [pollingPaused, setPollingPaused] = useState(false);
-  const [showAdvancedStatus, setShowAdvancedStatus] = useState(false);
-  const [showTaskId, setShowTaskId] = useState(false);
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [subcategory, setSubcategory] = useState<string | null>(null);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagMode, setTagMode] = useState<"or" | "and">("or");
-  const [sortMode, setSortMode] = useState<"relevance" | "stars" | "updated">(
-    "stars"
-  );
+  const [sortMode, setSortMode] = useState<"relevance" | "stars" | "updated">("stars");
   const [minStars, setMinStars] = useState<number | null>(null);
   const [sourceUser, setSourceUser] = useState<string | null>(null);
   const [groupMode, setGroupMode] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Refs
   const wasBackgroundRunningRef = useRef(false);
+  const pollTargetIdRef = useRef<string | null>(null);
+  const pollRequestIdRef = useRef(0);
+  const pollFnRef = useRef<() => void>(() => {});
+  const syncTaskIdRef = useRef<string | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollFailureCountRef = useRef(0);
+  const pollingPausedRef = useRef(false);
+  const pollTickRef = useRef(0);
+  const reposRequestIdRef = useRef(0);
+  const statsRequestIdRef = useRef(0);
+
   const activeError = configError || error;
   const unknownErrorMessage = t("unknownError");
   const activePreferenceUser = sourceUser || "global";
 
+  // Callbacks
   const handleTagToggle = useCallback((tag: string) => {
     setSelectedTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
@@ -327,16 +216,6 @@ export default function Home() {
 
   const activeTaskId = backgroundStatus?.task_id || syncTaskId;
   const pollTargetId = followActiveTask ? activeTaskId : taskInfoId;
-  const pollTargetIdRef = useRef<string | null>(null);
-  const pollRequestIdRef = useRef(0);
-  const pollFnRef = useRef<() => void>(() => {});
-  const syncTaskIdRef = useRef<string | null>(null);
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pollFailureCountRef = useRef(0);
-  const pollingPausedRef = useRef(false);
-  const pollTickRef = useRef(0);
-  const reposRequestIdRef = useRef(0);
-  const statsRequestIdRef = useRef(0);
 
   const loadStats = useCallback(async (refresh = false) => {
     const requestId = statsRequestIdRef.current + 1;
@@ -477,10 +356,8 @@ export default function Home() {
       const total = Number(data.total || 0);
       const items: Repo[] = data.items || [];
 
-      setTotalCount(total || items.length);
       setRepos((prev) => {
         if (!append) return items;
-        // Deduplicate by full_name when appending
         const existingNames = new Set(prev.map((r) => r.full_name));
         const newItems = items.filter((item) => !existingNames.has(item.full_name));
         return [...prev, ...newItems];
@@ -549,7 +426,7 @@ export default function Home() {
     let res: Response;
     try {
       res = await fetch(`${API_BASE_URL}/tasks/${taskId}`);
-    } catch (err) {
+    } catch {
       if (pollTargetIdRef.current !== taskId) return;
       if (pollRequestIdRef.current !== requestId) return;
       pollFailureCountRef.current += 1;
@@ -576,7 +453,7 @@ export default function Home() {
     let data: TaskStatus;
     try {
       data = await res.json();
-    } catch (err) {
+    } catch {
       if (pollTargetIdRef.current !== taskId) return;
       if (pollRequestIdRef.current !== requestId) return;
       pollFailureCountRef.current += 1;
@@ -803,39 +680,6 @@ export default function Home() {
     }
   };
 
-  const handleRetryTask = async (taskId: string) => {
-    if (retryingTask) return;
-    setRetryingTask(true);
-    setActionMessage(null);
-    setActionStatus(null);
-    try {
-      const res = await fetch(`${API_BASE_URL}/tasks/${taskId}/retry`, {
-        method: "POST",
-        headers: buildAdminHeaders(),
-      });
-      if (!res.ok) {
-        const detail = await readApiError(res, t("classifyFailed"));
-        throw new Error(detail);
-      }
-      const data = (await res.json()) as TaskQueued;
-      if (data?.task_id) {
-        setFollowActiveTask(true);
-        setTaskInfoId(data.task_id);
-        setTaskInfo(null);
-        setPendingTaskId(data.task_id);
-        await loadBackgroundStatus();
-        setActionMessage(t("retryQueued"));
-        setActionStatus("success");
-      }
-    } catch (err) {
-      const message = getErrorMessage(err, t("classifyFailed"));
-      setActionMessage(message);
-      setActionStatus("error");
-    } finally {
-      setRetryingTask(false);
-    }
-  };
-
   const handleBackgroundStart = async () => {
     if (syncing || backgroundStatus?.running) return;
     setActionMessage(null);
@@ -883,109 +727,41 @@ export default function Home() {
     }
   };
 
-  const categoryCounts = useMemo(() => {
-    if (stats?.categories?.length) return stats.categories;
-    const map = new Map<string, number>();
-    repos.forEach((repo) => {
-      const key = repo.category || "uncategorized";
-      map.set(key, (map.get(key) || 0) + 1);
-    });
-    return Array.from(map.entries())
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [repos, stats]);
-
-  const subcategoryCounts = useMemo(() => {
-    if (!category) return [];
-    const items = stats?.subcategories?.filter((item) => item.category === category);
-    if (items && items.length > 0) {
-      return [...items].sort((a, b) => b.count - a.count);
-    }
-    const map = new Map<string, number>();
-    repos.forEach((repo) => {
-      const repoCategory = repo.category || "uncategorized";
-      if (repoCategory !== category) return;
-      const key = repo.subcategory || "other";
-      map.set(key, (map.get(key) || 0) + 1);
-    });
-    return Array.from(map.entries())
-      .map(([name, count]) => ({ name, count, category }))
-      .sort((a, b) => b.count - a.count);
-  }, [category, repos, stats]);
-
+  // Memos
   const userCounts = useMemo(() => {
     if (stats?.users?.length) return stats.users;
-    const map = new Map<string, number>();
-    repos.forEach((repo) => {
-      const users = repo.star_users || [];
-      users.forEach((user) => {
-        map.set(user, (map.get(user) || 0) + 1);
-      });
-    });
-    return Array.from(map.entries())
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [repos, stats]);
+    return [];
+  }, [stats]);
 
-  const unclassifiedCount = useMemo(
-    () =>
-      stats?.unclassified ?? repos.filter((repo) => !repo.category).length,
-    [repos, stats]
-  );
-  const overallTotal = stats?.total ?? (totalCount || repos.length);
-  const selectedCategoryCount = useMemo(() => {
-    if (!category) return overallTotal;
-    const selected = categoryCounts.find((item) => item.name === category);
-    return selected?.count ?? 0;
-  }, [category, categoryCounts, overallTotal]);
-
-  // Pre-compute non-empty tag groups to avoid filtering on every render
-  const tagGroupsWithCounts = useMemo(() => {
+  const tagGroupsWithCounts = useMemo<TagGroupWithCounts[]>(() => {
     if (!stats?.tags) return [];
     return TAG_GROUPS.map((group) => {
-      const groupTagCounts = stats.tags.filter((t) => group.tags.includes(t.name));
+      const groupTagCounts = stats.tags.filter((tag) => group.tags.includes(tag.name));
       if (groupTagCounts.length === 0) return null;
       return { ...group, tagCounts: groupTagCounts };
-    }).filter(Boolean) as Array<{ id: string; name: string; tags: string[]; tagCounts: StatsItem[] }>;
+    }).filter((group): group is TagGroupWithCounts => group !== null);
   }, [stats?.tags]);
 
   const lastSyncLabel = status?.last_sync_at
     ? new Date(status.last_sync_at).toLocaleString()
     : t("never");
+  
   const backgroundRunning = backgroundStatus?.running ?? false;
   const backgroundProcessed = backgroundStatus?.processed ?? 0;
-  const backgroundFailed = backgroundStatus?.failed ?? 0;
-  const backgroundSucceeded = Math.max(0, backgroundProcessed - backgroundFailed);
   const backgroundRemaining = backgroundStatus?.remaining ?? 0;
-  const backgroundBatchSize = backgroundStatus?.batch_size ?? 20;
-  const backgroundConcurrency = backgroundStatus?.concurrency ?? 3;
-  const backgroundLastError = backgroundStatus?.last_error ?? null;
-  const showBackgroundError =
-    !!backgroundLastError && backgroundLastError !== "Stopped by user";
-  const taskRetryable =
-    taskInfo?.status === "failed" && taskInfo?.task_type === "classify";
+  const unclassifiedCount = stats?.unclassified ?? 0;
+  const overallTotal = stats?.total ?? 0;
+
   const taskStatus = taskInfo?.status || "";
   const taskType = taskInfo?.task_type || "";
-  const taskTypeLabel = taskType === "sync"
-    ? t("taskTypeSync")
-    : taskType === "classify"
-      ? t("taskTypeClassify")
-      : taskType === "expired"
-        ? t("taskTypeExpired")
-        : taskType === "missing"
-          ? t("taskTypeMissing")
-      : taskType
-        ? taskType
-        : t("taskTypeUnknown");
-  const syncRunning =
-    syncing || (taskType === "sync" && (taskStatus === "running" || taskStatus === "queued"));
+  const syncRunning = syncing || (taskType === "sync" && (taskStatus === "running" || taskStatus === "queued"));
+  
   const simpleOperationStatus = backgroundRunning
     ? t("classifying")
     : syncRunning
       ? t("syncing")
       : t("backgroundIdle");
-  const disableSyncAction = syncing || backgroundRunning;
-  const disableClassifyAction = syncing;
+
   const hasActiveFilters =
     !!query ||
     !!category ||
@@ -994,445 +770,167 @@ export default function Home() {
     minStars !== null ||
     sourceUser !== null;
 
+  const activeFilterCount = [
+    !!query,
+    !!category,
+    !!subcategory,
+    selectedTags.length > 0,
+    minStars !== null,
+    sourceUser !== null,
+  ].filter(Boolean).length;
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        document.getElementById("search-input")?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const SkeletonCard = () => (
+    <div className="rounded-[2.5rem] bg-surface/20 border border-ink/5 p-8 space-y-8 animate-pulse-subtle">
+      <div className="flex justify-between items-start gap-6">
+        <div className="space-y-4 flex-1">
+          <div className="h-8 bg-ink/5 rounded-2xl w-1/3" />
+          <div className="space-y-2">
+            <div className="h-4 bg-ink/5 rounded-lg w-full" />
+            <div className="h-4 bg-ink/5 rounded-lg w-2/3" />
+          </div>
+        </div>
+        <div className="h-12 w-24 bg-ink/5 rounded-full shrink-0" />
+      </div>
+      <div className="flex gap-2">
+        <div className="h-8 w-20 bg-ink/5 rounded-full" />
+        <div className="h-8 w-24 bg-ink/5 rounded-full" />
+      </div>
+    </div>
+  );
+
   return (
-    <main className="h-screen flex flex-col overflow-hidden px-6 py-6 lg:px-12">
-      <section className="mx-auto max-w-[1400px] w-full flex flex-col flex-1 min-h-0">
-        {actionMessage && (
-          <div
-            className={`mb-6 flex flex-col gap-3 rounded-2xl border px-4 py-3 text-sm shadow-soft sm:flex-row sm:items-center sm:justify-between ${
-              actionStatus === "error"
-              ? "border-copper/30 bg-surface text-copper"
-              : "border-moss/20 bg-surface text-moss"
-            }`}
-            role={actionStatus === "error" ? "alert" : "status"}
-            aria-live="polite"
+    <main className="relative flex h-screen w-full overflow-hidden bg-transparent perspective-lg">
+      {/* 1. 全局侧边栏 - 模拟 iOS 侧边栏材质 */}
+      <aside className="hidden md:flex flex-col w-80 lg:w-96 h-full flex-shrink-0 border-r border-ink/5 glass-dark z-20">
+        <Sidebar 
+          t={t}
+          sidebarOpen={sidebarOpen}
+          setSidebarOpen={setSidebarOpen}
+          selectedTags={selectedTags}
+          handleTagToggle={handleTagToggle}
+          setSelectedTags={setSelectedTags}
+          tagMode={tagMode}
+          setTagMode={setTagMode}
+          tagGroups={tagGroupsWithCounts}
+          groupMode={groupMode}
+          sourceUser={sourceUser}
+          setSourceUser={setSourceUser}
+          userCounts={userCounts}
+          overallTotal={overallTotal}
+          unclassifiedCount={unclassifiedCount}
+        />
+      </aside>
+
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-ink/40 backdrop-blur-sm md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        >
+          <aside
+            className="h-full w-[min(88vw,24rem)] border-r border-ink/5 bg-surface/90 shadow-premium"
+            onClick={(event) => event.stopPropagation()}
           >
-            <div className="space-y-1">
-              <p className="text-xs uppercase tracking-[0.2em] text-ink/50">
-                {actionStatus === "error"
-                  ? t("actionFailed")
-                  : t("actionComplete")}
-              </p>
-              <p className="text-ink/80">{actionMessage}</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
-              {pollingPaused && (
-                <button
-                  type="button"
-                  className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/70 transition hover:border-moss hover:text-moss"
-                  onClick={handleResumePolling}
-                >
-                  {t("reconnect")}
-                </button>
-              )}
-              <button
-                type="button"
-                className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/60 transition hover:text-ink"
-                onClick={() => {
-                  setActionMessage(null);
-                  setActionStatus(null);
-                }}
-              >
-                {t("dismiss")}
-              </button>
-            </div>
-          </div>
-        )}
-        <header className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-3 animate-fade-up">
-            <p className="text-sm uppercase tracking-[0.2em] text-copper">
-              StarSorty
-            </p>
-            <h1 className="font-display text-4xl font-semibold leading-tight text-ink md:text-5xl">
-              {t("title")}
-            </h1>
-            <p className="max-w-xl text-base text-ink/80">
-              {t("subtitle")}
-            </p>
-          </div>
-          <div className="animate-fade-in">
-            <div className="space-y-3 text-right">
-              <div className="rounded-full border border-ink/10 bg-surface/70 px-4 py-2 shadow-soft">
-                <span className="text-sm text-ink/80">
-                  {t("lastSyncWithValue", { value: lastSyncLabel })}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={toggleTheme}
-                  className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss"
-                  aria-label={t("theme")}
-                >
-                  {theme === "dark" ? t("dark") : t("light")}
-                </button>
-              </div>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={handleSync}
-                  disabled={disableSyncAction}
-                  className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
-                >
-                  {syncing ? t("syncing") : t("syncNow")}
-                </button>
-                <button
-                  type="button"
-                  onClick={backgroundRunning ? handleBackgroundStop : handleBackgroundStart}
-                  disabled={disableClassifyAction}
-                  className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
-                >
-                  {backgroundRunning ? t("stop") : t("classify")}
-                </button>
-                <a
-                  href="/settings/"
-                  className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss"
-                >
-                  {t("settings")}
-                </a>
-                <a
-                  href="/admin/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-copper hover:text-copper"
-                >
-                  {t("admin")}
-                </a>
-              </div>
-              <div className="rounded-3xl border border-ink/10 bg-surface/80 p-4 text-left shadow-soft">
-                <div className="space-y-3">
-                  <div className="space-y-2">
-                    <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                      {t("simpleStatus")}
-                    </p>
-                    <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-ink/70">
-                      <span>{t("operationStatusWithValue", { value: simpleOperationStatus })}</span>
-                      <button
-                        type="button"
-                        className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/70 transition hover:border-moss hover:text-moss"
-                        onClick={() => setShowAdvancedStatus((prev) => !prev)}
-                      >
-                        {showAdvancedStatus ? t("hide") : t("advancedDetails")}
-                      </button>
-                    </div>
-                    {showAdvancedStatus && (
-                      <div className="flex flex-wrap gap-3 text-xs text-ink/70">
-                        <span>
-                          {backgroundRunning ? t("backgroundRunning") : t("backgroundIdle")}
-                        </span>
-                        <span>{t("processedWithValue", { count: backgroundProcessed })}</span>
-                        <span>{t("succeededWithValue", { count: backgroundSucceeded })}</span>
-                        <span>{t("failedWithValue", { count: backgroundFailed })}</span>
-                        <span>{t("remainingWithValue", { count: backgroundRemaining })}</span>
-                        <span>
-                          {t("batchSize")}: {backgroundBatchSize}
-                        </span>
-                        <span>
-                          {t("concurrency")}: {backgroundConcurrency}
-                        </span>
-                      </div>
-                    )}
-                    {showBackgroundError && (
-                      <p className="text-xs text-copper">{backgroundLastError}</p>
-                    )}
-                    {showAdvancedStatus && taskInfoId && (
-                      <div className="mt-2 flex flex-col gap-2 text-xs text-ink/70">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/70 transition hover:border-moss hover:text-moss"
-                            onClick={() => setShowTaskId((prev) => !prev)}
-                          >
-                            {showTaskId ? t("hideTaskId") : t("showTaskId")}
-                          </button>
-                          {showTaskId && (
-                            <span>{t("taskIdWithValue", { value: taskInfoId })}</span>
-                          )}
-                          <span>
-                            {t("taskTypeWithValue", {
-                              value: taskTypeLabel,
-                            })}
-                          </span>
-                          <span>
-                            {t("taskStatusWithValue", {
-                              value: taskInfo?.status || t("fetching"),
-                            })}
-                          </span>
-                          {taskRetryable && (
-                            <button
-                              type="button"
-                              className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/70 transition hover:border-moss hover:text-moss disabled:opacity-60"
-                              onClick={() => handleRetryTask(taskInfoId)}
-                              disabled={retryingTask}
-                            >
-                              {retryingTask ? t("retrying") : t("retry")}
-                            </button>
-                          )}
-                        </div>
-                        {!!taskInfo?.message && (
-                          <span className="text-xs text-ink/50">{taskInfo.message}</span>
-                        )}
-                        {!!taskInfo?.retry_from_task_id && (
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-ink/60">
-                            <span>
-                              {t("retryFromWithValue", {
-                                value: taskInfo.retry_from_task_id,
-                              })}
-                            </span>
-                            <button
-                              type="button"
-                              className="text-xs text-ink/70 underline transition hover:text-moss"
-                              onClick={() => {
-                                setFollowActiveTask(false);
-                                setPendingTaskId(null);
-                                setTaskInfoId(taskInfo.retry_from_task_id || null);
-                              }}
-                            >
-                              {t("viewTask")}
-                            </button>
-                            {followActiveTask === false && activeTaskId && (
-                              <button
-                                type="button"
-                                className="text-xs text-ink/60 underline transition hover:text-moss"
-                                onClick={() => {
-                                  setFollowActiveTask(true);
-                                  setPendingTaskId(null);
-                                  setTaskInfoId(activeTaskId || null);
-                                }}
-                              >
-                                {t("viewCurrentTask")}
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  {showAdvancedStatus && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleBackgroundStart}
-                        disabled={backgroundRunning || syncing}
-                        className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
-                      >
-                        {t("classifyNext")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleBackgroundStop}
-                        disabled={!backgroundRunning}
-                        className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-copper hover:text-copper disabled:opacity-60"
-                      >
-                        {t("stop")}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </header>
-
-        <div className="mt-6 flex flex-col gap-6 xl:flex-row flex-1 min-h-0 overflow-hidden">
-          <aside className="rounded-3xl border border-ink/10 bg-surface/70 p-6 shadow-soft animate-fade-up stagger-1 xl:w-72 xl:shrink-0 xl:overflow-y-auto">
-            <button
-              type="button"
-              className="flex w-full items-center justify-between xl:cursor-default"
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-            >
-              <h2 className="font-display text-lg font-semibold">
-                {t("tagCloud")}
-              </h2>
-              <span className="text-ink/40 xl:hidden">
-                {sidebarOpen ? "▲" : "▼"}
-              </span>
-            </button>
-
-            <div className={`${sidebarOpen ? "block" : "hidden"} xl:block`}>
-              {selectedTags.length > 0 && (
-                <div className="mt-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                    {t("selectedTags")}
-                  </p>
-                  <p className="mt-1 text-xs text-ink/50">
-                    {t("tagFilterModeWithValue", { value: tagMode.toUpperCase() })}
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {selectedTags.map((tag) => (
-                      <button
-                        key={tag}
-                        type="button"
-                        className="rounded-full bg-moss px-3 py-1 text-xs text-white transition hover:bg-moss/80"
-                        onClick={() => handleTagToggle(tag)}
-                      >
-                        {tag} ×
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      className="rounded-full border border-ink/10 bg-surface px-3 py-1 text-xs text-ink/70 transition hover:border-copper hover:text-copper"
-                      onClick={() => setSelectedTags([])}
-                    >
-                      {t("clearTags")}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-4 rounded-2xl border border-ink/10 bg-surface/70 p-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                  {t("tagFilterMode")}
-                </p>
-                <div className="mt-2 flex gap-2">
-                  <button
-                    type="button"
-                    className={`rounded-full px-3 py-1 text-xs transition ${
-                      tagMode === "or"
-                        ? "bg-moss text-white"
-                        : "border border-ink/10 bg-surface text-ink/70 hover:border-moss hover:text-moss"
-                    }`}
-                    onClick={() => setTagMode("or")}
-                  >
-                    OR
-                  </button>
-                  <button
-                    type="button"
-                    className={`rounded-full px-3 py-1 text-xs transition ${
-                      tagMode === "and"
-                        ? "bg-moss text-white"
-                        : "border border-ink/10 bg-surface text-ink/70 hover:border-moss hover:text-moss"
-                    }`}
-                    onClick={() => setTagMode("and")}
-                  >
-                    AND
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-6 space-y-4">
-                {tagGroupsWithCounts.map((group) => (
-                  <div key={group.id}>
-                    <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                      {group.name}
-                    </h3>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {group.tagCounts.map((tagItem) => (
-                        <button
-                          key={tagItem.name}
-                          type="button"
-                          className={`rounded-full px-3 py-1 text-xs transition ${
-                            selectedTags.includes(tagItem.name)
-                              ? "bg-moss text-white"
-                              : "bg-surface border border-ink/10 text-ink/70 hover:border-moss hover:text-moss"
-                          }`}
-                          onClick={() => handleTagToggle(tagItem.name)}
-                        >
-                          {tagItem.name} ({tagItem.count})
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {groupMode && (
-                <div className="mt-8 border-t border-ink/10 pt-6">
-                  <h3 className="text-xs uppercase tracking-[0.2em] text-ink/60">
-                    {t("users")}
-                  </h3>
-                  <div className="mt-4 space-y-2 text-sm">
-                    <button
-                      className={`flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left ${
-                        sourceUser === null
-                          ? "bg-clay text-ink"
-                          : "bg-surface/70 text-ink/70"
-                      }`}
-                      onClick={() => setSourceUser(null)}
-                    >
-                      <span>{t("all")}</span>
-                      <span>{overallTotal}</span>
-                    </button>
-                    {userCounts.map((user) => (
-                      <button
-                        key={user.name}
-                        className={`flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left ${
-                          sourceUser === user.name
-                            ? "bg-clay text-ink"
-                            : "bg-surface/70 text-ink/70"
-                        }`}
-                        onClick={() => setSourceUser(user.name)}
-                      >
-                        <span>{user.name}</span>
-                        <span>{user.count}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-8 border-t border-ink/10 pt-6">
-                <h2 className="font-display text-lg font-semibold">
-                  {t("status")}
-                </h2>
-                <div className="mt-4 space-y-2 text-sm text-ink/70">
-                  <div>{t("totalWithValue", { count: overallTotal })}</div>
-                  <div>{t("showingWithValue", { count: repos.length })}</div>
-                  <div>{t("unclassifiedWithValue", { count: unclassifiedCount })}</div>
-                </div>
-              </div>
-            </div>
+            <Sidebar
+              t={t}
+              sidebarOpen={sidebarOpen}
+              setSidebarOpen={setSidebarOpen}
+              selectedTags={selectedTags}
+              handleTagToggle={handleTagToggle}
+              setSelectedTags={setSelectedTags}
+              tagMode={tagMode}
+              setTagMode={setTagMode}
+              tagGroups={tagGroupsWithCounts}
+              groupMode={groupMode}
+              sourceUser={sourceUser}
+              setSourceUser={setSourceUser}
+              userCounts={userCounts}
+              overallTotal={overallTotal}
+              unclassifiedCount={unclassifiedCount}
+            />
           </aside>
+        </div>
+      )}
 
-          <section className="min-w-0 flex-1 space-y-6 overflow-y-auto">
-            <div className="rounded-3xl border border-ink/10 bg-surface/80 p-5 shadow-soft animate-fade-up stagger-2">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center">
-                <input
-                  className="w-full rounded-full border border-ink/10 bg-surface px-4 py-3 text-sm outline-none focus:border-moss"
-                  placeholder={t("searchPlaceholder")}
-                  value={queryInput}
-                  onChange={(event) => setQueryInput(event.target.value)}
-                />
-                <button
-                  type="button"
-                  className="rounded-full bg-moss px-5 py-3 text-sm font-semibold text-white"
-                  onClick={() => setQuery(queryInput.trim())}
-                >
-                  {t("search")}
-                </button>
-                <select
-                  className="rounded-full border border-ink/10 bg-surface px-4 py-3 text-sm text-ink/80 outline-none focus:border-moss"
-                  value={sortMode}
-                  onChange={(event) =>
-                    setSortMode(event.target.value as "relevance" | "stars" | "updated")
-                  }
-                >
-                  <option value="stars">{t("sortStars")}</option>
-                  <option value="updated">{t("sortUpdated")}</option>
-                  <option value="relevance">{t("sortRelevance")}</option>
-                </select>
-              </div>
-              {activeError && (
-                <p className="mt-3 text-xs text-copper">
-                  {t("apiErrorWithValue", { message: activeError })}
-                </p>
+      {/* 2. 主内容区 - 独立滚动 */}
+      <section className="flex-1 h-full overflow-y-auto relative custom-scrollbar bg-surface/20">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.55),transparent_65%)] opacity-80 dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_62%)]" />
+        <div className="pointer-events-none absolute right-[8%] top-28 h-48 w-48 rounded-full bg-moss/10 blur-3xl dark:bg-moss/15" />
+        <div className="pointer-events-none absolute left-[12%] top-44 h-36 w-36 rounded-full bg-copper/10 blur-3xl dark:bg-copper/10" />
+        <div className="relative max-w-6xl mx-auto w-full p-6 md:p-12 lg:p-16 space-y-16">
+          
+          <Header 
+            t={t}
+            theme={theme}
+            totalRepos={overallTotal}
+            shownCount={repos.length}
+            activeFilterCount={activeFilterCount}
+            toggleTheme={toggleTheme}
+            lastSyncLabel={lastSyncLabel}
+            syncing={syncRunning}
+            backgroundRunning={backgroundRunning}
+            disableSyncAction={syncing || backgroundRunning}
+            disableClassifyAction={syncing}
+            handleSync={handleSync}
+            handleBackgroundStart={handleBackgroundStart}
+            handleBackgroundStop={handleBackgroundStop}
+          />
+
+          <div className="space-y-12">
+            <SearchSection 
+              t={t}
+              queryInput={queryInput}
+              setQueryInput={setQueryInput}
+              setQuery={setQuery}
+              shownCount={repos.length}
+              activeFilterCount={activeFilterCount}
+              sortMode={sortMode}
+              setSortMode={setSortMode}
+              activeError={activeError}
+              loading={loading}
+              hasActiveFilters={hasActiveFilters}
+              clearAllFilters={clearAllFilters}
+              onOpenFilters={() => setSidebarOpen(true)}
+            />
+
+            <div className="space-y-6 pb-24">
+              {loading && repos.length === 0 && (
+                <div className="grid grid-cols-1 gap-6">
+                  {[...Array(5)].map((_, i) => (
+                    <SkeletonCard key={i} />
+                  ))}
+                </div>
               )}
-              {loading && (
-                <p className="mt-3 text-xs text-ink/60">
-                  {t("loadingRepos")}
-                </p>
-              )}
-            </div>
-            <div className="grid gap-4">
-              {!loading && repos.length === 0 && (
-                <div className="rounded-3xl border border-ink/10 bg-surface/80 p-6 text-sm text-ink/70 shadow-soft">
-                  <p className="text-sm text-ink/70">
+
+              {repos.length === 0 && !loading && (
+                <div className="flex flex-col items-center justify-center py-24 px-6 text-center animate-fade-in panel-muted rounded-[2.5rem]">
+                  <div className="h-24 w-24 rounded-full glass flex items-center justify-center text-ink/10 mb-8 shadow-soft">
+                    <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-2xl font-black text-ink mb-3 tracking-tight">
                     {hasActiveFilters ? t("noReposForFilters") : t("noRepos")}
+                  </h3>
+                  <p className="mx-auto mb-8 max-w-sm font-medium text-subtle">
+                    {hasActiveFilters 
+                      ? "Try adjusting your search or filters to find what you're looking for." 
+                      : "Start by syncing your GitHub stars to see them here."}
                   </p>
                   {hasActiveFilters && (
                     <button
                       type="button"
-                      className="mt-3 rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss"
+                      className="rounded-full btn-ios-primary px-8 py-3.5 text-xs font-black uppercase tracking-[0.18em]"
                       onClick={clearAllFilters}
                     >
                       {t("clearFilters")}
@@ -1440,33 +938,56 @@ export default function Home() {
                   )}
                 </div>
               )}
-              {repos.map((repo, index) => (
-                <RepoCard
-                  key={repo.full_name}
-                  repo={repo}
-                  index={index}
-                  queryActive={!!query}
-                  onRepoClick={handleRepoClick}
-                  t={t}
-                />
-              ))}
-            </div>
-            {hasMore && (
-              <div className="flex justify-center">
-                <button
-                  type="button"
-                  onClick={() => loadRepos(true, repos.length)}
-                  disabled={loadingMore}
-                  className="rounded-full border border-ink/10 bg-surface px-5 py-2 text-sm font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
-                >
-                  {loadingMore ? t("loadingMore") : t("loadMore")}
-                </button>
-              </div>
-            )}
-          </section>
 
+              <div className="grid grid-cols-1 gap-6">
+                {repos.map((repo, index) => (
+                  <RepoCard
+                    key={repo.full_name}
+                    repo={repo}
+                    index={index}
+                    queryActive={!!query}
+                    onRepoClick={handleRepoClick}
+                    t={t}
+                  />
+                ))}
+              </div>
+
+              {hasMore && (
+                <div className="flex justify-center pt-8">
+                  <button
+                    type="button"
+                    onClick={() => loadRepos(true, repos.length)}
+                    disabled={loadingMore}
+                    className="group flex items-center gap-4 rounded-full glass px-12 py-5 text-xs font-black uppercase tracking-widest text-ink transition-all hover:shadow-premium active:scale-95"
+                  >
+                    {loadingMore ? (
+                      <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    ) : null}
+                    {loadingMore ? t("loadingMore") : t("loadMore")}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </section>
+
+      {/* 3. 状态横幅 - 悬浮在内容之上 */}
+      <StatusBanner 
+        t={t}
+        actionMessage={actionMessage}
+        actionStatus={actionStatus}
+        pollingPaused={pollingPaused}
+        handleResumePolling={handleResumePolling}
+        setActionMessage={setActionMessage}
+        setActionStatus={setActionStatus}
+        simpleOperationStatus={simpleOperationStatus}
+        backgroundRunning={backgroundRunning}
+        backgroundProcessed={backgroundProcessed}
+        backgroundRemaining={backgroundRemaining}
+      />
     </main>
   );
 }

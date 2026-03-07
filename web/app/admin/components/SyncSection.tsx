@@ -35,14 +35,14 @@ export default function SyncSection({ t, setMessage }: Props) {
   };
 
   return (
-    <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
-      <h2 className="font-display text-lg font-semibold">{t("syncOperations")}</h2>
+    <div className="admin-section">
+      <h2 className="panel-title">{t("syncOperations")}</h2>
       <div className="mt-4">
         <button
           type="button"
           onClick={handleSync}
           disabled={syncing}
-          className="rounded-full bg-moss px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          className="rounded-full btn-ios-moss px-5 py-2.5 text-sm font-semibold disabled:opacity-60"
         >
           {syncing ? t("syncing") : t("syncNow")}
         </button>

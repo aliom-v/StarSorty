@@ -36,11 +36,10 @@ type ClassifyResult = {
 
 type Props = {
   t: TFunction;
-  message: string | null;
   setMessage: (msg: string | null) => void;
 };
 
-export default function ClassifySection({ t, message, setMessage }: Props) {
+export default function ClassifySection({ t, setMessage }: Props) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [statsError, setStatsError] = useState(false);
   const [statusError, setStatusError] = useState(false);
@@ -49,7 +48,9 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
   const [classifyLimit, setClassifyLimit] = useState("20");
   const [concurrency, setConcurrency] = useState("3");
   const [forceReclassify, setForceReclassify] = useState(false);
-  const [backgroundStatus, setBackgroundStatus] = useState<BackgroundStatus | null>(null);
+  const [backgroundStatus, setBackgroundStatus] = useState<BackgroundStatus | null>(
+    null,
+  );
 
   const loadStats = useCallback(async () => {
     try {
@@ -95,13 +96,13 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
   }, [loadBackgroundStatus, loadStats]);
 
   const parseClassifyLimit = () => {
-    const parsed = parseInt(classifyLimit, 10);
+    const parsed = Number.parseInt(classifyLimit, 10);
     if (Number.isNaN(parsed)) return 20;
     return Math.max(1, Math.min(500, parsed));
   };
 
   const parseConcurrency = () => {
-    const parsed = parseInt(concurrency, 10);
+    const parsed = Number.parseInt(concurrency, 10);
     if (Number.isNaN(parsed)) return 3;
     return Math.max(1, Math.min(10, parsed));
   };
@@ -132,7 +133,8 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
         setMessage(t("classifyQueued"));
       } else {
         const result = data as ClassifyResult;
-        const classified = typeof result.classified === "number" ? result.classified : 0;
+        const classified =
+          typeof result.classified === "number" ? result.classified : 0;
         const total = typeof result.total === "number" ? result.total : 0;
         const failed = typeof result.failed === "number" ? result.failed : 0;
         setMessage(t("classifiedWithValue", { classified, total, failed }));
@@ -200,51 +202,97 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
   const disableForegroundClassify = classifying || backgroundRunning;
 
   return (
-    <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
-      <h2 className="font-display text-lg font-semibold">{t("classifyOperations")}</h2>
-      {statsError ? (
-        <p className="mt-2 text-sm text-copper">{t("loadStatsError")}</p>
-      ) : stats && (
-        <p className="mt-2 text-sm text-ink/70">
-          {t("unclassifiedWithValue", { count: stats.unclassified })} / {t("totalWithValue", { count: stats.total })}
-        </p>
-      )}
-
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-ink/10 bg-surface/70 px-4 py-3 text-xs text-ink/70">
-        <span>{t("operationStatusWithValue", { value: simpleStatus })}</span>
+    <div className="admin-section">
+      <div className="panel-header flex-wrap items-start">
+        <div className="space-y-3">
+          <h2 className="panel-title">{t("classifyOperations")}</h2>
+          {statsError ? (
+            <div className="feedback-banner feedback-banner-error max-w-md">
+              <span className="feedback-icon" aria-hidden="true" />
+              <p className="text-sm leading-6 text-copper">{t("loadStatsError")}</p>
+            </div>
+          ) : stats ? (
+            <div className="flex flex-wrap gap-2">
+              <span className="pill-accent px-3 py-1 text-[11px]">
+                {t("unclassifiedWithValue", { count: stats.unclassified })}
+              </span>
+              <span className="pill-muted px-3 py-1 text-[11px]">
+                {t("totalWithValue", { count: stats.total })}
+              </span>
+            </div>
+          ) : null}
+        </div>
         <button
           type="button"
-          className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/70 transition hover:border-moss hover:text-moss"
+          className="rounded-full btn-ios-secondary px-3 py-1.5 text-xs font-semibold tracking-[0.08em]"
           onClick={() => setShowAdvanced((prev) => !prev)}
         >
           {showAdvanced ? t("hide") : t("advancedDetails")}
         </button>
       </div>
 
+      <div className="subtle-panel mt-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="info-label">{t("operationStatusWithValue", { value: simpleStatus })}</span>
+          <span
+            className={`${backgroundRunning ? "pill-accent text-moss" : "pill-muted text-ink/65"} px-3 py-1 text-[11px]`}
+          >
+            {simpleStatus}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="pill-muted px-3 py-1 text-[11px]">
+            {t("batchSize")}: {parseClassifyLimit()}
+          </span>
+          <span className="pill-muted px-3 py-1 text-[11px]">
+            {t("concurrency")}: {parseConcurrency()}
+          </span>
+        </div>
+      </div>
+
       {showAdvanced && statusError ? (
-        <div className="mt-4 rounded-2xl border border-copper/30 bg-copper/5 px-4 py-3">
-          <p className="text-xs text-copper">{t("loadStatusError")}</p>
+        <div className="feedback-banner feedback-banner-error mt-4">
+          <span className="feedback-icon" aria-hidden="true" />
+          <p className="text-xs leading-6 text-copper">{t("loadStatusError")}</p>
         </div>
-      ) : showAdvanced && backgroundStatus && (
-        <div className="mt-4 rounded-2xl border border-ink/10 bg-surface/70 px-4 py-3">
-          <p className="text-xs uppercase tracking-[0.2em] text-ink/60">{t("backgroundStatus")}</p>
-          <div className="mt-2 flex flex-wrap gap-3 text-xs text-ink/70">
-            <span>{backgroundRunning ? t("backgroundRunning") : t("backgroundIdle")}</span>
-            <span>{t("processedWithValue", { count: backgroundStatus.processed })}</span>
-            <span>{t("failedWithValue", { count: backgroundStatus.failed })}</span>
-            <span>{t("remainingWithValue", { count: backgroundStatus.remaining })}</span>
-            <span>{t("batchSize")}: {backgroundStatus.batch_size}</span>
-            <span>{t("concurrency")}: {backgroundStatus.concurrency}</span>
+      ) : showAdvanced && backgroundStatus ? (
+        <div className="subtle-panel mt-4">
+          <p className="info-label">{t("backgroundStatus")}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <span className="pill-muted px-3 py-1 text-[11px]">
+              {backgroundRunning ? t("backgroundRunning") : t("backgroundIdle")}
+            </span>
+            <span className="pill-muted px-3 py-1 text-[11px]">
+              {t("processedWithValue", { count: backgroundStatus.processed })}
+            </span>
+            <span className="pill-copper px-3 py-1 text-[11px]">
+              {t("failedWithValue", { count: backgroundStatus.failed })}
+            </span>
+            <span className="pill-muted px-3 py-1 text-[11px]">
+              {t("remainingWithValue", { count: backgroundStatus.remaining })}
+            </span>
+            <span className="pill-muted px-3 py-1 text-[11px]">
+              {t("batchSize")}: {backgroundStatus.batch_size}
+            </span>
+            <span className="pill-muted px-3 py-1 text-[11px]">
+              {t("concurrency")}: {backgroundStatus.concurrency}
+            </span>
           </div>
-          {backgroundStatus.last_error && backgroundStatus.last_error !== "Stopped by user" && (
-            <p className="mt-2 text-xs text-copper">{backgroundStatus.last_error}</p>
-          )}
+          {backgroundStatus.last_error &&
+            backgroundStatus.last_error !== "Stopped by user" && (
+              <div className="feedback-banner feedback-banner-error mt-3">
+                <span className="feedback-icon" aria-hidden="true" />
+                <p className="text-xs leading-6 text-copper">
+                  {backgroundStatus.last_error}
+                </p>
+              </div>
+            )}
         </div>
-      )}
+      ) : null}
 
       {showAdvanced && (
         <div className="mt-4 flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-2 rounded-full border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70">
+          <div className="pill-muted gap-2 px-3 py-2 text-xs">
             <span>{t("batchSize")}</span>
             <input
               type="number"
@@ -260,7 +308,7 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
               className="w-14 bg-transparent text-right text-ink outline-none"
             />
           </div>
-          <div className="flex items-center gap-2 rounded-full border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70">
+          <div className="pill-muted gap-2 px-3 py-2 text-xs">
             <span>{t("concurrency")}</span>
             <input
               type="number"
@@ -276,7 +324,7 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
               className="w-12 bg-transparent text-right text-ink outline-none"
             />
           </div>
-          <label className="flex items-center gap-2 rounded-full border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70">
+          <label className="pill-muted gap-2 px-3 py-2 text-xs">
             <input
               type="checkbox"
               checked={forceReclassify}
@@ -293,10 +341,10 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
           type="button"
           onClick={backgroundRunning ? handleBackgroundStop : handleBackgroundStart}
           disabled={disableBackgroundToggle}
-          className={`rounded-full px-5 py-2 text-sm font-semibold disabled:opacity-60 ${
+          className={`rounded-full px-5 py-2.5 text-sm font-semibold disabled:opacity-60 ${
             backgroundRunning
-              ? "border border-copper/40 bg-surface text-copper"
-              : "bg-moss text-white"
+              ? "btn-ios-secondary text-copper"
+              : "btn-ios-moss text-white"
           }`}
         >
           {backgroundRunning ? t("stop") : t("classify")}
@@ -305,7 +353,7 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
           type="button"
           onClick={handleClassifyAll}
           disabled={disableForegroundClassify}
-          className="rounded-full border border-ink/10 bg-surface px-5 py-2 text-sm font-semibold text-ink disabled:opacity-60"
+          className="rounded-full btn-ios-secondary px-5 py-2.5 text-sm font-semibold disabled:opacity-60"
         >
           {t("classifyAll")}
         </button>
@@ -314,13 +362,12 @@ export default function ClassifySection({ t, message, setMessage }: Props) {
             type="button"
             onClick={handleClassifyBatch}
             disabled={disableForegroundClassify}
-            className="rounded-full border border-ink/10 bg-surface px-5 py-2 text-sm font-semibold text-ink disabled:opacity-60"
+            className="rounded-full btn-ios-secondary px-5 py-2.5 text-sm font-semibold disabled:opacity-60"
           >
             {classifying ? t("classifying") : t("classifyNext")}
           </button>
         )}
       </div>
-      {message && <p className="mt-3 text-xs text-ink/70">{message}</p>}
     </div>
   );
 }

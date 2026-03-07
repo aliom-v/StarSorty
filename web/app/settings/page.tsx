@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/apiBase";
 import { getErrorMessage, readApiError } from "../lib/apiError";
@@ -49,88 +50,116 @@ export default function SettingsPage() {
   }, [loadSettings]);
 
   return (
-    <main className="min-h-screen px-6 py-10 lg:px-12">
-      <section className="mx-auto max-w-4xl space-y-6">
-        <header className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
-          <p className="text-sm uppercase tracking-[0.2em] text-copper">
-            {t("settings")}
-          </p>
-          <h1 className="mt-3 font-display text-3xl font-semibold">
-            {t("settingsPageTitle")}
-          </h1>
-          <p className="mt-2 text-sm text-ink/70">
-            {t("settingsPageSubtitle")}
-          </p>
-          <div className="mt-4">
-            <a
+    <main className="min-h-screen px-4 py-8 md:px-12 md:py-12 bg-transparent">
+      <div className="mx-auto max-w-4xl space-y-12 animate-fade-in">
+        <header className="hero-surface soft-elevated relative overflow-hidden rounded-[2.5rem] p-7 md:p-8">
+          <div className="hero-orb hero-orb-moss" />
+          <div className="hero-orb hero-orb-copper" />
+          <div className="relative flex flex-col gap-8 md:flex-row md:items-end md:justify-between">
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-8 bg-copper rounded-full" />
+              <p className="section-kicker text-copper">
+                {t("settings")}
+              </p>
+            </div>
+            <h1 className="section-title text-4xl font-extrabold md:text-5xl">
+              {t("settingsPageTitle")}
+            </h1>
+            <p className="max-w-2xl text-base leading-relaxed text-soft md:text-lg">
+              {t("settingsPageSubtitle")}
+            </p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+             <Link
+              href="/"
+              className="flex items-center gap-2 rounded-full btn-ios-secondary px-6 py-2.5 text-xs font-semibold tracking-[0.08em]"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              {t("back")}
+            </Link>
+            <Link
               href="/admin/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex rounded-full bg-moss px-4 py-2 text-sm font-semibold text-white"
+              className="flex items-center gap-2 rounded-full btn-ios-primary px-6 py-2.5 text-xs font-semibold tracking-[0.08em]"
             >
               {t("goToAdmin")}
-            </a>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </Link>
+          </div>
           </div>
         </header>
 
         {!settings ? (
-          <section className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
-            <p className="text-sm text-ink/70">
-              {loading ? t("loadingSettings") : message || t("unknownError")}
-            </p>
-            {!loading && (
-              <button
-                type="button"
-                onClick={loadSettings}
-                className="mt-4 rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink"
-              >
-                {t("retry")}
-              </button>
+          <section className="panel-muted p-12 text-center">
+             {loading ? (
+              <div className="flex flex-col items-center gap-4">
+                <svg className="w-8 h-8 animate-spin text-moss" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <p className="text-sm font-bold text-ink/40">{t("loadingSettings")}</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                 <p className="text-sm font-bold text-copper">{message || t("unknownError")}</p>
+                 <button
+                  type="button"
+                  onClick={loadSettings}
+                  className="rounded-full btn-ios-secondary px-6 py-2 text-xs font-semibold tracking-[0.08em]"
+                >
+                  {t("retry")}
+                </button>
+              </div>
             )}
           </section>
         ) : (
-          <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
-            <h2 className="font-display text-lg font-semibold">{t("currentConfig")}</h2>
-            <div className="mt-4 space-y-3">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <div className="text-xs uppercase tracking-wider text-ink/60">
-                    {t("githubMode")}
-                  </div>
-                  <div className="mt-1 text-sm">
-                    {settings.github_mode}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-wider text-ink/60">
-                    {t("classifyMode")}
-                  </div>
-                  <div className="mt-1 text-sm">
-                    {settings.classify_mode}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-wider text-ink/60">
-                    {t("autoClassifyAfterSync")}
-                  </div>
-                  <div className="mt-1 text-sm">
-                    {settings.auto_classify_after_sync ? "✓" : "-"}
-                  </div>
+          <div className="admin-section">
+            <h2 className="panel-title mb-8">
+              {t("currentConfig")}
+            </h2>
+            <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
+              <div className="info-tile space-y-2 p-6">
+                <span className="info-label">
+                  {t("githubMode")}
+                </span>
+                <p className="text-lg font-bold text-ink">
+                  {settings.github_mode}
+                </p>
+              </div>
+              <div className="info-tile space-y-2 p-6 bg-moss/5 dark:bg-moss/10">
+                <span className="info-label text-moss/45">
+                  {t("classifyMode")}
+                </span>
+                <p className="text-lg font-bold text-moss">
+                  {settings.classify_mode}
+                </p>
+              </div>
+              <div className="info-tile space-y-2 p-6 bg-copper/5 dark:bg-copper/10">
+                <span className="info-label text-copper/45">
+                  {t("autoClassifyAfterSync")}
+                </span>
+                <div className="flex items-center gap-2">
+                   {settings.auto_classify_after_sync ? (
+                      <svg className="w-5 h-5 text-copper" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                      </svg>
+                   ) : (
+                      <svg className="w-5 h-5 text-ink/20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                   )}
+                   <p className={`text-lg font-bold ${settings.auto_classify_after_sync ? "text-copper" : "text-ink/20"}`}>
+                    {settings.auto_classify_after_sync ? "Enabled" : "Disabled"}
+                  </p>
                 </div>
               </div>
             </div>
           </div>
         )}
-
-        <div className="flex flex-wrap items-center gap-3">
-          <a
-            href="/"
-            className="rounded-full border border-ink/10 bg-surface px-5 py-2 text-sm font-semibold text-ink"
-          >
-            {t("back")}
-          </a>
-        </div>
-      </section>
+      </div>
     </main>
   );
 }

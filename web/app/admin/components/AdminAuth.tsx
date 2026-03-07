@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { setSessionToken } from "../../lib/admin";
 import { API_BASE_URL } from "../../lib/apiBase";
@@ -42,24 +43,28 @@ export default function AdminAuth({ t, onAuthenticated }: Props) {
   return (
     <main className="min-h-screen px-6 py-10 lg:px-12">
       <section className="mx-auto max-w-md space-y-6">
-        <header className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft text-center">
-          <p className="text-sm uppercase tracking-[0.2em] text-copper">
+        <header className="hero-surface soft-elevated relative overflow-hidden rounded-[2.5rem] p-8 text-center">
+          <div className="hero-orb hero-orb-moss" />
+          <div className="hero-orb hero-orb-copper" />
+          <div className="relative">
+          <p className="section-kicker text-copper">
             {t("admin")}
           </p>
-          <h1 className="mt-3 font-display text-3xl font-semibold">
+          <h1 className="mt-3 section-title text-3xl font-semibold">
             {t("adminPageTitle")}
           </h1>
-          <p className="mt-2 text-sm text-ink/70">
+          <p className="mt-2 text-sm text-soft">
             {t("enterPassword")}
           </p>
+          </div>
         </header>
 
-        <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
+        <div className="admin-section">
           <label className="block text-sm">
             {t("password")}
             <input
               type="password"
-              className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
+              className="form-input"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && verifyPassword()}
@@ -67,25 +72,28 @@ export default function AdminAuth({ t, onAuthenticated }: Props) {
             />
           </label>
           {authError && (
-            <p className="mt-2 text-xs text-copper">{authError}</p>
+            <div className="feedback-banner feedback-banner-error mt-4">
+              <span className="feedback-icon" aria-hidden="true" />
+              <p className="text-xs leading-6 text-copper">{authError}</p>
+            </div>
           )}
           <button
             type="button"
             onClick={verifyPassword}
             disabled={verifying}
-            className="mt-4 w-full rounded-full bg-moss px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            className="mt-4 w-full rounded-full btn-ios-moss px-5 py-2.5 text-sm font-semibold disabled:opacity-60"
           >
             {verifying ? t("verifying") : t("login")}
           </button>
         </div>
 
         <div className="text-center">
-          <a
+          <Link
             href="/"
             className="text-sm text-ink/60 hover:text-ink"
           >
             {t("back")}
-          </a>
+          </Link>
         </div>
       </section>
     </main>

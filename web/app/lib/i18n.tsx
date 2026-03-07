@@ -29,8 +29,10 @@ const translations = {
     users: "Users",
     stars: "Stars",
     status: "Status",
+    unclassified: "Unclassified",
     all: "All",
     any: "Any",
+    clear: "Clear",
     search: "Search",
     lastSync: "Last sync",
     lastSyncWithValue: "Last sync: {value}",
@@ -144,7 +146,20 @@ const translations = {
     category: "Category",
     subcategory: "Subcategory",
     tags: "Tags",
+    aiTags: "AI tags",
     topics: "Topics",
+    filtersWithValue: "Filters: {count}",
+    repoDetails: "Repository details",
+    classification: "Classification",
+    starsLabel: "Stars",
+    forksLabel: "Forks",
+    pushedLabel: "Pushed",
+    starredLabel: "Starred",
+    updatedLabel: "Updated",
+    providerLabel: "Provider",
+    modelLabel: "Model",
+    confidenceLabel: "Confidence",
+    lastFetchedWithValue: "Last fetched: {value}",
     forksWithValue: "Forks: {count}",
     pushedWithValue: "Pushed: {date}",
     starredWithValue: "Starred: {date}",
@@ -156,6 +171,7 @@ const translations = {
     selectedTags: "Selected Tags",
     clearTags: "Clear",
     tagFilterMode: "Tag mode",
+    sortBy: "Sort by",
     tagFilterModeWithValue: "Mode: {value}",
     sortStars: "Sort: Stars",
     sortUpdated: "Sort: Updated",
@@ -249,8 +265,10 @@ const translations = {
     users: "用户",
     stars: "星标",
     status: "状态",
+    unclassified: "未分类",
     all: "全部",
     any: "不限",
+    clear: "清空",
     search: "搜索",
     lastSync: "上次同步",
     lastSyncWithValue: "上次同步：{value}",
@@ -364,7 +382,20 @@ const translations = {
     category: "分类",
     subcategory: "子类",
     tags: "标签",
+    aiTags: "AI 标签",
     topics: "主题",
+    filtersWithValue: "筛选：{count}",
+    repoDetails: "仓库详情",
+    classification: "分类结果",
+    starsLabel: "星标",
+    forksLabel: "分叉",
+    pushedLabel: "推送",
+    starredLabel: "星标时间",
+    updatedLabel: "更新",
+    providerLabel: "提供方",
+    modelLabel: "模型",
+    confidenceLabel: "置信度",
+    lastFetchedWithValue: "最近拉取：{value}",
     forksWithValue: "分叉：{count}",
     pushedWithValue: "推送：{date}",
     starredWithValue: "星标：{date}",
@@ -376,6 +407,7 @@ const translations = {
     selectedTags: "已选标签",
     clearTags: "清除",
     tagFilterMode: "标签模式",
+    sortBy: "排序方式",
     tagFilterModeWithValue: "当前模式：{value}",
     sortStars: "排序：星标",
     sortUpdated: "排序：更新时间",
@@ -490,16 +522,15 @@ const readStoredLocale = (): Locale | null => {
 };
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>("zh");
+  const [locale, setLocaleState] = useState<Locale>(
+    () => readStoredLocale() ?? getDefaultLocale()
+  );
 
   useEffect(() => {
-    const stored = readStoredLocale();
-    const initialLocale = stored ?? getDefaultLocale();
-    setLocaleState(initialLocale);
     if (typeof document !== "undefined") {
-      document.documentElement.lang = initialLocale;
+      document.documentElement.lang = locale;
     }
-  }, []);
+  }, [locale]);
 
   const setLocale = useCallback((nextLocale: Locale) => {
     setLocaleState(nextLocale);

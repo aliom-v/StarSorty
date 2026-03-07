@@ -40,7 +40,10 @@ export default function SettingsSection({
 }: Props) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const updateField = (key: keyof Settings, value: string | number | boolean) => {
+  const updateField = (
+    key: keyof Settings,
+    value: string | number | boolean,
+  ) => {
     setSettings({ ...settings, [key]: value });
   };
 
@@ -80,62 +83,75 @@ export default function SettingsSection({
   };
 
   return (
-    <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-display text-lg font-semibold">{t("configSettings")}</h2>
+    <div className="admin-section">
+      <div className="panel-header flex-wrap">
+        <div className="space-y-2">
+          <h2 className="panel-title">{t("configSettings")}</h2>
+          <p className="text-sm text-ink/60">{t("currentConfig")}</p>
+        </div>
         <button
           type="button"
-          className="rounded-full border border-ink/10 px-3 py-1 text-xs text-ink/70 transition hover:border-moss hover:text-moss"
+          className="rounded-full btn-ios-secondary px-3 py-1.5 text-xs font-semibold tracking-[0.08em]"
           onClick={() => setShowAdvanced((prev) => !prev)}
         >
           {showAdvanced ? t("hide") : t("advancedDetails")}
         </button>
       </div>
+
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         {showAdvanced && (
-          <label className="text-sm">
-            {t("githubUsername")}
+          <label className="block space-y-2">
+            <span className="info-label">{t("githubUsername")}</span>
             <input
-              className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
+              className="form-input mt-0"
               value={settings.github_username || ""}
               onChange={(e) => updateField("github_username", e.target.value)}
             />
           </label>
         )}
+
         {showAdvanced && (
-          <label className="text-sm">
-            {t("githubTargetUsername")}
+          <label className="block space-y-2">
+            <span className="info-label">{t("githubTargetUsername")}</span>
             <input
-              className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
+              className="form-input mt-0"
               value={settings.github_target_username || ""}
-              onChange={(e) => updateField("github_target_username", e.target.value)}
+              onChange={(e) =>
+                updateField("github_target_username", e.target.value)
+              }
             />
           </label>
         )}
-        <label className="text-sm md:col-span-2">
-          {t("githubUsernames")}
+
+        <label className="block space-y-2 md:col-span-2">
+          <span className="info-label">{t("githubUsernames")}</span>
           <input
-            className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
+            className="form-input mt-0"
             value={settings.github_usernames || ""}
             onChange={(e) => updateField("github_usernames", e.target.value)}
           />
         </label>
+
         {showAdvanced && (
-          <label className="text-sm">
-            {t("githubIncludeSelf")}
-            <div className="mt-2 flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={settings.github_include_self}
-                onChange={(e) => updateField("github_include_self", e.target.checked)}
-              />
+          <label className="toggle-card">
+            <div>
+              <span className="info-label">{t("githubIncludeSelf")}</span>
             </div>
+            <input
+              type="checkbox"
+              checked={settings.github_include_self}
+              onChange={(e) =>
+                updateField("github_include_self", e.target.checked)
+              }
+              className="h-4 w-4 accent-moss"
+            />
           </label>
         )}
-        <label className="text-sm">
-          {t("githubMode")}
+
+        <label className="block space-y-2">
+          <span className="info-label">{t("githubMode")}</span>
           <select
-            className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
+            className="form-input mt-0"
             value={settings.github_mode || "merge"}
             onChange={(e) => updateField("github_mode", e.target.value)}
           >
@@ -143,10 +159,11 @@ export default function SettingsSection({
             <option value="group">Group</option>
           </select>
         </label>
-        <label className="text-sm">
-          {t("classifyMode")}
+
+        <label className="block space-y-2">
+          <span className="info-label">{t("classifyMode")}</span>
           <select
-            className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
+            className="form-input mt-0"
             value={settings.classify_mode || "ai_only"}
             onChange={(e) => updateField("classify_mode", e.target.value)}
           >
@@ -155,32 +172,38 @@ export default function SettingsSection({
             <option value="rules_only">Rules only</option>
           </select>
         </label>
-        <label className="text-sm">
-          {t("autoClassifyAfterSync")}
-          <div className="mt-2 flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={!!settings.auto_classify_after_sync}
-              onChange={(e) => updateField("auto_classify_after_sync", e.target.checked)}
-            />
+
+        <label className="toggle-card">
+          <div>
+            <span className="info-label">{t("autoClassifyAfterSync")}</span>
           </div>
-        </label>
-        <label className="text-sm">
-          {t("syncCron")}
           <input
-            className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
+            type="checkbox"
+            checked={!!settings.auto_classify_after_sync}
+            onChange={(e) =>
+              updateField("auto_classify_after_sync", e.target.checked)
+            }
+            className="h-4 w-4 accent-moss"
+          />
+        </label>
+
+        <label className="block space-y-2">
+          <span className="info-label">{t("syncCron")}</span>
+          <input
+            className="form-input mt-0"
             value={settings.sync_cron || ""}
             onChange={(e) => updateField("sync_cron", e.target.value)}
           />
         </label>
-        <label className="text-sm">
-          {t("syncTimeout")}
+
+        <label className="block space-y-2">
+          <span className="info-label">{t("syncTimeout")}</span>
           <input
             type="number"
             min={1}
             max={3600}
             step={1}
-            className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
+            className="form-input mt-0"
             value={settings.sync_timeout}
             onChange={(e) => {
               const parsed = Number.parseInt(e.target.value, 10);
@@ -193,11 +216,12 @@ export default function SettingsSection({
             }}
           />
         </label>
+
         {showAdvanced && (
-          <label className="text-sm md:col-span-2">
-            {t("rulesJson")}
+          <label className="block space-y-2 md:col-span-2">
+            <span className="info-label">{t("rulesJson")}</span>
             <textarea
-              className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-xs font-mono"
+              className="form-textarea mt-0 text-xs font-mono"
               rows={4}
               value={settings.rules_json || ""}
               onChange={(e) => updateField("rules_json", e.target.value)}
@@ -205,12 +229,13 @@ export default function SettingsSection({
           </label>
         )}
       </div>
-      <div className="mt-4">
+
+      <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
         <button
           type="button"
           onClick={handleSave}
           disabled={saving}
-          className="rounded-full bg-moss px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          className="rounded-full btn-ios-moss px-5 py-2.5 text-sm font-semibold disabled:opacity-60"
         >
           {saving ? t("saving") : t("save")}
         </button>

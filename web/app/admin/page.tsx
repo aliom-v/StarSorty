@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
   buildAdminHeaders,
@@ -78,19 +79,14 @@ export default function AdminPage() {
   }, [authenticated, loadSettings]);
 
   if (!authenticated) {
-    return (
-      <AdminAuth
-        t={t}
-        onAuthenticated={() => setAuthenticated(true)}
-      />
-    );
+    return <AdminAuth t={t} onAuthenticated={() => setAuthenticated(true)} />;
   }
 
   if (loading || !settings) {
     return (
       <main className="min-h-screen px-6 py-10 lg:px-12">
-        <section className="mx-auto max-w-4xl rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
-          <p className="text-sm text-ink/70">{t("loadingSettings")}</p>
+        <section className="mx-auto max-w-4xl panel-muted p-8">
+          <p className="text-sm text-soft">{t("loadingSettings")}</p>
         </section>
       </main>
     );
@@ -99,32 +95,46 @@ export default function AdminPage() {
   return (
     <main className="min-h-screen px-6 py-10 lg:px-12">
       <section className="mx-auto max-w-4xl space-y-6">
-        <header className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
-          <div className="flex items-center justify-between">
+        <header className="hero-surface soft-elevated relative overflow-hidden rounded-[2.5rem] p-8">
+          <div className="hero-orb hero-orb-moss" />
+          <div className="hero-orb hero-orb-copper" />
+          <div className="relative flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-sm uppercase tracking-[0.2em] text-copper">
-                {t("admin")}
-              </p>
-              <h1 className="mt-3 font-display text-3xl font-semibold">
+              <p className="section-kicker text-copper">{t("admin")}</p>
+              <h1 className="mt-3 section-title text-3xl font-semibold">
                 {t("adminPageTitle")}
               </h1>
-              <p className="mt-2 text-sm text-ink/70">
-                {t("adminPageSubtitle")}
-              </p>
+              <p className="mt-2 text-sm text-soft">{t("adminPageSubtitle")}</p>
             </div>
             <button
               type="button"
               onClick={handleLogout}
-              className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink hover:border-copper hover:text-copper"
+              className="rounded-full btn-ios-secondary px-4 py-2 text-xs font-semibold tracking-[0.08em] hover:text-copper"
             >
               {t("logout")}
             </button>
           </div>
         </header>
 
+        {message && (
+          <div className="feedback-banner">
+            <span className="feedback-icon" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium leading-6 text-ink">{message}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMessage(null)}
+              className="rounded-full btn-ios-secondary px-3 py-1.5 text-[11px] font-semibold text-ink/70"
+            >
+              {t("hide")}
+            </button>
+          </div>
+        )}
+
         <SyncSection t={t} setMessage={setMessage} />
 
-        <ClassifySection t={t} message={message} setMessage={setMessage} />
+        <ClassifySection t={t} setMessage={setMessage} />
 
         <FailedReposSection t={t} setMessage={setMessage} />
 
@@ -141,19 +151,19 @@ export default function AdminPage() {
           setSaving={setSaving}
         />
 
-        <div className="flex flex-wrap items-center gap-3">
-          <a
+        <div className="subtle-panel flex flex-wrap items-center gap-3">
+          <Link
             href="/"
-            className="rounded-full border border-ink/10 bg-surface px-5 py-2 text-sm font-semibold text-ink"
+            className="rounded-full btn-ios-secondary px-5 py-2 text-sm font-semibold"
           >
             {t("back")}
-          </a>
-          <a
+          </Link>
+          <Link
             href="/settings/"
-            className="rounded-full border border-ink/10 bg-surface px-5 py-2 text-sm font-semibold text-ink"
+            className="rounded-full btn-ios-secondary px-5 py-2 text-sm font-semibold"
           >
             {t("settings")}
-          </a>
+          </Link>
         </div>
       </section>
     </main>

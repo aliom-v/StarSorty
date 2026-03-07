@@ -40,15 +40,15 @@ export default function ExportSection({ t, setMessage }: Props) {
   };
 
   return (
-    <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
-      <h2 className="font-display text-lg font-semibold">{t("exportData")}</h2>
+    <div className="admin-section">
+      <h2 className="panel-title">{t("exportData")}</h2>
       <p className="mt-2 text-sm text-ink/70">{t("exportDataDesc")}</p>
       <div className="mt-4">
         <button
           type="button"
           onClick={handleExportObsidian}
           disabled={exporting}
-          className="rounded-full bg-moss px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          className="rounded-full btn-ios-moss px-5 py-2.5 text-sm font-semibold disabled:opacity-60"
         >
           {exporting ? t("exporting") : t("exportToObsidian")}
         </button>

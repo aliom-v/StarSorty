@@ -45,27 +45,20 @@ const applyTheme = (theme: Theme) => {
 };
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<Theme>("light");
+  const [theme, setTheme] = useState<Theme>(
+    () => readStoredTheme() ?? getSystemTheme()
+  );
 
   useEffect(() => {
-    const stored = readStoredTheme();
-    if (stored) {
-      setTheme(stored);
-      applyTheme(stored);
-      return;
-    }
+    applyTheme(theme);
+  }, [theme]);
 
-    const systemTheme = getSystemTheme();
-    setTheme(systemTheme);
-    applyTheme(systemTheme);
-
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const handleChange = () => {
       if (readStoredTheme()) return;
-      const nextTheme = media.matches ? "dark" : "light";
-      setTheme(nextTheme);
-      applyTheme(nextTheme);
+      setTheme(media.matches ? "dark" : "light");
     };
 
     if (media.addEventListener) {
@@ -80,7 +73,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const toggleTheme = useCallback(() => {
     const nextTheme = theme === "dark" ? "light" : "dark";
     setTheme(nextTheme);
-    applyTheme(nextTheme);
     try {
       window.localStorage.setItem(STORAGE_KEY, nextTheme);
     } catch {}

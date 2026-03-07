@@ -221,14 +221,17 @@ export default function PersonalizationSection({ t, setMessage }: Props) {
   };
 
   return (
-    <div className="rounded-3xl border border-ink/10 bg-surface/80 p-8 shadow-soft">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-display text-lg font-semibold">
-          {t("personalizationSettings")}
-        </h2>
+    <div className="admin-section">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-2">
+          <h2 className="panel-title">{t("personalizationSettings")}</h2>
+          <p className="text-sm text-ink/60">
+            {t("userId")}: <span className="font-medium text-ink">{activeUserId}</span>
+          </p>
+        </div>
         <button
           type="button"
-          className="rounded-full border border-ink/10 px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss disabled:opacity-60"
+          className="rounded-full btn-ios-secondary px-4 py-2 text-xs font-semibold text-ink disabled:opacity-60"
           onClick={loadPreference}
           disabled={loading}
         >
@@ -236,41 +239,44 @@ export default function PersonalizationSection({ t, setMessage }: Props) {
         </button>
       </div>
 
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <label className="text-sm">
-          {t("userId")}
+      <div className="mt-6 grid gap-4 md:grid-cols-[minmax(0,1.3fr)_minmax(0,0.7fr)]">
+        <label className="block space-y-2">
+          <span className="info-label">{t("userId")}</span>
           <input
-            className="mt-2 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-sm"
+            className="form-input mt-0"
             value={userIdInput}
             onChange={(event) => setUserIdInput(event.target.value)}
             placeholder="global"
           />
         </label>
 
-        <div className="text-xs text-ink/60">
-          <p>{t("lastSyncWithValue", { value: updatedAt || t("never") })}</p>
+        <div className="info-tile space-y-2 p-5">
+          <span className="info-label">{t("interestProfile")}</span>
+          <p className="text-sm text-ink/65">
+            {t("lastSyncWithValue", { value: updatedAt || t("never") })}
+          </p>
           {profile?.updated_at && (
-            <p className="mt-1">
+            <p className="text-sm text-moss">
               {t("updatedWithValue", { date: profile.updated_at })}
             </p>
           )}
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <label className="text-sm">
-          {t("tagMapping")}
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <label className="block space-y-2">
+          <span className="info-label">{t("tagMapping")}</span>
           <textarea
-            className="mt-2 h-36 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-xs"
+            className="form-textarea mt-0 h-36 text-xs"
             value={mappingText}
             onChange={(event) => setMappingText(event.target.value)}
             placeholder={"source_tag_id=target_tag_id"}
           />
         </label>
-        <label className="text-sm">
-          {t("rulePriority")}
+        <label className="block space-y-2">
+          <span className="info-label">{t("rulePriority")}</span>
           <textarea
-            className="mt-2 h-36 w-full rounded-2xl border border-ink/10 bg-surface px-3 py-2 text-xs"
+            className="form-textarea mt-0 h-36 text-xs"
             value={priorityText}
             onChange={(event) => setPriorityText(event.target.value)}
             placeholder={"rule_id=2"}
@@ -278,43 +284,53 @@ export default function PersonalizationSection({ t, setMessage }: Props) {
         </label>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
+      <div className="mt-5 flex flex-wrap items-center gap-3">
         <button
           type="button"
           onClick={handleSave}
           disabled={saving}
-          className="rounded-full bg-moss px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          className="rounded-full btn-ios-moss px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
         >
           {saving ? t("saving") : t("savePreferences")}
         </button>
         <button
           type="button"
-          className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss"
+          className={`rounded-full btn-ios-secondary px-4 py-2 text-xs font-semibold ${showSamples ? "text-moss" : "text-ink"}`}
           onClick={() => setShowSamples((prev) => !prev)}
         >
           {showSamples ? t("hide") : t("trainingSamples")}
         </button>
         <button
           type="button"
-          className="rounded-full border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-moss hover:text-moss"
+          className={`rounded-full btn-ios-secondary px-4 py-2 text-xs font-semibold ${showFewshot ? "text-moss" : "text-ink"}`}
           onClick={() => setShowFewshot((prev) => !prev)}
         >
           {showFewshot ? t("hide") : t("fewshotData")}
         </button>
       </div>
 
-      {localError && <p className="mt-3 text-xs text-copper">{localError}</p>}
+      {localError && (
+        <div className="feedback-banner feedback-banner-error mt-4">
+          <span className="feedback-icon" aria-hidden="true" />
+          <p className="text-xs leading-6 text-copper">{localError}</p>
+        </div>
+      )}
 
-      <div className="mt-6 rounded-2xl border border-ink/10 bg-surface/70 p-4">
-        <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
-          {t("interestProfile")}
-        </p>
+      <div className="subtle-panel mt-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="info-label">{t("interestProfile")}</p>
+          {!!profile?.top_topics?.length && (
+            <span className="pill-accent px-3 py-1 text-[11px]">
+              {profile.top_topics.length}
+            </span>
+          )}
+        </div>
         {profile?.top_topics?.length ? (
           <div className="mt-3 flex flex-wrap gap-2">
             {profile.top_topics.slice(0, 20).map((item) => (
               <span
                 key={item.topic}
-                className="rounded-full border border-ink/10 bg-surface px-3 py-1 text-xs text-ink/70"
+                className="pill-muted px-3 py-1 text-[11px] text-ink/75"
               >
                 {item.topic} ({item.score.toFixed(2)})
               </span>
@@ -326,10 +342,8 @@ export default function PersonalizationSection({ t, setMessage }: Props) {
       </div>
 
       {showSamples && (
-        <div className="mt-4 rounded-2xl border border-ink/10 bg-surface/70 p-4">
-          <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
-            {t("trainingSamples")}
-          </p>
+        <div className="subtle-panel mt-4">
+          <p className="info-label">{t("trainingSamples")}</p>
           <div className="mt-3 space-y-2">
             {samples.length === 0 ? (
               <p className="text-xs text-ink/60">{t("noData")}</p>
@@ -337,10 +351,10 @@ export default function PersonalizationSection({ t, setMessage }: Props) {
               samples.slice(0, 20).map((sample) => (
                 <div
                   key={sample.id}
-                  className="rounded-xl border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70"
+                  className="subtle-panel border-ink/5 bg-surface/80 text-xs text-ink/70"
                 >
-                  <div className="font-medium">{sample.full_name}</div>
-                  <div className="mt-1">
+                  <div className="font-medium text-ink">{sample.full_name}</div>
+                  <div className="mt-1 leading-6">
                     {sample.before_category || "?"}/{sample.before_subcategory || "?"}{" "}
                     → {sample.after_category || "?"}/{sample.after_subcategory || "?"}
                   </div>
@@ -352,10 +366,8 @@ export default function PersonalizationSection({ t, setMessage }: Props) {
       )}
 
       {showFewshot && (
-        <div className="mt-4 rounded-2xl border border-ink/10 bg-surface/70 p-4">
-          <p className="text-xs uppercase tracking-[0.2em] text-ink/60">
-            {t("fewshotData")}
-          </p>
+        <div className="subtle-panel mt-4">
+          <p className="info-label">{t("fewshotData")}</p>
           <div className="mt-3 space-y-2">
             {fewshotItems.length === 0 ? (
               <p className="text-xs text-ink/60">{t("noData")}</p>
@@ -363,14 +375,28 @@ export default function PersonalizationSection({ t, setMessage }: Props) {
               fewshotItems.slice(0, 10).map((item, idx) => (
                 <div
                   key={`${item.input.full_name || "repo"}-${idx}`}
-                  className="rounded-xl border border-ink/10 bg-surface px-3 py-2 text-xs text-ink/70"
+                  className="subtle-panel border-ink/5 bg-surface/80 text-xs text-ink/70"
                 >
-                  <div className="font-medium">{item.input.full_name}</div>
-                  <div className="mt-1">
+                  <div className="font-medium text-ink">
+                    {item.input.full_name}
+                  </div>
+                  <div className="mt-1 leading-6">
                     {item.output.category}/{item.output.subcategory}
                   </div>
                   {item.output.tag_ids && item.output.tag_ids.length > 0 && (
-                    <div className="mt-1">{item.output.tag_ids.join(", ")}</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {item.output.tag_ids.map((tagId) => (
+                        <span
+                          key={`${item.input.full_name || "repo"}-${idx}-${tagId}`}
+                          className="pill-muted px-2.5 py-1 text-[11px]"
+                        >
+                          {tagId}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {item.note && (
+                    <p className="mt-2 text-xs text-ink/55">{item.note}</p>
                   )}
                 </div>
               ))
