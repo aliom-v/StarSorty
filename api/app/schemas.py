@@ -295,6 +295,33 @@ class StatsResponse(BaseModel):
     users: List[StatsItem]
 
 
+class ConsistencyFtsResponse(BaseModel):
+    enabled: bool
+    repos_total: int
+    fts_total: int
+    drift: int
+    consistent: bool
+
+
+class ConsistencyIssueItem(BaseModel):
+    code: str
+    level: str
+    count: int
+    detail: str
+    sample_full_names: List[str] = Field(default_factory=list)
+
+
+class ConsistencyReportResponse(BaseModel):
+    checked_at: str
+    ok: bool
+    repos_total: int
+    issues_total: int
+    error_count: int
+    warning_count: int
+    fts: ConsistencyFtsResponse
+    issues: List[ConsistencyIssueItem]
+
+
 class FailedRepoItem(BaseModel):
     full_name: str
     name: str

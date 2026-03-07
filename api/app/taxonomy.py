@@ -1,9 +1,42 @@
+import logging
+import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List
 
 import yaml
 
 from .taxonomy_schema import build_taxonomy_schema, normalize_tag_ids, tag_ids_to_labels
+
+logger = logging.getLogger("starsorty.taxonomy")
+
+
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s=%r, fallback to %s", name, raw, default)
+        return default
+    if value < minimum:
+        logger.warning("Out-of-range %s=%r, fallback to %s", name, raw, default)
+        return default
+    return value
+
+
+TAXONOMY_CACHE_TTL_SECONDS = _env_int("TAXONOMY_CACHE_TTL_SECONDS", 300, minimum=0)
+_taxonomy_cache: Dict[str, Dict[str, Any]] = {}
+
+
+def _taxonomy_cache_key(path: str) -> str:
+    return str(Path(path).resolve())
+
+
+def _load_taxonomy_from_file(file_path: Path) -> Dict[str, Any]:
+    data = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
+    return build_taxonomy_schema(data)
 
 
 def load_taxonomy(path: str) -> Dict[str, Any]:
@@ -12,8 +45,22 @@ def load_taxonomy(path: str) -> Dict[str, Any]:
     file_path = Path(path)
     if not file_path.exists():
         raise FileNotFoundError(f"Taxonomy file not found: {file_path}")
-    data = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
-    return build_taxonomy_schema(data)
+    cache_key = _taxonomy_cache_key(path)
+    mtime_ns = file_path.stat().st_mtime_ns
+    ttl = TAXONOMY_CACHE_TTL_SECONDS
+    if ttl > 0:
+        cached = _taxonomy_cache.get(cache_key)
+        now = time.monotonic()
+        if cached and cached.get("mtime_ns") == mtime_ns and (now - float(cached.get("loaded_at", 0.0))) <= ttl:
+            return cached["data"]
+
+    parsed = _load_taxonomy_from_file(file_path)
+    _taxonomy_cache[cache_key] = {
+        "mtime_ns": mtime_ns,
+        "loaded_at": time.monotonic(),
+        "data": parsed,
+    }
+    return parsed
 
 
 def format_taxonomy_for_prompt(taxonomy: Dict[str, Any]) -> str:

@@ -29,6 +29,8 @@ coverage/
 tests/
 **/tests/
 test_*
+!api/tests/
+!api/tests/*.py
 pytest.ini
 *-dev.*
 *.draft
@@ -52,3 +54,5 @@ scripts/test_ai.ps1
 openspec/
 **/openspec/
 CLAUDE.md
+
+.omx/

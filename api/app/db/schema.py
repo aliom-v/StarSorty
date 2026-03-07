@@ -330,6 +330,16 @@ async def init_db() -> None:
         )
         await conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS stats_snapshots (
+                snapshot_key TEXT PRIMARY KEY,
+                version INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        await conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS override_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 full_name TEXT NOT NULL,

@@ -1,7 +1,32 @@
 import json
+import logging
+import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger("starsorty.rules")
+
+
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s=%r, fallback to %s", name, raw, default)
+        return default
+    if value < minimum:
+        logger.warning("Out-of-range %s=%r, fallback to %s", name, raw, default)
+        return default
+    return value
+
+
+RULES_CACHE_TTL_SECONDS = _env_int("RULES_CACHE_TTL_SECONDS", 300, minimum=0)
+_rules_raw_cache: Dict[str, Dict[str, Any]] = {}
+_rules_file_cache: Dict[str, Dict[str, Any]] = {}
 
 
 def _as_keyword_list(value: Any) -> List[str]:
@@ -72,22 +97,47 @@ def _parse_rules(data: Any) -> List[Dict[str, Any]]:
 
 
 def load_rules(raw: str, fallback_path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    ttl = RULES_CACHE_TTL_SECONDS
     if raw:
+        if ttl > 0:
+            cached = _rules_raw_cache.get(raw)
+            now = time.monotonic()
+            if cached and (now - float(cached.get("loaded_at", 0.0))) <= ttl:
+                return list(cached["data"])
+
+        parsed_from_raw: List[Dict[str, Any]] = []
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
             data = None
         if data:
-            parsed = _parse_rules(data)
-            if parsed:
-                return parsed
+            parsed_from_raw = _parse_rules(data)
+            if parsed_from_raw:
+                _rules_raw_cache[raw] = {
+                    "loaded_at": time.monotonic(),
+                    "data": list(parsed_from_raw),
+                }
+                return parsed_from_raw
 
     if fallback_path and fallback_path.exists():
+        cache_key = str(fallback_path.resolve())
+        mtime_ns = fallback_path.stat().st_mtime_ns
+        if ttl > 0:
+            cached = _rules_file_cache.get(cache_key)
+            now = time.monotonic()
+            if cached and cached.get("mtime_ns") == mtime_ns and (now - float(cached.get("loaded_at", 0.0))) <= ttl:
+                return list(cached["data"])
         try:
             data = json.loads(fallback_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return []
-        return _parse_rules(data)
+        parsed = _parse_rules(data)
+        _rules_file_cache[cache_key] = {
+            "mtime_ns": mtime_ns,
+            "loaded_at": time.monotonic(),
+            "data": list(parsed),
+        }
+        return parsed
     return []
 
 

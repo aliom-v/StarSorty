@@ -6,6 +6,7 @@ from ..models import RepoBase
 from ..search.ranker import rank_repo_matches
 from .helpers import (
     _build_fts_query,
+    _env_int,
     _escape_like,
     _interest_boost,
     _load_json_list,
@@ -14,6 +15,8 @@ from .helpers import (
 )
 from .pool import get_connection
 from .schema import is_fts_enabled
+
+RELEVANCE_CANDIDATE_LIMIT = _env_int("RELEVANCE_CANDIDATE_LIMIT", 2000, minimum=1)
 
 
 async def list_repos(
@@ -149,8 +152,9 @@ async def list_repos(
             f"""
             {select_sql}
             ORDER BY stargazers_count DESC, full_name ASC
+            LIMIT ?
             """,
-            params,
+            params + [RELEVANCE_CANDIDATE_LIMIT],
         )).fetchall()
 
     ranked_rows: List[Dict[str, Any]] = []
@@ -173,8 +177,9 @@ async def list_repos(
             str(item.get("full_name") or ""),
         )
     )
+    effective_total = min(total, RELEVANCE_CANDIDATE_LIMIT)
     paged_rows = ranked_rows[offset : offset + limit]
-    return total, [_row_to_repo(row) for row in paged_rows]
+    return effective_total, [_row_to_repo(row) for row in paged_rows]
 
 
 async def iter_repos_for_export(

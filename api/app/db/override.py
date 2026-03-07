@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from .helpers import _load_json_list, _retry_on_lock
 from .pool import get_connection
+from .stats import bump_repo_stats_version
 
 
 @_retry_on_lock()
@@ -111,6 +112,7 @@ async def update_override(full_name: str, updates: Dict[str, Any]) -> bool:
                         timestamp,
                     ),
                 )
+                await bump_repo_stats_version(conn)
         await conn.commit()
         return cur.rowcount > 0
 

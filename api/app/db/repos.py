@@ -1,24 +1,29 @@
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
-from .helpers import _load_json_list, _retry_on_lock, _row_to_repo
+from .helpers import _env_int, _load_json_list, _retry_on_lock, _row_to_repo
 from .pool import get_connection
+from .stats import bump_repo_stats_version
 from ..models import RepoBase
+
+STAR_USER_LOOKUP_CHUNK_SIZE = _env_int("STAR_USER_LOOKUP_CHUNK_SIZE", 400, minimum=1)
 
 
 async def _load_star_users(repos: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     names = [repo.get("full_name") for repo in repos if repo.get("full_name")]
     if not names:
         return {}
-    placeholders = ",".join("?" for _ in names)
-    async with get_connection() as conn:
-        rows = await (await conn.execute(
-            f"SELECT full_name, star_users FROM repos WHERE full_name IN ({placeholders})",
-            names,
-        )).fetchall()
     existing: Dict[str, List[str]] = {}
-    for row in rows:
-        existing[row["full_name"]] = _load_json_list(row["star_users"])
+    async with get_connection() as conn:
+        for start in range(0, len(names), STAR_USER_LOOKUP_CHUNK_SIZE):
+            chunk = names[start : start + STAR_USER_LOOKUP_CHUNK_SIZE]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = await (await conn.execute(
+                f"SELECT full_name, star_users FROM repos WHERE full_name IN ({placeholders})",
+                chunk,
+            )).fetchall()
+            for row in rows:
+                existing[row["full_name"]] = _load_json_list(row["star_users"])
     return existing
 
 
@@ -71,6 +76,7 @@ async def upsert_repos(repos: List[Dict[str, Any]]) -> int:
                 for repo in repos
             ],
         )
+        await bump_repo_stats_version(conn)
         await conn.commit()
     return len(repos)
 
@@ -129,6 +135,8 @@ async def prune_star_user(
                     (json.dumps(users), full_name),
                 )
                 removed += 1
+        if removed or deleted:
+            await bump_repo_stats_version(conn)
         await conn.commit()
     return (removed, deleted)
 
@@ -158,6 +166,8 @@ async def prune_users_not_in(
                     (json.dumps(filtered), row["full_name"]),
                 )
                 updated += 1
+        if updated or deleted:
+            await bump_repo_stats_version(conn)
         await conn.commit()
     return (updated, deleted)
 

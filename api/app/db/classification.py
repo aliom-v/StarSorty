@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..models import RepoBase
 from .helpers import _retry_on_lock, _row_to_repo
 from .pool import get_connection
+from .stats import bump_repo_stats_version
 
 
 @_retry_on_lock()
@@ -30,7 +31,7 @@ async def update_classification(
     )
     async with get_connection() as conn:
         if summary_zh is not None or keywords is not None:
-            await conn.execute(
+            cursor = await conn.execute(
                 """
                 UPDATE repos
                 SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?, ai_tag_ids = ?,
@@ -58,7 +59,7 @@ async def update_classification(
                 ),
             )
         else:
-            await conn.execute(
+            cursor = await conn.execute(
                 """
                 UPDATE repos
                 SET category = ?, subcategory = ?, ai_confidence = ?, ai_tags = ?, ai_tag_ids = ?,
@@ -82,6 +83,8 @@ async def update_classification(
                     full_name,
                 ),
             )
+        if cursor.rowcount > 0:
+            await bump_repo_stats_version(conn)
         await conn.commit()
 
 
@@ -131,6 +134,7 @@ async def update_classifications_bulk(items: List[Dict[str, Any]]) -> int:
                 """,
                 rows,
             )
+            await bump_repo_stats_version(conn)
             await conn.commit()
         except Exception:
             await conn.rollback()

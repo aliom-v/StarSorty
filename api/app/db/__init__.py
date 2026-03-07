@@ -23,6 +23,7 @@ from .classification import (  # noqa: F401
 )
 from .override import update_override, list_override_history  # noqa: F401
 from .stats import get_repo_stats  # noqa: F401
+from .consistency import get_repo_consistency_report  # noqa: F401
 from .user import (  # noqa: F401
     get_user_preferences,
     update_user_preferences,
