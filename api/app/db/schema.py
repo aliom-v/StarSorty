@@ -8,22 +8,58 @@ from .pool import get_connection
 logger = logging.getLogger("starsorty.db")
 
 _fts_enabled = False
+_FTS_TRIGGER_NAMES = ("repos_ai", "repos_ad", "repos_au")
+_FTS_REQUIRED_SQL_FRAGMENTS = (
+    "using fts5",
+    "content='repos'",
+    "content_rowid='id'",
+    "ai_tag_ids",
+    "override_tag_ids",
+    "summary_zh",
+    "override_summary_zh",
+    "ai_keywords",
+    "override_keywords",
+)
 
 
 def is_fts_enabled() -> bool:
     return _fts_enabled
 
 
-async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
-    global _fts_enabled
-    try:
-        await conn.execute("DROP TRIGGER IF EXISTS repos_ai")
-        await conn.execute("DROP TRIGGER IF EXISTS repos_ad")
-        await conn.execute("DROP TRIGGER IF EXISTS repos_au")
-        await conn.execute("DROP TABLE IF EXISTS repos_fts")
-        await conn.execute(
-            """
-            CREATE VIRTUAL TABLE repos_fts USING fts5(
+async def _drop_repos_fts_objects(conn: aiosqlite.Connection) -> None:
+    for trigger_name in _FTS_TRIGGER_NAMES:
+        await conn.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+    await conn.execute("DROP TABLE IF EXISTS repos_fts")
+
+
+async def _create_repos_fts_objects(conn: aiosqlite.Connection) -> None:
+    await conn.execute(
+        """
+        CREATE VIRTUAL TABLE repos_fts USING fts5(
+            full_name,
+            name,
+            description,
+            topics,
+            readme_summary,
+            ai_tags,
+            ai_tag_ids,
+            override_tags,
+            override_tag_ids,
+            star_users,
+            summary_zh,
+            override_summary_zh,
+            ai_keywords,
+            override_keywords,
+            content='repos',
+            content_rowid='id'
+        )
+        """
+    )
+    await conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS repos_ai AFTER INSERT ON repos BEGIN
+            INSERT INTO repos_fts(
+                rowid,
                 full_name,
                 name,
                 description,
@@ -37,166 +73,182 @@ async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
                 summary_zh,
                 override_summary_zh,
                 ai_keywords,
-                override_keywords,
-                content='repos',
-                content_rowid='id'
+                override_keywords
+            ) VALUES (
+                new.id,
+                new.full_name,
+                new.name,
+                new.description,
+                new.topics,
+                new.readme_summary,
+                new.ai_tags,
+                new.ai_tag_ids,
+                new.override_tags,
+                new.override_tag_ids,
+                new.star_users,
+                new.summary_zh,
+                new.override_summary_zh,
+                new.ai_keywords,
+                new.override_keywords
+            );
+        END;
+        """
+    )
+    await conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS repos_ad AFTER DELETE ON repos BEGIN
+            INSERT INTO repos_fts(
+                repos_fts,
+                rowid,
+                full_name,
+                name,
+                description,
+                topics,
+                readme_summary,
+                ai_tags,
+                ai_tag_ids,
+                override_tags,
+                override_tag_ids,
+                star_users,
+                summary_zh,
+                override_summary_zh,
+                ai_keywords,
+                override_keywords
+            ) VALUES (
+                'delete',
+                old.id,
+                old.full_name,
+                old.name,
+                old.description,
+                old.topics,
+                old.readme_summary,
+                old.ai_tags,
+                old.ai_tag_ids,
+                old.override_tags,
+                old.override_tag_ids,
+                old.star_users,
+                old.summary_zh,
+                old.override_summary_zh,
+                old.ai_keywords,
+                old.override_keywords
+            );
+        END;
+        """
+    )
+    await conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS repos_au AFTER UPDATE ON repos BEGIN
+            INSERT INTO repos_fts(
+                repos_fts,
+                rowid,
+                full_name,
+                name,
+                description,
+                topics,
+                readme_summary,
+                ai_tags,
+                ai_tag_ids,
+                override_tags,
+                override_tag_ids,
+                star_users,
+                summary_zh,
+                override_summary_zh,
+                ai_keywords,
+                override_keywords
+            ) VALUES (
+                'delete',
+                old.id,
+                old.full_name,
+                old.name,
+                old.description,
+                old.topics,
+                old.readme_summary,
+                old.ai_tags,
+                old.ai_tag_ids,
+                old.override_tags,
+                old.override_tag_ids,
+                old.star_users,
+                old.summary_zh,
+                old.override_summary_zh,
+                old.ai_keywords,
+                old.override_keywords
+            );
+            INSERT INTO repos_fts(
+                rowid,
+                full_name,
+                name,
+                description,
+                topics,
+                readme_summary,
+                ai_tags,
+                ai_tag_ids,
+                override_tags,
+                override_tag_ids,
+                star_users,
+                summary_zh,
+                override_summary_zh,
+                ai_keywords,
+                override_keywords
+            ) VALUES (
+                new.id,
+                new.full_name,
+                new.name,
+                new.description,
+                new.topics,
+                new.readme_summary,
+                new.ai_tags,
+                new.ai_tag_ids,
+                new.override_tags,
+                new.override_tag_ids,
+                new.star_users,
+                new.summary_zh,
+                new.override_summary_zh,
+                new.ai_keywords,
+                new.override_keywords
+            );
+        END;
+        """
+    )
+
+
+async def _fts_objects_need_reset(conn: aiosqlite.Connection) -> bool:
+    row = await (
+        await conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'repos_fts'"
+        )
+    ).fetchone()
+    table_sql = str((row or {}).get("sql") if isinstance(row, dict) else row["sql"] if row else "")
+    normalized_table_sql = table_sql.lower()
+    if not normalized_table_sql:
+        return True
+    if any(fragment not in normalized_table_sql for fragment in _FTS_REQUIRED_SQL_FRAGMENTS):
+        return True
+
+    for trigger_name in _FTS_TRIGGER_NAMES:
+        trigger_row = await (
+            await conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+                (trigger_name,),
             )
-            """
+        ).fetchone()
+        trigger_sql = (
+            str((trigger_row or {}).get("sql"))
+            if isinstance(trigger_row, dict)
+            else str(trigger_row["sql"])
+            if trigger_row
+            else ""
         )
-        await conn.execute(
-            """
-            CREATE TRIGGER IF NOT EXISTS repos_ai AFTER INSERT ON repos BEGIN
-                INSERT INTO repos_fts(
-                    rowid,
-                    full_name,
-                    name,
-                    description,
-                    topics,
-                    readme_summary,
-                    ai_tags,
-                    ai_tag_ids,
-                    override_tags,
-                    override_tag_ids,
-                    star_users,
-                    summary_zh,
-                    override_summary_zh,
-                    ai_keywords,
-                    override_keywords
-                ) VALUES (
-                    new.id,
-                    new.full_name,
-                    new.name,
-                    new.description,
-                    new.topics,
-                    new.readme_summary,
-                    new.ai_tags,
-                    new.ai_tag_ids,
-                    new.override_tags,
-                    new.override_tag_ids,
-                    new.star_users,
-                    new.summary_zh,
-                    new.override_summary_zh,
-                    new.ai_keywords,
-                    new.override_keywords
-                );
-            END;
-            """
-        )
-        await conn.execute(
-            """
-            CREATE TRIGGER IF NOT EXISTS repos_ad AFTER DELETE ON repos BEGIN
-                INSERT INTO repos_fts(
-                    repos_fts,
-                    rowid,
-                    full_name,
-                    name,
-                    description,
-                    topics,
-                    readme_summary,
-                    ai_tags,
-                    ai_tag_ids,
-                    override_tags,
-                    override_tag_ids,
-                    star_users,
-                    summary_zh,
-                    override_summary_zh,
-                    ai_keywords,
-                    override_keywords
-                ) VALUES (
-                    'delete',
-                    old.id,
-                    old.full_name,
-                    old.name,
-                    old.description,
-                    old.topics,
-                    old.readme_summary,
-                    old.ai_tags,
-                    old.ai_tag_ids,
-                    old.override_tags,
-                    old.override_tag_ids,
-                    old.star_users,
-                    old.summary_zh,
-                    old.override_summary_zh,
-                    old.ai_keywords,
-                    old.override_keywords
-                );
-            END;
-            """
-        )
-        await conn.execute(
-            """
-            CREATE TRIGGER IF NOT EXISTS repos_au AFTER UPDATE ON repos BEGIN
-                INSERT INTO repos_fts(
-                    repos_fts,
-                    rowid,
-                    full_name,
-                    name,
-                    description,
-                    topics,
-                    readme_summary,
-                    ai_tags,
-                    ai_tag_ids,
-                    override_tags,
-                    override_tag_ids,
-                    star_users,
-                    summary_zh,
-                    override_summary_zh,
-                    ai_keywords,
-                    override_keywords
-                ) VALUES (
-                    'delete',
-                    old.id,
-                    old.full_name,
-                    old.name,
-                    old.description,
-                    old.topics,
-                    old.readme_summary,
-                    old.ai_tags,
-                    old.ai_tag_ids,
-                    old.override_tags,
-                    old.override_tag_ids,
-                    old.star_users,
-                    old.summary_zh,
-                    old.override_summary_zh,
-                    old.ai_keywords,
-                    old.override_keywords
-                );
-                INSERT INTO repos_fts(
-                    rowid,
-                    full_name,
-                    name,
-                    description,
-                    topics,
-                    readme_summary,
-                    ai_tags,
-                    ai_tag_ids,
-                    override_tags,
-                    override_tag_ids,
-                    star_users,
-                    summary_zh,
-                    override_summary_zh,
-                    ai_keywords,
-                    override_keywords
-                ) VALUES (
-                    new.id,
-                    new.full_name,
-                    new.name,
-                    new.description,
-                    new.topics,
-                    new.readme_summary,
-                    new.ai_tags,
-                    new.ai_tag_ids,
-                    new.override_tags,
-                    new.override_tag_ids,
-                    new.star_users,
-                    new.summary_zh,
-                    new.override_summary_zh,
-                    new.ai_keywords,
-                    new.override_keywords
-                );
-            END;
-            """
-        )
+        if "repos_fts" not in trigger_sql.lower():
+            return True
+    return False
+
+
+async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
+    global _fts_enabled
+    try:
+        if await _fts_objects_need_reset(conn):
+            await _drop_repos_fts_objects(conn)
+            await _create_repos_fts_objects(conn)
 
         repos_total = (await (await conn.execute("SELECT COUNT(*) FROM repos")).fetchone())[0]
         fts_total = (await (await conn.execute("SELECT COUNT(*) FROM repos_fts")).fetchone())[0]
@@ -435,6 +487,12 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_repos_override_category ON repos(override_category)"
         )
         await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repos_subcategory ON repos(subcategory)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repos_override_subcategory ON repos(override_subcategory)"
+        )
+        await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_classify_sort ON repos(category, pushed_at DESC, stargazers_count DESC)"
         )
         await conn.execute(
@@ -460,6 +518,9 @@ async def init_db() -> None:
         )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_stargazers_full_name ON repos(stargazers_count DESC, full_name ASC)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repos_updated_stargazers_full_name ON repos(updated_at DESC, stargazers_count DESC, full_name ASC)"
         )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_summary_zh ON repos(summary_zh)"

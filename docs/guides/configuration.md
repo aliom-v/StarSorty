@@ -115,6 +115,7 @@ AI_MODEL=deepseek-chat
 | `CLASSIFY_BATCH_DELAY_MS` | `0` | 批次间延迟。 |
 | `RELEVANCE_CANDIDATE_LIMIT` | `2000` | 相关度重排候选集上限。 |
 | `STAR_USER_LOOKUP_CHUNK_SIZE` | `400` | 同步时按用户回填 Star 关系的分批大小。 |
+| `REPO_UPSERT_BATCH_SIZE` | `200` | 同步阶段 `repos` 表单批 upsert 大小，减小单次事务锁持有时间。 |
 | `TAXONOMY_CACHE_TTL_SECONDS` | `300` | taxonomy 进程内缓存 TTL。 |
 | `RULES_CACHE_TTL_SECONDS` | `300` | rules 进程内缓存 TTL。 |
 

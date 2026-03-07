@@ -5,6 +5,7 @@
     "dev": "next dev -p 1234",
     "build": "next build --webpack",
     "lint": "eslint .",
+    "test": "node --no-warnings --test tests-node/*.test.js",
     "smoke": "node scripts/smoke-static.mjs"
   },
   "dependencies": {

@@ -73,8 +73,38 @@
 - 当前建议默认配置：
   - `RELEVANCE_CANDIDATE_LIMIT=2000`
   - `STAR_USER_LOOKUP_CHUNK_SIZE=400`
+  - `REPO_UPSERT_BATCH_SIZE=200`
   - `TAXONOMY_CACHE_TTL_SECONDS=300`
   - `RULES_CACHE_TTL_SECONDS=300`
+
+### 2.5 检查补充与本轮执行（更新于 2026-03-08）
+
+- 已落地（P0 / security）：
+  - 公开反馈接口 `POST /feedback/search`、`POST /feedback/click` 不再接受客户端传入的 `user_id` 污染 `global` 或任意用户画像。
+  - 匿名反馈仅保留事件记录，不再直接更新 `user_interest_profiles`。
+- 已落地（P1 / backend perf）：
+  - FTS 初始化从“启动即 drop/recreate”改为“仅在对象缺失或 schema 漂移时重建”，避免每次启动重建全文索引。
+  - `/repos` 仅在 `sort=relevance` 且存在查询词时才加载兴趣画像，去除 `stars/updated` 路径上的无效 DB 读。
+  - 补齐 `subcategory` 与 `updated_at + stargazers_count + full_name` 索引，覆盖 `/repos` 常见排序与筛选路径。
+  - `category/subcategory` 查询条件从 `COALESCE(NULLIF(...), ...)` 改为可被普通索引更好利用的显式条件分支。
+  - `upsert_repos` 改为按 `REPO_UPSERT_BATCH_SIZE` 分批写入与提交，缩短大账号同步时的单事务锁持有时间。
+- 已落地（P1 / classify）：
+  - 分类批处理主链路接入 `classify_repos_with_retry` 批量 AI 请求；当批量结果缺失或批量调用失败时，按 repo 回退到单次 AI / 规则兜底。
+- 已落地（P1 / reliability）：
+  - `/tasks/{task_id}` 对缺失任务返回 `404`，与前端轮询恢复逻辑对齐。
+- 已落地（P1 / search contract）：
+  - `relevance` 排序的 `total` 恢复为真实命中总数，分页继续能力改由 `has_more/next_offset` 明确返回。
+  - 前端首页“加载更多”改为消费服务端分页字段，不再用 `total` 猜测是否还有下一页。
+- 已落地（P1 / observability）：
+  - `_retry_on_lock()` 统一累计 SQLite 锁冲突、重试与重试耗尽计数，并通过 `/metrics/quality` 暴露。
+- 已补充（回归测试）：
+  - 新增覆盖：匿名反馈收口、非 relevance 查询跳过兴趣画像、缺失任务返回 `404`、FTS 二次初始化不丢索引数据、分类批量 AI 热路径、relevance 分页契约、SQLite 锁重试指标。
+- 已落地（P1 / frontend regression）：
+  - 新增无依赖前端逻辑回归测试，覆盖首页分页状态合并、任务轮询失败/404 恢复判定，以及共享 request tracker 的并发请求保护。
+  - 首页与 repo 详情页改为复用共享请求保护逻辑，旧请求返回不再覆盖较新的页面状态。
+- 已落地（P2 / frontend polling）：
+  - 首页任务轮询从固定 `setInterval` 改为单次调度，避免请求慢时叠加并发轮询。
+  - 轮询失败时按指数退避延长下一次请求间隔，恢复后自动回到基础轮询间隔。
 
 ---
 
@@ -135,6 +165,9 @@
 4. 密钥治理
    - UI 侧不持久化长期高权限密钥
    - 日志脱敏策略统一（已具备基础能力，补充回归测试）
+5. 公开反馈与画像隔离
+   - 匿名反馈不得写入 `global` 或任意用户画像
+   - 个性化排序仅允许绑定到受控的用户或会话标识
 
 验收：
 
@@ -155,6 +188,9 @@
 4. 任务并发与锁等待优化
    - 增加 DB 锁冲突指标、重试次数指标
    - 对高写路径评估更细粒度事务边界
+5. 启动阶段降载
+   - 避免每次启动重建 FTS / 大型派生索引
+   - 仅在对象缺失或 schema 漂移时执行 rebuild
 
 验收：
 
@@ -167,6 +203,7 @@
 1. 索引审视与补齐
    - 覆盖常见筛选：`category/subcategory/language/stars/updated_at`
    - 对 JSON 字段检索路径评估映射表替代方案（中期）
+   - 避免查询条件使用难以命中索引的 `COALESCE(NULLIF(...), ...)` 热路径写法
 2. 统计查询降载
    - `stats` 已支持版本化快照复用，避免频繁全表聚合
    - 保留 `/stats?snapshot=false` 作为实时聚合兜底路径
@@ -184,6 +221,7 @@
 1. 分类链路精度治理
    - 规则候选评分与 AI 仲裁继续优化（阈值可配置）
    - 引入“人工覆盖反馈回放”验证链路
+   - 批量分类默认优先走 batch AI，请求失败时再回退到单 repo 调用或规则兜底
 2. 检索解释能力增强
    - 统一 `match_reasons` 字典与前端文案
    - 提供调试模式输出得分拆解（仅管理员）
@@ -238,6 +276,7 @@
    - `db/search/classification` 核心数据逻辑
 2. 回归用例
    - 管理鉴权、安全路径、任务重试与中断恢复
+   - 覆盖 `relevance` 分页契约、任务过期恢复、前端轮询与并发请求路径
 3. CI 门禁
    - `pytest + web lint + web build`
    - 合并前必须绿灯

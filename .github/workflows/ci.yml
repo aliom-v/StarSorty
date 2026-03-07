@@ -55,6 +55,9 @@ jobs:
       - name: Install web deps
         run: npm ci
 
+      - name: Test web request logic
+        run: npm run test
+
       - name: Lint web
         run: npm run lint
 

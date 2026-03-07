@@ -19,6 +19,7 @@
     "web:dev": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build",
     "web:lint": "npm --prefix web run lint",
+    "web:test": "npm --prefix web run test",
     "web:smoke": "npm --prefix web run smoke"
   }
 }

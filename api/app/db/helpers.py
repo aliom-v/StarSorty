@@ -34,6 +34,17 @@ def _env_int(name: str, default: int, minimum: int | None = None) -> int:
 FTS_MAX_TERMS = _env_int("FTS_MAX_TERMS", 8, minimum=1)
 
 
+async def _record_lock_metrics(**delta: int) -> None:
+    if not delta:
+        return
+    try:
+        from ..state import _add_quality_metrics
+
+        await _add_quality_metrics(**delta)
+    except Exception:
+        logger.debug("Failed to record SQLite lock metrics", exc_info=True)
+
+
 def _retry_on_lock(
     max_attempts: int = 5,
     base_delay: float = 0.05,
@@ -50,11 +61,35 @@ def _retry_on_lock(
                     message = str(exc).lower()
                     if "database is locked" not in message and "database table is locked" not in message:
                         raise
+                    metrics = {"db_lock_conflict_total": 1}
                     if attempt >= max_attempts - 1:
+                        await _record_lock_metrics(
+                            **{
+                                **metrics,
+                                "db_lock_retry_exhausted_total": 1,
+                            }
+                        )
+                        logger.error(
+                            "SQLite lock retries exhausted in %s after %s attempts",
+                            func.__name__,
+                            max_attempts,
+                        )
                         raise
                     delay = min(max_delay, base_delay * (2**attempt))
                     jitter = random.uniform(0, delay)
-                    logger.warning("SQLite locked, retrying in %.2fs", delay + jitter)
+                    await _record_lock_metrics(
+                        **{
+                            **metrics,
+                            "db_lock_retry_total": 1,
+                        }
+                    )
+                    logger.warning(
+                        "SQLite locked in %s, retrying attempt %s/%s in %.2fs",
+                        func.__name__,
+                        attempt + 2,
+                        max_attempts,
+                        delay + jitter,
+                    )
                     await asyncio.sleep(delay + jitter)
                     attempt += 1
         return wrapper

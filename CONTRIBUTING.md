@@ -94,6 +94,7 @@ npm run api:test
 ### 前端质量检查
 
 ```bash
+npm run web:test
 npm run web:lint
 npm run web:build
 ```
@@ -111,6 +112,7 @@ npm run api:bench
 当前 CI 会执行：
 
 - `python -m pytest -q api/tests`
+- `npm run test`（`web/`）
 - `npm run lint`（`web/`）
 - `npm run build`（`web/`）
 

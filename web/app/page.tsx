@@ -5,6 +5,14 @@ import { buildAdminHeaders } from "./lib/admin";
 import { API_BASE_URL } from "./lib/apiBase";
 import { getErrorMessage, readApiError } from "./lib/apiError";
 import { useI18n } from "./lib/i18n";
+import { mergeRepoItems, normalizeRepoPage } from "./lib/repoListState";
+import { createRequestTracker } from "./lib/requestTracker";
+import {
+  evaluateTrackedPollFailure,
+  evaluateTrackedPollResponse,
+  getPollingDelayMs,
+  shouldPollBackgroundStatus,
+} from "./lib/taskPolling";
 import { useTheme } from "./lib/theme";
 import { TAG_GROUPS } from "./lib/tagGroups";
 
@@ -37,6 +45,14 @@ type Repo = {
   pushed_at?: string | null;
   updated_at?: string | null;
   starred_at?: string | null;
+};
+
+type RepoListResponse = {
+  total?: number;
+  items?: Repo[];
+  has_more?: boolean;
+  next_offset?: number | null;
+  pagination_limited?: boolean;
 };
 
 type Status = {
@@ -120,6 +136,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -147,14 +164,14 @@ export default function Home() {
   // Refs
   const wasBackgroundRunningRef = useRef(false);
   const pollTargetIdRef = useRef<string | null>(null);
-  const pollRequestIdRef = useRef(0);
   const pollFnRef = useRef<() => void>(() => {});
   const syncTaskIdRef = useRef<string | null>(null);
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollFailureCountRef = useRef(0);
   const pollingPausedRef = useRef(false);
   const pollTickRef = useRef(0);
-  const reposRequestIdRef = useRef(0);
+  const pollRequestTrackerRef = useRef(createRequestTracker());
+  const reposRequestTrackerRef = useRef(createRequestTracker());
   const statsRequestIdRef = useRef(0);
 
   const activeError = configError || error;
@@ -268,18 +285,28 @@ export default function Home() {
   }, [syncTaskId]);
 
   const stopPolling = useCallback(() => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
     }
   }, []);
 
-  const startPolling = useCallback(() => {
-    if (pollIntervalRef.current) return;
-    pollIntervalRef.current = setInterval(() => {
-      pollFnRef.current();
-    }, 8000);
-  }, []);
+  const startPolling = useCallback((delayMs?: number) => {
+    stopPolling();
+    if (pollingPausedRef.current) return;
+    if (document.visibilityState === "hidden") return;
+    const nextDelay =
+      typeof delayMs === "number"
+        ? Math.max(0, delayMs)
+        : getPollingDelayMs(
+            pollFailureCountRef.current,
+            Boolean(pollTargetIdRef.current)
+          );
+    pollTimerRef.current = setTimeout(() => {
+      pollTimerRef.current = null;
+      void pollFnRef.current();
+    }, nextDelay);
+  }, [stopPolling]);
 
   const pausePolling = useCallback(
     (message: string) => {
@@ -299,8 +326,7 @@ export default function Home() {
     setActionMessage(null);
     setActionStatus(null);
     if (document.visibilityState === "hidden") return;
-    startPolling();
-    pollFnRef.current();
+    startPolling(0);
   }, [startPolling]);
 
   const pollBackgroundStatusNow = useCallback(async (requestId: number) => {
@@ -310,7 +336,7 @@ export default function Home() {
         return;
       }
       const data = await res.json();
-      if (pollRequestIdRef.current !== requestId) return;
+      if (!pollRequestTrackerRef.current.isCurrent(requestId)) return;
       setBackgroundStatus(data);
     } catch {
       return;
@@ -318,8 +344,7 @@ export default function Home() {
   }, []);
 
   const loadRepos = useCallback(async (append = false, offsetOverride?: number) => {
-    const requestId = reposRequestIdRef.current + 1;
-    reposRequestIdRef.current = requestId;
+    const requestId = reposRequestTrackerRef.current.begin();
 
     if (append) {
       setLoadingMore(true);
@@ -328,6 +353,7 @@ export default function Home() {
       setError(null);
       setRepos([]);
       setHasMore(false);
+      setNextOffset(null);
     }
     try {
       const offset = append && typeof offsetOverride === "number" ? offsetOverride : 0;
@@ -346,23 +372,20 @@ export default function Home() {
       if (sourceUser) params.set("star_user", sourceUser);
 
       const res = await fetch(`${API_BASE_URL}/repos?${params}`);
-      if (reposRequestIdRef.current !== requestId) return;
+      if (!reposRequestTrackerRef.current.isCurrent(requestId)) return;
       if (!res.ok) {
         const detail = await readApiError(res, `Repos fetch failed (${res.status})`);
         throw new Error(detail);
       }
-      const data = await res.json();
-      if (reposRequestIdRef.current !== requestId) return;
-      const total = Number(data.total || 0);
-      const items: Repo[] = data.items || [];
+      const data = (await res.json()) as RepoListResponse;
+      if (!reposRequestTrackerRef.current.isCurrent(requestId)) return;
+      const page = normalizeRepoPage(data, offset);
 
       setRepos((prev) => {
-        if (!append) return items;
-        const existingNames = new Set(prev.map((r) => r.full_name));
-        const newItems = items.filter((item) => !existingNames.has(item.full_name));
-        return [...prev, ...newItems];
+        return mergeRepoItems(prev, page.items, append);
       });
-      setHasMore(offset + items.length < total);
+      setHasMore(page.hasMore);
+      setNextOffset(page.nextOffset);
 
       if (!append && query) {
         void fetch(`${API_BASE_URL}/feedback/search`, {
@@ -371,7 +394,7 @@ export default function Home() {
           body: JSON.stringify({
             user_id: activePreferenceUser,
             query,
-            results_count: total,
+            results_count: page.total,
             selected_tags: selectedTags,
             category,
             subcategory,
@@ -379,11 +402,11 @@ export default function Home() {
         }).catch(() => {});
       }
     } catch (err) {
-      if (reposRequestIdRef.current !== requestId) return;
+      if (!reposRequestTrackerRef.current.isCurrent(requestId)) return;
       const message = getErrorMessage(err, unknownErrorMessage);
       setError(message);
     } finally {
-      if (reposRequestIdRef.current !== requestId) return;
+      if (!reposRequestTrackerRef.current.isCurrent(requestId)) return;
       setLoading(false);
       setLoadingMore(false);
     }
@@ -413,58 +436,88 @@ export default function Home() {
   const pollTaskNow = useCallback(async () => {
     const taskId = pollTargetIdRef.current;
     pollTickRef.current += 1;
-    const shouldPollBackground = pollTickRef.current % 5 === 0;
+    const shouldPollBackground = shouldPollBackgroundStatus(pollTickRef.current);
     if (!taskId) {
-      if (!shouldPollBackground) return;
-      const requestId = pollRequestIdRef.current + 1;
-      pollRequestIdRef.current = requestId;
-      await pollBackgroundStatusNow(requestId);
+      if (shouldPollBackground) {
+        const requestId = pollRequestTrackerRef.current.begin();
+        await pollBackgroundStatusNow(requestId);
+      }
+      startPolling();
       return;
     }
-    const requestId = pollRequestIdRef.current + 1;
-    pollRequestIdRef.current = requestId;
+    const requestId = pollRequestTrackerRef.current.begin();
     let res: Response;
     try {
       res = await fetch(`${API_BASE_URL}/tasks/${taskId}`);
     } catch {
-      if (pollTargetIdRef.current !== taskId) return;
-      if (pollRequestIdRef.current !== requestId) return;
-      pollFailureCountRef.current += 1;
-      if (pollFailureCountRef.current >= 3) {
+      const failure = evaluateTrackedPollFailure({
+        currentTaskId: pollTargetIdRef.current,
+        expectedTaskId: taskId,
+        activeRequestId: pollRequestTrackerRef.current.current(),
+        requestId,
+        failureCount: pollFailureCountRef.current,
+      });
+      if (failure.ignore) return;
+      pollFailureCountRef.current = failure.nextFailureCount;
+      if (failure.pause) {
         pausePolling(t("pollingPaused"));
+        return;
       }
+      startPolling();
       return;
     }
-    if (pollTargetIdRef.current !== taskId) return;
-    if (pollRequestIdRef.current !== requestId) return;
-    if (res.status === 404) {
-      await handleMissingTaskRecovery();
-      return;
-    }
-    if (!res.ok) {
-      if (res.status >= 500 || res.status === 429) {
-        pollFailureCountRef.current += 1;
-        if (pollFailureCountRef.current >= 3) {
-          pausePolling(t("pollingPaused"));
-        }
+    if (res.status === 404 || !res.ok) {
+      const responseState = evaluateTrackedPollResponse({
+        currentTaskId: pollTargetIdRef.current,
+        expectedTaskId: taskId,
+        activeRequestId: pollRequestTrackerRef.current.current(),
+        requestId,
+        status: res.status,
+        failureCount: pollFailureCountRef.current,
+      });
+      if (responseState.ignore) return;
+      pollFailureCountRef.current = responseState.nextFailureCount;
+      if (responseState.recoverMissingTask) {
+        await handleMissingTaskRecovery();
+        return;
       }
+      if (responseState.pause) {
+        pausePolling(t("pollingPaused"));
+        return;
+      }
+      startPolling();
       return;
     }
     let data: TaskStatus;
     try {
       data = await res.json();
     } catch {
-      if (pollTargetIdRef.current !== taskId) return;
-      if (pollRequestIdRef.current !== requestId) return;
-      pollFailureCountRef.current += 1;
-      if (pollFailureCountRef.current >= 3) {
+      const failure = evaluateTrackedPollFailure({
+        currentTaskId: pollTargetIdRef.current,
+        expectedTaskId: taskId,
+        activeRequestId: pollRequestTrackerRef.current.current(),
+        requestId,
+        failureCount: pollFailureCountRef.current,
+      });
+      if (failure.ignore) return;
+      pollFailureCountRef.current = failure.nextFailureCount;
+      if (failure.pause) {
         pausePolling(t("pollingPaused"));
+        return;
       }
+      startPolling();
       return;
     }
-    if (pollTargetIdRef.current !== taskId) return;
-    if (pollRequestIdRef.current !== requestId) return;
-    pollFailureCountRef.current = 0;
+    const responseState = evaluateTrackedPollResponse({
+      currentTaskId: pollTargetIdRef.current,
+      expectedTaskId: taskId,
+      activeRequestId: pollRequestTrackerRef.current.current(),
+      requestId,
+      status: res.status,
+      failureCount: pollFailureCountRef.current,
+    });
+    if (responseState.ignore || !responseState.acceptResult) return;
+    pollFailureCountRef.current = responseState.nextFailureCount;
     setTaskInfo(data);
 
     if (shouldPollBackground) {
@@ -497,7 +550,8 @@ export default function Home() {
         setSyncTaskId(null);
       }
     }
-  }, [handleMissingTaskRecovery, loadRepos, loadStats, loadStatus, pausePolling, pollBackgroundStatusNow, t]);
+    startPolling();
+  }, [handleMissingTaskRecovery, loadRepos, loadStats, loadStatus, pausePolling, pollBackgroundStatusNow, startPolling, t]);
 
   useEffect(() => {
     pollFnRef.current = pollTaskNow;
@@ -522,8 +576,7 @@ export default function Home() {
       stopPolling();
       return;
     }
-    startPolling();
-    pollFnRef.current();
+    startPolling(0);
   }, [pollTargetId, startPolling, stopPolling]);
 
   const loadClientSettings = useCallback(async () => {
@@ -581,8 +634,7 @@ export default function Home() {
         return;
       }
       if (pollingPausedRef.current) return;
-      startPolling();
-      pollFnRef.current();
+      startPolling(0);
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
@@ -956,7 +1008,7 @@ export default function Home() {
                 <div className="flex justify-center pt-8">
                   <button
                     type="button"
-                    onClick={() => loadRepos(true, repos.length)}
+                    onClick={() => loadRepos(true, nextOffset ?? repos.length)}
                     disabled={loadingMore}
                     className="group flex items-center gap-4 rounded-full glass px-12 py-5 text-xs font-black uppercase tracking-widest text-ink transition-all hover:shadow-premium active:scale-95"
                   >

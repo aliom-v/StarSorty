@@ -45,7 +45,7 @@ curl -X POST "http://localhost:4321/sync" \
 | --- | --- | --- | --- |
 | `GET` | `/status` | 否 | 查看最近一次同步结果、时间与消息。 |
 | `POST` | `/sync` | 是 | 触发 GitHub Star 同步，返回任务 ID。 |
-| `GET` | `/tasks/{task_id}` | 否 | 查询任务状态，支持已过期任务的兜底响应。 |
+| `GET` | `/tasks/{task_id}` | 否 | 查询任务状态；任务不存在或已清理时返回 `404`。 |
 | `POST` | `/tasks/{task_id}/retry` | 是 | 仅支持重试分类任务。 |
 
 ### 分类
@@ -98,6 +98,13 @@ curl -X POST "http://localhost:4321/sync" \
 | `limit` | `int` | `50` | 分页大小。 |
 | `offset` | `int` | `0` | 偏移量。 |
 
+`GET /repos` 响应补充字段：
+
+- `total`：真实命中总数，用于统计与反馈，不再受相关度候选集上限截断。
+- `has_more`：当前排序与分页条件下是否还可继续请求下一页。
+- `next_offset`：继续翻页时建议使用的下一个 offset；若无下一页则为 `null`。
+- `pagination_limited`：当 `sort=relevance` 且候选集被 `RELEVANCE_CANDIDATE_LIMIT` 截断时为 `true`。
+
 `PATCH /repos/{full_name}/override` 支持的请求体字段：
 
 - `category`
@@ -112,7 +119,7 @@ curl -X POST "http://localhost:4321/sync" \
 | --- | --- | --- | --- |
 | `GET` | `/taxonomy` | 否 | 获取分类、子类和标签定义。 |
 | `GET` | `/stats` | 否 | 获取统计面板数据。 |
-| `GET` | `/metrics/quality` | 否 | 获取检索与分类质量指标。 |
+| `GET` | `/metrics/quality` | 否 | 获取检索、分类与 SQLite 锁重试指标。 |
 | `GET` | `/metrics/consistency` | 是 | 获取一致性巡检报告。 |
 | `GET` | `/api/config/client-settings` | 否 | 前端公开配置，只返回安全字段。 |
 | `GET` | `/settings` | 是 | 读取管理员可见运行配置与 token 配置状态。 |
@@ -124,6 +131,14 @@ curl -X POST "http://localhost:4321/sync" \
 | --- | --- | --- | --- |
 | `refresh` | `bool` | `false` | 强制绕过缓存重新计算。 |
 | `snapshot` | `bool` | `true` | 是否优先使用版本化快照。 |
+
+`GET /metrics/quality` 当前包含的重点字段：
+
+- `classification_total`、`rule_hit_total`、`ai_fallback_total`、`empty_tag_total`、`uncategorized_total`
+- `search_total`、`search_zero_result_total`
+- `db_lock_conflict_total`：捕获到 SQLite 锁冲突的次数
+- `db_lock_retry_total`：进入退避重试的次数
+- `db_lock_retry_exhausted_total`：达到最大重试次数后仍失败的次数
 
 `PATCH /settings` 可更新的字段：
 
@@ -162,8 +177,12 @@ curl -X POST "http://localhost:4321/sync" \
 
 反馈接口请求体字段：
 
-- `POST /feedback/search`：`user_id`、`query`、`results_count`、`selected_tags`、`category`、`subcategory`
-- `POST /feedback/click`：`user_id`、`full_name`、`query`
+- `POST /feedback/search`：`query`、`results_count`、`selected_tags`、`category`、`subcategory`
+- `POST /feedback/click`：`full_name`、`query`
+
+说明：
+
+- 公开反馈接口仍兼容接收 `user_id` 字段，但服务端会忽略该值，不会据此写入 `global` 或任意用户兴趣画像。
 
 ### 导出
 

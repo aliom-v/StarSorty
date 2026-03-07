@@ -6,11 +6,18 @@ import pytest
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
+from api.app.classification.engine import (
+    ClassificationOutcome,
+    PendingAIClassification,
+    PreparedClassification,
+)
 from api.app.deps import require_admin
 from api.app.routes import classify as classify_routes
 from api.app.routes import repos as repos_routes
 from api.app.routes import settings as settings_routes
+from api.app.routes import stats as stats_routes
 from api.app.routes import sync as sync_routes
+from api.app.routes import tasks as tasks_routes
 from api.app.routes import user as user_routes
 from api.app.schemas import (
     BackgroundClassifyRequest,
@@ -372,8 +379,9 @@ def test_user_routes_patch_and_feedback_normalize_user(
         )
     )
     assert feedback_response.ok is True
-    assert feedback_calls[0]["user_id"] == "global"
+    assert feedback_calls[0]["user_id"] == user_routes.PUBLIC_FEEDBACK_USER_ID
     assert feedback_calls[0]["event_type"] == "search"
+    assert feedback_calls[0]["update_profile"] is False
 
     click_response = _run(
         user_routes.feedback_click(
@@ -384,6 +392,8 @@ def test_user_routes_patch_and_feedback_normalize_user(
     assert click_response.ok is True
     assert feedback_calls[1]["event_type"] == "click"
     assert feedback_calls[1]["full_name"] == "owner/repo"
+    assert feedback_calls[1]["user_id"] == user_routes.PUBLIC_FEEDBACK_USER_ID
+    assert feedback_calls[1]["update_profile"] is False
 
 
 def test_repos_query_override_and_readme_paths(
@@ -406,7 +416,13 @@ def test_repos_query_override_and_readme_paths(
 
     async def _fake_list_repos(**kwargs):
         captured["list"] = kwargs
-        return 1, [_repo_payload()]
+        return SimpleNamespace(
+            total=1,
+            items=[_repo_payload()],
+            has_more=False,
+            next_offset=None,
+            pagination_limited=False,
+        )
 
     async def _fake_quality(**kwargs) -> None:
         captured["quality"] = kwargs
@@ -452,11 +468,14 @@ def test_repos_query_override_and_readme_paths(
         )
     )
     assert list_response.total == 1
+    assert list_response.has_more is False
+    assert list_response.next_offset is None
     assert captured["list"]["q"] == "agents"
     assert captured["list"]["tags"] == ["alpha", "beta", "gamma"]
     assert captured["interest_user_id"] == "global"
     assert captured["quality"] == {"search_total": 1, "search_zero_result_total": 0}
     assert captured["cache_set"][1]["total"] == 1
+    assert captured["cache_set"][1]["has_more"] is False
 
     detail_response = _run(repos_routes.repo_detail("owner/repo"))
     assert detail_response.full_name == "owner/repo"
@@ -483,6 +502,75 @@ def test_repos_query_override_and_readme_paths(
     assert captured["record"] == [("owner/repo", "summary for owner/repo", True)]
 
 
+def test_repos_query_skips_interest_profile_for_non_relevance(
+    disable_limiters: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called = {"interest": False}
+
+    async def _fake_cache_get(key: str):
+        del key
+        return None
+
+    async def _fake_cache_set(key: str, payload: dict, ttl: int) -> None:
+        del key, payload, ttl
+
+    async def _fake_interest(user_id: str) -> dict:
+        called["interest"] = True
+        return {"user_id": user_id, "topic_scores": {"ai": 1.0}}
+
+    async def _fake_list_repos(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            total=0,
+            items=[],
+            has_more=False,
+            next_offset=None,
+            pagination_limited=False,
+        )
+
+    monkeypatch.setattr(repos_routes.cache, "get", _fake_cache_get)
+    monkeypatch.setattr(repos_routes.cache, "set", _fake_cache_set)
+    monkeypatch.setattr(repos_routes, "get_user_interest_profile", _fake_interest)
+    monkeypatch.setattr(repos_routes, "list_repos", _fake_list_repos)
+
+    response = _run(
+        repos_routes.repos(
+            SimpleNamespace(),
+            q=None,
+            min_stars=None,
+            tags=None,
+            tag_mode="or",
+            sort="stars",
+            user_id="demo",
+            limit=10,
+            offset=0,
+        )
+    )
+
+    assert response.total == 0
+    assert called["interest"] is False
+
+
+def test_quality_metrics_endpoint_exposes_db_lock_counters(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _fake_quality_metrics() -> dict:
+        return {
+            "classification_total": 0,
+            "search_total": 0,
+            "db_lock_conflict_total": 3,
+            "db_lock_retry_total": 2,
+            "db_lock_retry_exhausted_total": 1,
+        }
+
+    monkeypatch.setattr(stats_routes, "_get_quality_metrics", _fake_quality_metrics)
+
+    response = _run(stats_routes.quality_metrics_endpoint())
+
+    assert response["db_lock_conflict_total"] == 3
+    assert response["db_lock_retry_total"] == 2
+    assert response["db_lock_retry_exhausted_total"] == 1
+
+
 def test_repos_detail_and_override_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _missing_repo(full_name: str):
         del full_name
@@ -503,3 +591,133 @@ def test_repos_detail_and_override_validation(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(HTTPException, match="No fields provided"):
         _run(repos_routes.repo_override("missing/repo", OverrideRequest()))
+
+
+def test_task_status_returns_404_for_missing_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _missing_task(task_id: str):
+        del task_id
+        return None
+
+    monkeypatch.setattr(tasks_routes, "get_task", _missing_task)
+
+    with pytest.raises(HTTPException, match="Task not found"):
+        _run(tasks_routes.task_status("expired-task-id"))
+
+
+def test_classify_batch_uses_batch_ai_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = {
+        "batch_calls": [],
+        "single_calls": [],
+        "bulk_updates": None,
+        "quality": None,
+        "failed_names": [],
+    }
+
+    class _FakeEngine:
+        def __init__(self, **kwargs) -> None:
+            del kwargs
+
+        def prepare_classification(self, repo: dict) -> PreparedClassification:
+            pending = PendingAIClassification(
+                reason="batch-ai",
+                top_candidate=None,
+                rule_candidates=[],
+                ai_input={
+                    "full_name": repo["full_name"],
+                    "name": repo["name"],
+                    "description": repo["description"],
+                    "topics": repo["topics"],
+                    "rule_candidates": [],
+                },
+            )
+            return PreparedClassification(pending_ai=pending)
+
+        def outcome_from_ai_result(
+            self,
+            ai_result: dict,
+            reason: str,
+            rule_candidates: list,
+        ) -> ClassificationOutcome:
+            del reason, rule_candidates
+            return ClassificationOutcome(
+                result=ai_result,
+                source="ai",
+                reason="batch-ai",
+                rule_candidates=[],
+            )
+
+        def fallback_outcome(self, top_candidate, rule_candidates):
+            del top_candidate, rule_candidates
+            raise AssertionError("fallback_outcome should not be used in batch success path")
+
+    class _FakeAIClient:
+        async def classify_repos_with_retry(self, repos: list, taxonomy: dict, retries: int = 2):
+            captured["batch_calls"].append((repos, taxonomy, retries))
+            return [
+                {
+                    "category": "ai",
+                    "subcategory": "agents",
+                    "confidence": 0.92,
+                    "tags": ["Agent"],
+                    "tag_ids": ["ai.agent"],
+                    "reason": "batched",
+                    "summary_zh": "批量分类结果",
+                    "keywords": ["agent", "automation"],
+                    "provider": "mock",
+                    "model": "mock-model",
+                }
+                for _ in repos
+            ]
+
+        async def classify_repo_with_retry(self, repo: dict, taxonomy: dict, retries: int = 2):
+            captured["single_calls"].append((repo, taxonomy, retries))
+            raise AssertionError("single-item AI fallback should not be used when batch succeeds")
+
+    async def _fake_update_bulk(items: list[dict]) -> int:
+        captured["bulk_updates"] = items
+        return len(items)
+
+    async def _fake_quality(**kwargs) -> None:
+        captured["quality"] = kwargs
+
+    async def _fake_increment(full_names: list[str]) -> None:
+        captured["failed_names"] = full_names
+
+    async def _fake_readme_fetches(entries: list[dict]) -> None:
+        del entries
+
+    monkeypatch.setattr(classify_routes, "ClassificationEngine", _FakeEngine)
+    monkeypatch.setattr(classify_routes, "update_classifications_bulk", _fake_update_bulk)
+    monkeypatch.setattr(classify_routes, "_add_quality_metrics", _fake_quality)
+    monkeypatch.setattr(classify_routes, "increment_classify_fail_count", _fake_increment)
+    monkeypatch.setattr(classify_routes, "record_readme_fetches", _fake_readme_fetches)
+
+    repos = [_repo_payload("owner/repo-1"), _repo_payload("owner/repo-2")]
+    classified, failed = _run(
+        classify_routes._classify_repos_batch(
+            repos,
+            data={"tag_id_to_name": {"ai.agent": "Agent"}},
+            rules=[],
+            classify_mode="hybrid",
+            use_ai=True,
+            preference={},
+            include_readme=False,
+            github_client=SimpleNamespace(),
+            ai_client=_FakeAIClient(),
+            task_id="task-1",
+        )
+    )
+
+    assert classified == 2
+    assert failed == 0
+    assert len(captured["batch_calls"]) == 1
+    assert captured["single_calls"] == []
+    assert len(captured["bulk_updates"]) == 2
+    assert captured["quality"] == {
+        "classification_total": 2,
+        "rule_hit_total": 0,
+        "ai_fallback_total": 0,
+        "empty_tag_total": 0,
+        "uncategorized_total": 0,
+    }
+    assert captured["failed_names"] == []

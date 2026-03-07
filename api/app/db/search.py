@@ -1,6 +1,7 @@
+from dataclasses import dataclass
 import json
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from ..models import RepoBase
 from ..search.ranker import rank_repo_matches
@@ -19,6 +20,36 @@ from .schema import is_fts_enabled
 RELEVANCE_CANDIDATE_LIMIT = _env_int("RELEVANCE_CANDIDATE_LIMIT", 2000, minimum=1)
 
 
+@dataclass(frozen=True)
+class RepoSearchPage:
+    total: int
+    items: List[RepoBase]
+    has_more: bool
+    next_offset: Optional[int]
+    pagination_limited: bool = False
+
+
+def _build_page(
+    total: int,
+    items: List[RepoBase],
+    offset: int,
+    page_total: Optional[int] = None,
+    *,
+    pagination_limited: bool = False,
+) -> RepoSearchPage:
+    effective_page_total = max(0, page_total if page_total is not None else total)
+    visible_count = len(items)
+    has_more = offset + visible_count < effective_page_total
+    next_offset = offset + visible_count if has_more else None
+    return RepoSearchPage(
+        total=max(0, int(total or 0)),
+        items=items,
+        has_more=has_more,
+        next_offset=next_offset,
+        pagination_limited=pagination_limited,
+    )
+
+
 async def list_repos(
     q: Optional[str] = None,
     language: Optional[str] = None,
@@ -33,7 +64,7 @@ async def list_repos(
     star_user: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
-) -> Tuple[int, List[RepoBase]]:
+) -> RepoSearchPage:
     clauses = []
     params: List[Any] = []
 
@@ -66,12 +97,22 @@ async def list_repos(
         params.append(min_stars)
 
     if category:
-        clauses.append("COALESCE(NULLIF(override_category, ''), category) = ?")
-        params.append(category)
+        clauses.append(
+            "("
+            "override_category = ? "
+            "OR ((override_category IS NULL OR override_category = '') AND category = ?)"
+            ")"
+        )
+        params.extend([category, category])
 
     if subcategory:
-        clauses.append("COALESCE(NULLIF(override_subcategory, ''), subcategory) = ?")
-        params.append(subcategory)
+        clauses.append(
+            "("
+            "override_subcategory = ? "
+            "OR ((override_subcategory IS NULL OR override_subcategory = '') AND subcategory = ?)"
+            ")"
+        )
+        params.extend([subcategory, subcategory])
 
     if tag:
         clauses.append(
@@ -135,7 +176,8 @@ async def list_repos(
                 """,
                 params + [limit, offset],
             )).fetchall()
-            return total, [_row_to_repo(row) for row in rows]
+            items = [_row_to_repo(row) for row in rows]
+            return _build_page(total, items, offset)
 
         if normalized_sort != "relevance" or not q:
             rows = await (await conn.execute(
@@ -146,7 +188,8 @@ async def list_repos(
                 """,
                 params + [limit, offset],
             )).fetchall()
-            return total, [_row_to_repo(row) for row in rows]
+            items = [_row_to_repo(row) for row in rows]
+            return _build_page(total, items, offset)
 
         rows = await (await conn.execute(
             f"""
@@ -177,9 +220,16 @@ async def list_repos(
             str(item.get("full_name") or ""),
         )
     )
-    effective_total = min(total, RELEVANCE_CANDIDATE_LIMIT)
+    candidate_total = len(ranked_rows)
     paged_rows = ranked_rows[offset : offset + limit]
-    return effective_total, [_row_to_repo(row) for row in paged_rows]
+    items = [_row_to_repo(row) for row in paged_rows]
+    return _build_page(
+        total,
+        items,
+        offset,
+        page_total=candidate_total,
+        pagination_limited=total > candidate_total,
+    )
 
 
 async def iter_repos_for_export(

@@ -283,7 +283,7 @@ async def run_search_benchmark(args, workdir: Path) -> Dict[str, Any]:
         returned_items = 0
         for _ in range(args.search_runs):
             started = time.perf_counter()
-            total_hits, items = await list_repos(
+            page = await list_repos(
                 q=case.get("query"),
                 language=case.get("language"),
                 category=case.get("category"),
@@ -292,7 +292,8 @@ async def run_search_benchmark(args, workdir: Path) -> Dict[str, Any]:
                 offset=case.get("offset", 0),
             )
             latencies.append((time.perf_counter() - started) * 1000)
-            returned_items = len(items)
+            total_hits = page.total
+            returned_items = len(page.items)
 
         results.append(
             {

@@ -10,6 +10,7 @@ import pytest
 
 from api.app import rules as rules_mod
 from api.app import taxonomy as taxonomy_mod
+from api.app.db import helpers as helpers_db
 from api.app.db import repos as repos_db
 from api.app.db import schema as schema_db
 from api.app.db import search as search_db
@@ -80,6 +81,24 @@ def _repo_row(index: int, stars: int, token: str = "alpha") -> dict:
     }
 
 
+def _sync_repo_payload(index: int, stars: int, users: list[str] | None = None) -> dict:
+    return {
+        "full_name": f"owner/repo-{index}",
+        "name": f"repo-{index}",
+        "owner": "owner",
+        "html_url": f"https://example.com/owner/repo-{index}",
+        "description": f"repo {index}",
+        "language": "Python",
+        "stargazers_count": stars,
+        "forks_count": 0,
+        "topics": ["alpha"],
+        "pushed_at": "2026-03-01T00:00:00+00:00",
+        "updated_at": "2026-03-01T00:00:00+00:00",
+        "starred_at": "2026-03-01T00:00:00+00:00",
+        "star_users": list(users or []),
+    }
+
+
 @pytest.fixture
 def db_connection_factory(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
@@ -94,7 +113,7 @@ def db_connection_factory(tmp_path, monkeypatch):
     return get_connection
 
 
-def test_relevance_candidate_limit_caps_total_and_items(db_connection_factory, monkeypatch):
+def test_relevance_candidate_limit_keeps_true_total_and_exposes_page_cap(db_connection_factory, monkeypatch):
     monkeypatch.setattr(search_db, "RELEVANCE_CANDIDATE_LIMIT", 2)
     rows = [
         _repo_row(index=1, stars=100),
@@ -104,12 +123,36 @@ def test_relevance_candidate_limit_caps_total_and_items(db_connection_factory, m
     ]
     _run(_insert_repos(db_connection_factory, rows))
 
-    total, items = _run(
+    page = _run(
         search_db.list_repos(q="alpha", sort="relevance", limit=10, offset=0)
     )
 
-    assert total == 2
-    assert [item.full_name for item in items] == ["owner/repo-4", "owner/repo-3"]
+    assert page.total == 4
+    assert page.has_more is False
+    assert page.next_offset is None
+    assert page.pagination_limited is True
+    assert [item.full_name for item in page.items] == ["owner/repo-4", "owner/repo-3"]
+
+
+def test_relevance_candidate_limit_exposes_next_offset_within_candidate_window(db_connection_factory, monkeypatch):
+    monkeypatch.setattr(search_db, "RELEVANCE_CANDIDATE_LIMIT", 3)
+    rows = [
+        _repo_row(index=1, stars=100),
+        _repo_row(index=2, stars=200),
+        _repo_row(index=3, stars=300),
+        _repo_row(index=4, stars=400),
+    ]
+    _run(_insert_repos(db_connection_factory, rows))
+
+    page = _run(
+        search_db.list_repos(q="alpha", sort="relevance", limit=1, offset=0)
+    )
+
+    assert page.total == 4
+    assert page.has_more is True
+    assert page.next_offset == 1
+    assert page.pagination_limited is True
+    assert [item.full_name for item in page.items] == ["owner/repo-4"]
 
 
 def test_load_star_users_handles_large_input_by_chunking(
@@ -126,6 +169,79 @@ def test_load_star_users_handles_large_input_by_chunking(
     assert len(users_map) == row_count
     assert users_map["owner/repo-0"] == ["user-0"]
     assert users_map[f"owner/repo-{row_count - 1}"] == [f"user-{row_count - 1}"]
+
+
+def test_upsert_repos_commits_in_batches(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeConnection:
+        def __init__(self) -> None:
+            self.batch_sizes: list[int] = []
+            self.commit_count = 0
+
+        async def executemany(self, query: str, params: list[dict]) -> None:
+            assert "INSERT INTO repos" in query
+            self.batch_sizes.append(len(params))
+
+        async def commit(self) -> None:
+            self.commit_count += 1
+
+        async def rollback(self) -> None:
+            raise AssertionError("rollback should not be used in successful batch path")
+
+    @asynccontextmanager
+    async def _fake_get_connection():
+        yield fake_conn
+
+    async def _fake_load_star_users(repos: list[dict]) -> dict:
+        del repos
+        return {}
+
+    async def _fake_bump(conn) -> int:
+        assert conn is fake_conn
+        bump_calls.append("bump")
+        return len(bump_calls)
+
+    fake_conn = _FakeConnection()
+    bump_calls: list[str] = []
+    repos = [_sync_repo_payload(index=i, stars=i, users=[f"user-{i}"]) for i in range(5)]
+
+    monkeypatch.setattr(repos_db, "REPO_UPSERT_BATCH_SIZE", 2)
+    monkeypatch.setattr(repos_db, "get_connection", _fake_get_connection)
+    monkeypatch.setattr(repos_db, "_load_star_users", _fake_load_star_users)
+    monkeypatch.setattr(repos_db, "bump_repo_stats_version", _fake_bump)
+
+    inserted = _run(repos_db.upsert_repos(repos))
+
+    assert inserted == 5
+    assert fake_conn.batch_sizes == [2, 2, 1]
+    assert fake_conn.commit_count == 3
+    assert len(bump_calls) == 3
+
+
+def test_upsert_repos_keeps_star_user_merge_when_batched(
+    db_connection_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _run(_insert_repos(db_connection_factory, [_repo_row(index=1, stars=100)]))
+
+    monkeypatch.setattr(repos_db, "REPO_UPSERT_BATCH_SIZE", 1)
+
+    _run(
+        repos_db.upsert_repos(
+            [
+                _sync_repo_payload(index=1, stars=120, users=["user-2"]),
+                _sync_repo_payload(index=2, stars=80, users=["user-3"]),
+            ]
+        )
+    )
+
+    async def _fetch_star_users(full_name: str) -> list[str]:
+        async with db_connection_factory() as conn:
+            row = await (
+                await conn.execute("SELECT star_users FROM repos WHERE full_name = ?", (full_name,))
+            ).fetchone()
+        return json.loads(row[0])
+
+    assert _run(_fetch_star_users("owner/repo-1")) == ["user-1", "user-2"]
+    assert _run(_fetch_star_users("owner/repo-2")) == ["user-3"]
 
 
 def test_taxonomy_cache_reloads_on_file_change(tmp_path, monkeypatch):
@@ -210,3 +326,87 @@ def test_rules_cache_reloads_on_file_change(tmp_path, monkeypatch):
 
     reloaded = rules_mod.load_rules("", fallback_path=rules_path)
     assert reloaded[0]["rule_id"] == "r2"
+
+
+def test_init_db_reuses_existing_fts_objects_without_dropping_rows(db_connection_factory):
+    if not schema_db.is_fts_enabled():
+        pytest.skip("SQLite FTS5 unavailable in current test environment")
+
+    rows = [_repo_row(index=1, stars=100)]
+    _run(_insert_repos(db_connection_factory, rows))
+
+    async def _count_fts_rows() -> int:
+        async with db_connection_factory() as conn:
+            row = await (await conn.execute("SELECT COUNT(*) FROM repos_fts")).fetchone()
+        return int(row[0] or 0)
+
+    first_count = _run(_count_fts_rows())
+    assert first_count == 1
+
+    _run(schema_db.init_db())
+
+    second_count = _run(_count_fts_rows())
+    assert second_count == 1
+
+
+def test_retry_on_lock_records_conflicts_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"count": 0}
+    recorded: list[dict[str, int]] = []
+    sleeps: list[float] = []
+
+    async def _fake_record(**delta: int) -> None:
+        recorded.append(delta)
+
+    async def _fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    async def _flaky() -> str:
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise helpers_db.sqlite3.OperationalError("database is locked")
+        return "ok"
+
+    monkeypatch.setattr(helpers_db, "_record_lock_metrics", _fake_record)
+    monkeypatch.setattr(helpers_db.asyncio, "sleep", _fake_sleep)
+    monkeypatch.setattr(helpers_db.random, "uniform", lambda _min, _max: 0.0)
+
+    wrapped = helpers_db._retry_on_lock(max_attempts=5, base_delay=0.05, max_delay=0.5)(_flaky)
+
+    result = _run(wrapped())
+
+    assert result == "ok"
+    assert recorded == [
+        {"db_lock_conflict_total": 1, "db_lock_retry_total": 1},
+        {"db_lock_conflict_total": 1, "db_lock_retry_total": 1},
+    ]
+    assert sleeps == [0.05, 0.1]
+
+
+def test_retry_on_lock_records_exhausted_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorded: list[dict[str, int]] = []
+    sleeps: list[float] = []
+
+    async def _fake_record(**delta: int) -> None:
+        recorded.append(delta)
+
+    async def _fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    async def _always_locked() -> None:
+        raise helpers_db.sqlite3.OperationalError("database table is locked")
+
+    monkeypatch.setattr(helpers_db, "_record_lock_metrics", _fake_record)
+    monkeypatch.setattr(helpers_db.asyncio, "sleep", _fake_sleep)
+    monkeypatch.setattr(helpers_db.random, "uniform", lambda _min, _max: 0.0)
+
+    wrapped = helpers_db._retry_on_lock(max_attempts=3, base_delay=0.05, max_delay=0.5)(_always_locked)
+
+    with pytest.raises(helpers_db.sqlite3.OperationalError, match="locked"):
+        _run(wrapped())
+
+    assert recorded == [
+        {"db_lock_conflict_total": 1, "db_lock_retry_total": 1},
+        {"db_lock_conflict_total": 1, "db_lock_retry_total": 1},
+        {"db_lock_conflict_total": 1, "db_lock_retry_exhausted_total": 1},
+    ]
+    assert sleeps == [0.05, 0.1]

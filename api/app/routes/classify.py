@@ -250,6 +250,34 @@ def _chunk_repos(items: list, size: int) -> list[list]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
+def _classification_policy() -> DecisionPolicy:
+    if CLASSIFY_ENGINE_V2_ENABLED:
+        return DecisionPolicy(
+            direct_rule_threshold=RULE_DIRECT_THRESHOLD,
+            ai_required_threshold=RULE_AI_THRESHOLD,
+        )
+    return DecisionPolicy(direct_rule_threshold=0.0, ai_required_threshold=1.0)
+
+
+def _build_classification_engine(
+    data: dict,
+    rules: list,
+    classify_mode: str,
+    use_ai: bool,
+    preference: dict,
+) -> tuple[ClassificationEngine, Dict[str, str]]:
+    effective_rules = _apply_rule_priority_overrides(rules, preference)
+    tag_mapping = _resolve_tag_mapping(data, preference)
+    engine = ClassificationEngine(
+        taxonomy=data,
+        rules=effective_rules,
+        classify_mode=classify_mode,
+        use_ai=use_ai,
+        policy=_classification_policy(),
+    )
+    return engine, tag_mapping
+
+
 # ---------------------------------------------------------------------------
 # Classification core logic
 # ---------------------------------------------------------------------------
@@ -292,19 +320,12 @@ async def _classify_repo_once(
                     )
             if summary:
                 repo_data["readme_summary"] = summary
-    if CLASSIFY_ENGINE_V2_ENABLED:
-        policy = DecisionPolicy(
-            direct_rule_threshold=RULE_DIRECT_THRESHOLD,
-            ai_required_threshold=RULE_AI_THRESHOLD,
-        )
-    else:
-        policy = DecisionPolicy(direct_rule_threshold=0.0, ai_required_threshold=1.0)
-    engine = ClassificationEngine(
-        taxonomy=data,
-        rules=rules,
-        classify_mode=classify_mode,
-        use_ai=use_ai,
-        policy=policy,
+    engine, _tag_mapping = _build_classification_engine(
+        data,
+        rules,
+        classify_mode,
+        use_ai,
+        preference={},
     )
     outcome = await engine.classify_repo(repo_data, ai_client, ai_retries=2)
     result = outcome.result
@@ -420,22 +441,12 @@ async def _classify_repos_batch(
                     except Exception:
                         logger.warning("Failed to record README fetch failure for %s", full_name)
 
-    effective_rules = _apply_rule_priority_overrides(rules, preference)
-    tag_mapping = _resolve_tag_mapping(data, preference)
-
-    if CLASSIFY_ENGINE_V2_ENABLED:
-        policy = DecisionPolicy(
-            direct_rule_threshold=RULE_DIRECT_THRESHOLD,
-            ai_required_threshold=RULE_AI_THRESHOLD,
-        )
-    else:
-        policy = DecisionPolicy(direct_rule_threshold=0.0, ai_required_threshold=1.0)
-    engine = ClassificationEngine(
-        taxonomy=data,
-        rules=effective_rules,
-        classify_mode=classify_mode,
-        use_ai=use_ai,
-        policy=policy,
+    engine, tag_mapping = _build_classification_engine(
+        data,
+        rules,
+        classify_mode,
+        use_ai,
+        preference,
     )
     updates: list[dict] = []
     metric_classification_total = 0
@@ -443,6 +454,76 @@ async def _classify_repos_batch(
     metric_ai_fallback_total = 0
     metric_empty_tag_total = 0
     metric_uncategorized_total = 0
+    pending_ai_items: list[dict] = []
+
+    def _record_success(full_name: str, outcome, started: float) -> None:
+        nonlocal metric_classification_total
+        nonlocal metric_rule_hit_total
+        nonlocal metric_ai_fallback_total
+        nonlocal metric_empty_tag_total
+        nonlocal metric_uncategorized_total
+
+        result = _apply_tag_mapping_to_result(outcome.result, tag_mapping, data)
+        provider = result.get("provider") if outcome.source == "ai" else "rules"
+        model = result.get("model") if outcome.source == "ai" else "rules"
+        if outcome.source == "manual_review":
+            provider = "manual"
+            model = "manual"
+        updates.append(
+            {
+                "full_name": full_name,
+                "category": result["category"],
+                "subcategory": result["subcategory"],
+                "confidence": result["confidence"],
+                "tags": result["tags"],
+                "tag_ids": result.get("tag_ids") or [],
+                "provider": provider,
+                "model": model,
+                "summary_zh": result.get("summary_zh"),
+                "keywords": result.get("keywords"),
+                "reason": str(result.get("reason") or outcome.reason or "")[:500],
+                "decision_source": outcome.source,
+                "rule_candidates": [
+                    {
+                        "rule_id": candidate.rule_id,
+                        "score": candidate.score,
+                        "category": candidate.category,
+                        "subcategory": candidate.subcategory,
+                        "evidence": candidate.evidence,
+                        "tag_ids": candidate.tag_ids,
+                    }
+                    for candidate in outcome.rule_candidates[:5]
+                ],
+            }
+        )
+        metric_classification_total += 1
+        if outcome.source in ("rules", "rules_fallback"):
+            metric_rule_hit_total += 1
+        if outcome.source == "rules_fallback":
+            metric_ai_fallback_total += 1
+        if not result.get("tags"):
+            metric_empty_tag_total += 1
+        if str(result.get("category") or "") in ("uncategorized", "other", ""):
+            metric_uncategorized_total += 1
+        latency_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            "classification_event %s",
+            json.dumps(
+                {
+                    "task_id": task_id,
+                    "repo": full_name,
+                    "rule_candidates": updates[-1]["rule_candidates"],
+                    "final_decision": {
+                        "source": outcome.source,
+                        "category": result.get("category"),
+                        "subcategory": result.get("subcategory"),
+                        "confidence": result.get("confidence"),
+                    },
+                    "latency_ms": round(latency_ms, 2),
+                },
+                ensure_ascii=False,
+            ),
+        )
 
     for repo_data in repo_datas:
         full_name = repo_data.get("full_name")
@@ -451,71 +532,62 @@ async def _classify_repos_batch(
             continue
         started = time.perf_counter()
         try:
-            outcome = await engine.classify_repo(repo_data, ai_client, ai_retries=2)
-            result = _apply_tag_mapping_to_result(outcome.result, tag_mapping, data)
-            provider = result.get("provider") if outcome.source == "ai" else "rules"
-            model = result.get("model") if outcome.source == "ai" else "rules"
-            if outcome.source == "manual_review":
-                provider = "manual"
-                model = "manual"
-            updates.append(
+            prepared = engine.prepare_classification(repo_data)
+            if prepared.outcome is not None:
+                _record_success(full_name, prepared.outcome, started)
+                continue
+            if prepared.pending_ai is None:
+                raise ValueError("Classification preparation did not produce an outcome")
+            pending_ai_items.append(
                 {
                     "full_name": full_name,
-                    "category": result["category"],
-                    "subcategory": result["subcategory"],
-                    "confidence": result["confidence"],
-                    "tags": result["tags"],
-                    "tag_ids": result.get("tag_ids") or [],
-                    "provider": provider,
-                    "model": model,
-                    "summary_zh": result.get("summary_zh"),
-                    "keywords": result.get("keywords"),
-                    "reason": str(result.get("reason") or outcome.reason or "")[:500],
-                    "decision_source": outcome.source,
-                    "rule_candidates": [
-                        {
-                            "rule_id": candidate.rule_id,
-                            "score": candidate.score,
-                            "category": candidate.category,
-                            "subcategory": candidate.subcategory,
-                            "evidence": candidate.evidence,
-                            "tag_ids": candidate.tag_ids,
-                        }
-                        for candidate in outcome.rule_candidates[:5]
-                    ],
+                    "started": started,
+                    "pending": prepared.pending_ai,
                 }
-            )
-            metric_classification_total += 1
-            if outcome.source in ("rules", "rules_fallback"):
-                metric_rule_hit_total += 1
-            if outcome.source == "rules_fallback":
-                metric_ai_fallback_total += 1
-            if not result.get("tags"):
-                metric_empty_tag_total += 1
-            if str(result.get("category") or "") in ("uncategorized", "other", ""):
-                metric_uncategorized_total += 1
-            latency_ms = (time.perf_counter() - started) * 1000
-            logger.info(
-                "classification_event %s",
-                json.dumps(
-                    {
-                        "task_id": task_id,
-                        "repo": full_name,
-                        "rule_candidates": updates[-1]["rule_candidates"],
-                        "final_decision": {
-                            "source": outcome.source,
-                            "category": result.get("category"),
-                            "subcategory": result.get("subcategory"),
-                            "confidence": result.get("confidence"),
-                        },
-                        "latency_ms": round(latency_ms, 2),
-                    },
-                    ensure_ascii=False,
-                ),
             )
         except Exception as exc:
             logger.warning("Classification failed for %s: %s", full_name, exc)
             failed += 1
+
+    if pending_ai_items:
+        try:
+            ai_results = await ai_client.classify_repos_with_retry(
+                [item["pending"].ai_input for item in pending_ai_items],
+                data,
+                retries=2,
+            )
+        except Exception as exc:
+            ai_results = [None] * len(pending_ai_items)
+            logger.warning(
+                "Batch AI classification failed for %d repos: %s",
+                len(pending_ai_items),
+                exc,
+            )
+
+        for index, item in enumerate(pending_ai_items):
+            full_name = item["full_name"]
+            started = item["started"]
+            pending = item["pending"]
+            ai_result = ai_results[index] if index < len(ai_results) else None
+            try:
+                if ai_result is None:
+                    ai_result = await ai_client.classify_repo_with_retry(
+                        pending.ai_input,
+                        data,
+                        retries=2,
+                    )
+                outcome = engine.outcome_from_ai_result(
+                    ai_result,
+                    pending.reason,
+                    pending.rule_candidates,
+                )
+            except Exception as exc:
+                if pending.top_candidate is None:
+                    logger.warning("Classification failed for %s: %s", full_name, exc)
+                    failed += 1
+                    continue
+                outcome = engine.fallback_outcome(pending.top_candidate, pending.rule_candidates)
+            _record_success(full_name, outcome, started)
 
     if updates:
         try:

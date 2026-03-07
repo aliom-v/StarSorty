@@ -82,6 +82,9 @@ class RepoOut(BaseModel):
 class RepoListResponse(BaseModel):
     total: int
     items: List[RepoOut]
+    has_more: bool = False
+    next_offset: int | None = None
+    pagination_limited: bool = False
 
 
 class OverrideRequest(BaseModel):

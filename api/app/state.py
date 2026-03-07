@@ -97,6 +97,9 @@ quality_metrics = {
     "uncategorized_total": 0,
     "search_total": 0,
     "search_zero_result_total": 0,
+    "db_lock_conflict_total": 0,
+    "db_lock_retry_total": 0,
+    "db_lock_retry_exhausted_total": 0,
 }
 
 

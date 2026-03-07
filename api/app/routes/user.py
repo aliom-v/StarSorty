@@ -18,6 +18,7 @@ from ..schemas import (
 )
 
 router = APIRouter()
+PUBLIC_FEEDBACK_USER_ID = "anonymous"
 
 
 @router.get(
@@ -48,7 +49,7 @@ async def patch_preferences(user_id: str, payload: UserPreferencesRequest) -> Us
 @limiter.limit(RATE_LIMIT_DEFAULT)
 async def feedback_search(request: Request, payload: SearchFeedbackRequest) -> FeedbackResponse:
     await record_user_feedback_event(
-        user_id=_normalize_preference_user(payload.user_id),
+        user_id=PUBLIC_FEEDBACK_USER_ID,
         event_type="search",
         query=payload.query,
         payload={
@@ -58,6 +59,7 @@ async def feedback_search(request: Request, payload: SearchFeedbackRequest) -> F
             "category": payload.category,
             "subcategory": payload.subcategory,
         },
+        update_profile=False,
     )
     return FeedbackResponse(ok=True)
 
@@ -66,11 +68,12 @@ async def feedback_search(request: Request, payload: SearchFeedbackRequest) -> F
 @limiter.limit(RATE_LIMIT_DEFAULT)
 async def feedback_click(request: Request, payload: ClickFeedbackRequest) -> FeedbackResponse:
     await record_user_feedback_event(
-        user_id=_normalize_preference_user(payload.user_id),
+        user_id=PUBLIC_FEEDBACK_USER_ID,
         event_type="click",
         query=payload.query,
         full_name=payload.full_name,
         payload={"query": payload.query},
+        update_profile=False,
     )
     return FeedbackResponse(ok=True)
 

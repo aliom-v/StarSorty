@@ -101,9 +101,13 @@ async def repos(
     cached = await cache.get(cache_key)
     if cached is not None:
         return RepoListResponse(**cached)
-    profile = await get_user_interest_profile(user_id)
-    topic_scores = profile.get("topic_scores") if isinstance(profile, dict) else {}
-    total, items = await list_repos(
+    topic_scores = None
+    if sort == "relevance" and q:
+        profile = await get_user_interest_profile(user_id)
+        raw_scores = profile.get("topic_scores") if isinstance(profile, dict) else None
+        if isinstance(raw_scores, dict):
+            topic_scores = raw_scores
+    page = await list_repos(
         q=q,
         language=language,
         min_stars=min_stars,
@@ -113,7 +117,7 @@ async def repos(
         tags=tag_list,
         tag_mode=tag_mode,
         sort=sort,
-        topic_scores=topic_scores if isinstance(topic_scores, dict) else None,
+        topic_scores=topic_scores,
         star_user=star_user,
         limit=limit,
         offset=offset,
@@ -121,16 +125,28 @@ async def repos(
     if q:
         await _add_quality_metrics(
             search_total=1,
-            search_zero_result_total=1 if total == 0 else 0,
+            search_zero_result_total=1 if page.total == 0 else 0,
         )
     items_payload: List[dict] = []
-    for item in items:
+    for item in page.items:
         payload = item.model_dump() if isinstance(item, RepoBase) else item
         items_payload.append(payload)
     items_out = [RepoOut(**payload) for payload in items_payload]
-    response_payload = {"total": total, "items": items_payload}
+    response_payload = {
+        "total": page.total,
+        "items": items_payload,
+        "has_more": page.has_more,
+        "next_offset": page.next_offset,
+        "pagination_limited": page.pagination_limited,
+    }
     await cache.set(cache_key, response_payload, CACHE_TTL_REPOS)
-    return RepoListResponse(total=total, items=items_out)
+    return RepoListResponse(
+        total=page.total,
+        items=items_out,
+        has_more=page.has_more,
+        next_offset=page.next_offset,
+        pagination_limited=page.pagination_limited,
+    )
 
 
 @router.get(

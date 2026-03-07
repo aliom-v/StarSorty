@@ -7,6 +7,33 @@ from .stats import bump_repo_stats_version
 from ..models import RepoBase
 
 STAR_USER_LOOKUP_CHUNK_SIZE = _env_int("STAR_USER_LOOKUP_CHUNK_SIZE", 400, minimum=1)
+REPO_UPSERT_BATCH_SIZE = _env_int("REPO_UPSERT_BATCH_SIZE", 200, minimum=1)
+
+
+_UPSERT_REPOS_SQL = """
+    INSERT INTO repos (
+        full_name, name, owner, html_url, description, language,
+        stargazers_count, forks_count, topics, pushed_at, updated_at, starred_at,
+        star_users
+    ) VALUES (
+        :full_name, :name, :owner, :html_url, :description, :language,
+        :stargazers_count, :forks_count, :topics, :pushed_at, :updated_at, :starred_at,
+        :star_users
+    )
+    ON CONFLICT(full_name) DO UPDATE SET
+        name=excluded.name,
+        owner=excluded.owner,
+        html_url=excluded.html_url,
+        description=excluded.description,
+        language=excluded.language,
+        stargazers_count=excluded.stargazers_count,
+        forks_count=excluded.forks_count,
+        topics=excluded.topics,
+        pushed_at=excluded.pushed_at,
+        updated_at=excluded.updated_at,
+        starred_at=excluded.starred_at,
+        star_users=excluded.star_users
+"""
 
 
 async def _load_star_users(repos: List[Dict[str, Any]]) -> Dict[str, List[str]]:
@@ -41,43 +68,26 @@ async def upsert_repos(repos: List[Dict[str, Any]]) -> int:
         new_users = set(repo.get("star_users") or [])
         merged = sorted(current_users | new_users)
         repo["star_users"] = merged
+    serialized_repos = [
+        {
+            **repo,
+            "topics": json.dumps(repo.get("topics") or []),
+            "star_users": json.dumps(repo.get("star_users") or []),
+        }
+        for repo in repos
+    ]
     async with get_connection() as conn:
-        await conn.executemany(
-            """
-            INSERT INTO repos (
-                full_name, name, owner, html_url, description, language,
-                stargazers_count, forks_count, topics, pushed_at, updated_at, starred_at,
-                star_users
-            ) VALUES (
-                :full_name, :name, :owner, :html_url, :description, :language,
-                :stargazers_count, :forks_count, :topics, :pushed_at, :updated_at, :starred_at,
-                :star_users
-            )
-            ON CONFLICT(full_name) DO UPDATE SET
-                name=excluded.name,
-                owner=excluded.owner,
-                html_url=excluded.html_url,
-                description=excluded.description,
-                language=excluded.language,
-                stargazers_count=excluded.stargazers_count,
-                forks_count=excluded.forks_count,
-                topics=excluded.topics,
-                pushed_at=excluded.pushed_at,
-                updated_at=excluded.updated_at,
-                starred_at=excluded.starred_at,
-                star_users=excluded.star_users
-            """,
-            [
-                {
-                    **repo,
-                    "topics": json.dumps(repo.get("topics") or []),
-                    "star_users": json.dumps(repo.get("star_users") or []),
-                }
-                for repo in repos
-            ],
-        )
-        await bump_repo_stats_version(conn)
-        await conn.commit()
+        try:
+            for start in range(0, len(serialized_repos), REPO_UPSERT_BATCH_SIZE):
+                batch = serialized_repos[start : start + REPO_UPSERT_BATCH_SIZE]
+                if not batch:
+                    continue
+                await conn.executemany(_UPSERT_REPOS_SQL, batch)
+                await bump_repo_stats_version(conn)
+                await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
     return len(repos)
 
 

@@ -150,6 +150,7 @@ async def record_user_feedback_event(
     query: Optional[str] = None,
     full_name: Optional[str] = None,
     payload: Optional[Dict[str, Any]] = None,
+    update_profile: bool = True,
 ) -> None:
     normalized_user = str(user_id or "global").strip() or "global"
     normalized_event = str(event_type or "").strip().lower()
@@ -180,6 +181,10 @@ async def record_user_feedback_event(
                 timestamp,
             ),
         )
+
+        if not update_profile:
+            await conn.commit()
+            return
 
         current_profile_row = await (await conn.execute(
             """
