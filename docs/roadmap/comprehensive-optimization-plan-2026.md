@@ -105,6 +105,9 @@
 - 已落地（P2 / frontend polling）：
   - 首页任务轮询从固定 `setInterval` 改为单次调度，避免请求慢时叠加并发轮询。
   - 轮询失败时按指数退避延长下一次请求间隔，恢复后自动回到基础轮询间隔。
+- 已落地（P2 / frontend maintainability）：
+  - `web/app/page.tsx` 按“视图层 + filter state hook + data/request hook”拆分，首页主文件从约 1k 行收敛到约 360 行。
+  - 首页共享类型迁移到独立模块，减少页面文件内联类型与请求编排耦合。
 
 ---
 
