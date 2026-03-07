@@ -44,7 +44,7 @@ StarSorty 的文档按“入门 → 配置/接口 → 部署 → 规划”组织
 ### Roadmap
 
 - `roadmap/comprehensive-optimization-plan-2026.md`：当前有效的优化总方案与阶段目标
-- `roadmap/version-readiness-plan-2026-03.md`：当前版本的完善计划与执行依据
+- `archive/version-readiness-plan-2026-03.md`：`0.2.0` 发布收尾记录与执行依据
 
 ## 文档维护约定
 
@@ -58,4 +58,4 @@ StarSorty 的文档按“入门 → 配置/接口 → 部署 → 规划”组织
 - 当前文档结构已整理为总入口、`guides/` 指南和 `roadmap/` 规划三层。
 - 历史上与当前代码不一致的旧规划文档已移除。
 - 当前建议以 `roadmap/comprehensive-optimization-plan-2026.md` 作为长期主计划。
-- `roadmap/version-readiness-plan-2026-03.md` 已完成当前版本收尾，可作为本轮发布的执行记录。
+- `archive/version-readiness-plan-2026-03.md` 已归档，作为 `0.2.0` 发布收尾记录保留。
