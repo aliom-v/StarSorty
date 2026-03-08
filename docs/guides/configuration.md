@@ -101,7 +101,7 @@ AI_MODEL=deepseek-chat
 | --- | --- | --- |
 | `SYNC_CRON` | `0 */6 * * *` | scheduler 触发同步的 cron 表达式，使用 UTC。 |
 | `SYNC_TIMEOUT` | `30` | scheduler 调用 `/sync` 的超时秒数。 |
-| `DATABASE_URL` | `sqlite:////data/app.db` | 当前仅支持 SQLite。 |
+| `DATABASE_URL` | `sqlite:////data/app.db` | 当前仅支持 SQLite；该默认值对应 Docker / Compose 容器内的 `/data/app.db`，宿主机本地开发请改成仓库绝对路径，例如 `sqlite:////absolute/path/to/StarSorty/data/app.db`。 |
 | `API_BASE_URL` | `http://api:4321` | scheduler 容器访问 API 的内部地址。 |
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:4321` | Web 构建时注入的 API 地址。 |
 
@@ -195,6 +195,7 @@ GITHUB_MODE=merge
 
 - API 启动时提示 `ADMIN_TOKEN is required in production mode`：说明 `APP_ENV=production` 但未配置 `ADMIN_TOKEN`。
 - API 启动时提示 `CORS_ORIGINS must be an explicit origin list`：说明生产环境仍使用了通配符或空值。
+- 宿主机直接启动 API 时出现 `/data/app.db` 权限错误或 SQLite 无法创建：说明 `DATABASE_URL` 仍指向容器路径，请改成仓库内 `data/app.db` 的绝对路径。
 - Web 页面请求错地址：检查 `NEXT_PUBLIC_API_BASE_URL` 是否与部署域名一致。
 - scheduler 无法触发同步：检查 `API_BASE_URL`、`SYNC_CRON` 与 `ADMIN_TOKEN` 是否在 scheduler 容器内生效。
 

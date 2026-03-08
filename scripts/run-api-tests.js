@@ -4,6 +4,7 @@ const { existsSync } = require('node:fs');
 const path = require('node:path');
 
 const root = process.cwd();
+const apiDevRequirements = 'api/requirements-dev.txt';
 const testArgs = ['-m', 'pytest', '-q', 'api/tests'];
 
 function runCommand(command, args, options = {}) {
@@ -51,7 +52,7 @@ function isUsablePython(command) {
     return false;
   }
   const [major, minor] = output.split('.').map((value) => Number.parseInt(value, 10));
-  if (major !== 3 || minor >= 14) {
+  if (major !== 3 || minor < 11 || minor >= 15) {
     return false;
   }
   const imports = runCapture(
@@ -73,7 +74,7 @@ function runDockerFallback() {
     '-w', '/work',
     'python:3.11-slim',
     'sh', '-lc',
-    'pip install --no-cache-dir -r api/requirements-dev.txt >/tmp/pip-install.log && python -m pytest -q api/tests',
+    `pip install --no-cache-dir -r ${apiDevRequirements} >/tmp/pip-install.log && python -m pytest -q api/tests`,
   ]);
 }
 
@@ -93,5 +94,8 @@ if (dockerResult) {
   process.exit(dockerResult.status ?? 1);
 }
 
-console.error('No usable Python environment or Docker runtime found for API tests.');
+console.error(
+  `No usable Python environment or Docker runtime found for API tests.\n` +
+  `Install ${apiDevRequirements} into a local Python 3.11-3.14 environment, or enable Docker fallback.`
+);
 process.exit(1);

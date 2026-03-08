@@ -1,8 +1,10 @@
-export type TagMode = "or" | "and";
-export type SortMode = "relevance" | "stars" | "updated";
-export type ActionStatus = "success" | "error" | null;
+export type HomeTagMode = "or" | "and";
 
-export type Repo = {
+export type HomeSortMode = "relevance" | "stars" | "updated";
+
+export type HomeActionStatus = "success" | "error" | null;
+
+export type HomeRepo = {
   full_name: string;
   name: string;
   owner: string;
@@ -26,39 +28,39 @@ export type Repo = {
   starred_at?: string | null;
 };
 
-export type RepoListResponse = {
+export type HomeRepoListResponse = {
   total?: number;
-  items?: Repo[];
+  items?: HomeRepo[];
   has_more?: boolean;
   next_offset?: number | null;
   pagination_limited?: boolean;
 };
 
-export type Status = {
+export type HomeStatus = {
   last_sync_at?: string | null;
   last_result?: string | null;
   last_message?: string | null;
 };
 
-export type StatsItem = {
+export type HomeStatsItem = {
   name: string;
   count: number;
 };
 
-export type SubcategoryStatsItem = StatsItem & {
+export type HomeSubcategoryStatsItem = HomeStatsItem & {
   category: string;
 };
 
-export type Stats = {
+export type HomeStats = {
   total: number;
   unclassified: number;
-  categories: StatsItem[];
-  subcategories?: SubcategoryStatsItem[];
-  tags: StatsItem[];
-  users: StatsItem[];
+  categories: HomeStatsItem[];
+  subcategories?: HomeSubcategoryStatsItem[];
+  tags: HomeStatsItem[];
+  users: HomeStatsItem[];
 };
 
-export type BackgroundStatus = {
+export type HomeBackgroundStatus = {
   running: boolean;
   started_at?: string | null;
   finished_at?: string | null;
@@ -71,13 +73,13 @@ export type BackgroundStatus = {
   task_id?: string | null;
 };
 
-export type TaskQueued = {
+export type HomeTaskQueued = {
   task_id: string;
   status: string;
   message?: string | null;
 };
 
-export type TaskStatus = {
+export type HomeTaskStatus = {
   task_id: string;
   status: string;
   task_type: string;
@@ -89,17 +91,15 @@ export type TaskStatus = {
   retry_from_task_id?: string | null;
 };
 
-export type ClientSettings = {
+export type HomeClientSettings = {
   github_mode: string;
   classify_mode: string;
   auto_classify_after_sync: boolean;
 };
 
-export type TagGroupWithCounts = {
+export type HomeTagGroupWithCounts = {
   id: string;
   name: string;
   tags: string[];
-  tagCounts: StatsItem[];
+  tagCounts: HomeStatsItem[];
 };
-
-export const PAGE_SIZE = 60;

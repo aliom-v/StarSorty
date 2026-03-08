@@ -1,24 +1,22 @@
-"use client";
-
-import { useCallback, useEffect, useRef, useState } from "react";
-
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildAdminHeaders } from "./admin";
 import { API_BASE_URL } from "./apiBase";
 import { getErrorMessage, readApiError } from "./apiError";
-import type { MessageValues, Messages } from "./i18n";
+import type { Messages, MessageValues } from "./i18n";
 import {
-  PAGE_SIZE,
-  type ActionStatus,
-  type BackgroundStatus,
-  type ClientSettings,
-  type Repo,
-  type RepoListResponse,
-  type SortMode,
-  type Stats,
-  type Status,
-  type TagMode,
-  type TaskQueued,
-  type TaskStatus,
+  type HomeActionStatus,
+  type HomeBackgroundStatus,
+  type HomeClientSettings,
+  type HomeRepo,
+  type HomeRepoListResponse,
+  type HomeSortMode,
+  type HomeStats,
+  type HomeStatsItem,
+  type HomeStatus,
+  type HomeTagGroupWithCounts,
+  type HomeTagMode,
+  type HomeTaskQueued,
+  type HomeTaskStatus,
 } from "./homePageTypes";
 import { mergeRepoItems, normalizeRepoPage } from "./repoListState";
 import { createRequestTracker } from "./requestTracker";
@@ -28,70 +26,16 @@ import {
   getPollingDelayMs,
   shouldPollBackgroundStatus,
 } from "./taskPolling";
+import { TAG_GROUPS } from "./tagGroups";
+
+const PAGE_SIZE = 60;
 
 type Translate = (key: keyof Messages, params?: MessageValues) => string;
 
-type UseHomePageDataArgs = {
-  t: Translate;
-  query: string;
-  category: string | null;
-  subcategory: string | null;
-  selectedTags: string[];
-  tagMode: TagMode;
-  sortMode: SortMode;
-  minStars: number | null;
-  sourceUser: string | null;
-  setSourceUser: (user: string | null) => void;
-};
-
-type BuildRepoParamsArgs = Omit<UseHomePageDataArgs, "t" | "setSourceUser"> & {
-  activePreferenceUser: string;
-  offset: number;
-};
-
-function buildRepoParams({
-  query,
-  category,
-  subcategory,
-  selectedTags,
-  tagMode,
-  sortMode,
-  minStars,
-  sourceUser,
-  activePreferenceUser,
-  offset,
-}: BuildRepoParamsArgs) {
-  const params = new URLSearchParams({
-    limit: String(PAGE_SIZE),
-    offset: String(offset),
-  });
-  if (query) params.set("q", query);
-  if (category) params.set("category", category);
-  if (subcategory) params.set("subcategory", subcategory);
-  if (selectedTags.length > 0) params.set("tags", selectedTags.join(","));
-  params.set("tag_mode", tagMode);
-  params.set("sort", sortMode);
-  params.set("user_id", activePreferenceUser);
-  if (minStars) params.set("min_stars", String(minStars));
-  if (sourceUser) params.set("star_user", sourceUser);
-  return params;
-}
-
-export function useHomePageData({
-  t,
-  query,
-  category,
-  subcategory,
-  selectedTags,
-  tagMode,
-  sortMode,
-  minStars,
-  sourceUser,
-  setSourceUser,
-}: UseHomePageDataArgs) {
-  const [repos, setRepos] = useState<Repo[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [status, setStatus] = useState<Status | null>(null);
+export function useHomePageData(t: Translate) {
+  const [repos, setRepos] = useState<HomeRepo[]>([]);
+  const [stats, setStats] = useState<HomeStats | null>(null);
+  const [status, setStatus] = useState<HomeStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -99,16 +43,22 @@ export function useHomePageData({
   const [error, setError] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [actionStatus, setActionStatus] = useState<ActionStatus>(null);
+  const [actionStatus, setActionStatus] = useState<HomeActionStatus>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncTaskId, setSyncTaskId] = useState<string | null>(null);
   const [backgroundStatus, setBackgroundStatus] =
-    useState<BackgroundStatus | null>(null);
+    useState<HomeBackgroundStatus | null>(null);
   const [taskInfoId, setTaskInfoId] = useState<string | null>(null);
-  const [taskInfo, setTaskInfo] = useState<TaskStatus | null>(null);
+  const [taskInfo, setTaskInfo] = useState<HomeTaskStatus | null>(null);
   const [followActiveTask, setFollowActiveTask] = useState(true);
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
   const [pollingPaused, setPollingPaused] = useState(false);
+  const [queryInput, setQueryInput] = useState("");
+  const [query, setQuery] = useState("");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagMode, setTagMode] = useState<HomeTagMode>("or");
+  const [sortMode, setSortMode] = useState<HomeSortMode>("stars");
+  const [sourceUser, setSourceUser] = useState<string | null>(null);
   const [groupMode, setGroupMode] = useState(false);
 
   const wasBackgroundRunningRef = useRef(false);
@@ -123,25 +73,45 @@ export function useHomePageData({
   const reposRequestTrackerRef = useRef(createRequestTracker());
   const statsRequestIdRef = useRef(0);
 
+  const activeError = configError || error;
   const unknownErrorMessage = t("unknownError");
   const activePreferenceUser = sourceUser || "global";
-  const activeTaskId = backgroundStatus?.task_id || syncTaskId;
-  const pollTargetId = followActiveTask ? activeTaskId : taskInfoId;
+
+  const handleTagToggle = useCallback((tag: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((item) => item !== tag) : [...prev, tag]
+    );
+  }, []);
+
+  const clearAllFilters = useCallback(() => {
+    setQueryInput("");
+    setQuery("");
+    setSelectedTags([]);
+    setTagMode("or");
+    setSortMode("stars");
+    setSourceUser(null);
+  }, []);
 
   const handleRepoClick = useCallback(
-    (repo: Repo) => {
+    (repo: HomeRepo) => {
+      const payload = {
+        user_id: activePreferenceUser,
+        full_name: repo.full_name,
+        query: query || null,
+      };
       void fetch(`${API_BASE_URL}/feedback/click`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: activePreferenceUser,
-          full_name: repo.full_name,
-          query: query || null,
-        }),
+        body: JSON.stringify(payload),
       }).catch(() => {});
     },
     [activePreferenceUser, query]
   );
+
+  const clearActionFeedback = useCallback(() => {
+    setActionMessage(null);
+    setActionStatus(null);
+  }, []);
 
   const loadStatus = useCallback(async () => {
     setError(null);
@@ -153,12 +123,16 @@ export function useHomePageData({
         setStatus(null);
         return;
       }
-      const statusData = await statusRes.json();
+      const statusData = (await statusRes.json()) as HomeStatus;
       setStatus(statusData);
     } catch (err) {
-      setError(getErrorMessage(err, unknownErrorMessage));
+      const message = getErrorMessage(err, unknownErrorMessage);
+      setError(message);
     }
   }, [unknownErrorMessage]);
+
+  const activeTaskId = backgroundStatus?.task_id || syncTaskId;
+  const pollTargetId = followActiveTask ? activeTaskId : taskInfoId;
 
   const loadStats = useCallback(
     async (refresh = false) => {
@@ -182,7 +156,7 @@ export function useHomePageData({
           setError(detail);
           return;
         }
-        const statsData = await statsRes.json();
+        const statsData = (await statsRes.json()) as HomeStats;
         if (statsRequestIdRef.current !== requestId) return;
         setStats(statsData);
       } catch {
@@ -202,7 +176,7 @@ export function useHomePageData({
         setError(detail);
         return;
       }
-      const data = await res.json();
+      const data = (await res.json()) as HomeBackgroundStatus;
       setBackgroundStatus(data);
     } catch {
       setBackgroundStatus(null);
@@ -255,11 +229,10 @@ export function useHomePageData({
     pollingPausedRef.current = false;
     pollFailureCountRef.current = 0;
     setPollingPaused(false);
-    setActionMessage(null);
-    setActionStatus(null);
+    clearActionFeedback();
     if (document.visibilityState === "hidden") return;
     startPolling(0);
-  }, [startPolling]);
+  }, [clearActionFeedback, startPolling]);
 
   const pollBackgroundStatusNow = useCallback(async (requestId: number) => {
     try {
@@ -267,7 +240,7 @@ export function useHomePageData({
       if (!res.ok) {
         return;
       }
-      const data = await res.json();
+      const data = (await res.json()) as HomeBackgroundStatus;
       if (!pollRequestTrackerRef.current.isCurrent(requestId)) return;
       setBackgroundStatus(data);
     } catch {
@@ -288,32 +261,28 @@ export function useHomePageData({
         setHasMore(false);
         setNextOffset(null);
       }
+
       try {
         const offset =
           append && typeof offsetOverride === "number" ? offsetOverride : 0;
-        const params = buildRepoParams({
-          query,
-          category,
-          subcategory,
-          selectedTags,
-          tagMode,
-          sortMode,
-          minStars,
-          sourceUser,
-          activePreferenceUser,
-          offset,
+        const params = new URLSearchParams({
+          limit: String(PAGE_SIZE),
+          offset: String(offset),
         });
+        if (query) params.set("q", query);
+        if (selectedTags.length > 0) params.set("tags", selectedTags.join(","));
+        params.set("tag_mode", tagMode);
+        params.set("sort", sortMode);
+        params.set("user_id", activePreferenceUser);
+        if (sourceUser) params.set("star_user", sourceUser);
 
         const res = await fetch(`${API_BASE_URL}/repos?${params}`);
         if (!reposRequestTrackerRef.current.isCurrent(requestId)) return;
         if (!res.ok) {
-          const detail = await readApiError(
-            res,
-            `Repos fetch failed (${res.status})`
-          );
+          const detail = await readApiError(res, `Repos fetch failed (${res.status})`);
           throw new Error(detail);
         }
-        const data = (await res.json()) as RepoListResponse;
+        const data = (await res.json()) as HomeRepoListResponse;
         if (!reposRequestTrackerRef.current.isCurrent(requestId)) return;
         const page = normalizeRepoPage(data, offset);
 
@@ -330,14 +299,13 @@ export function useHomePageData({
               query,
               results_count: page.total,
               selected_tags: selectedTags,
-              category,
-              subcategory,
             }),
           }).catch(() => {});
         }
       } catch (err) {
         if (!reposRequestTrackerRef.current.isCurrent(requestId)) return;
-        setError(getErrorMessage(err, unknownErrorMessage));
+        const message = getErrorMessage(err, unknownErrorMessage);
+        setError(message);
       } finally {
         if (!reposRequestTrackerRef.current.isCurrent(requestId)) return;
         setLoading(false);
@@ -346,17 +314,23 @@ export function useHomePageData({
     },
     [
       activePreferenceUser,
-      category,
-      minStars,
       query,
       selectedTags,
-      sortMode,
       sourceUser,
-      subcategory,
       tagMode,
+      sortMode,
       unknownErrorMessage,
     ]
   );
+
+  const refreshAfterSync = useCallback(async () => {
+    await Promise.all([loadStatus(), loadStats(true)]);
+    if (sourceUser !== null) {
+      setSourceUser(null);
+      return;
+    }
+    await loadRepos(false);
+  }, [loadRepos, loadStats, loadStatus, sourceUser]);
 
   const handleMissingTaskRecovery = useCallback(async () => {
     pollTargetIdRef.current = null;
@@ -375,14 +349,14 @@ export function useHomePageData({
     await loadStats(true);
     await loadRepos(false);
 
-    setActionMessage(null);
-    setActionStatus(null);
-  }, [loadBackgroundStatus, loadRepos, loadStats, loadStatus]);
+    clearActionFeedback();
+  }, [clearActionFeedback, loadBackgroundStatus, loadRepos, loadStats, loadStatus]);
 
   const pollTaskNow = useCallback(async () => {
     const taskId = pollTargetIdRef.current;
     pollTickRef.current += 1;
     const shouldPollBackground = shouldPollBackgroundStatus(pollTickRef.current);
+
     if (!taskId) {
       if (shouldPollBackground) {
         const requestId = pollRequestTrackerRef.current.begin();
@@ -394,6 +368,7 @@ export function useHomePageData({
 
     const requestId = pollRequestTrackerRef.current.begin();
     let res: Response;
+
     try {
       res = await fetch(`${API_BASE_URL}/tasks/${taskId}`);
     } catch {
@@ -437,9 +412,9 @@ export function useHomePageData({
       return;
     }
 
-    let data: TaskStatus;
+    let data: HomeTaskStatus;
     try {
-      data = await res.json();
+      data = (await res.json()) as HomeTaskStatus;
     } catch {
       const failure = evaluateTrackedPollFailure({
         currentTaskId: pollTargetIdRef.current,
@@ -467,6 +442,7 @@ export function useHomePageData({
       failureCount: pollFailureCountRef.current,
     });
     if (responseState.ignore || !responseState.acceptResult) return;
+
     pollFailureCountRef.current = responseState.nextFailureCount;
     setTaskInfo(data);
 
@@ -489,10 +465,7 @@ export function useHomePageData({
         setActionStatus("success");
         setSyncing(false);
         setSyncTaskId(null);
-        await loadStatus();
-        await loadStats(true);
-        setSourceUser(null);
-        await loadRepos(false);
+        await refreshAfterSync();
       } else if (data.status === "failed") {
         setActionMessage(data.message || t("syncFailed"));
         setActionStatus("error");
@@ -504,12 +477,9 @@ export function useHomePageData({
     startPolling();
   }, [
     handleMissingTaskRecovery,
-    loadRepos,
-    loadStats,
-    loadStatus,
     pausePolling,
     pollBackgroundStatusNow,
-    setSourceUser,
+    refreshAfterSync,
     startPolling,
     t,
   ]);
@@ -522,6 +492,7 @@ export function useHomePageData({
     pollTargetIdRef.current = pollTargetId;
     pollTickRef.current = 0;
     pollFailureCountRef.current = 0;
+
     if (!pollTargetId) {
       setTaskInfo(null);
       if (pollingPausedRef.current) return;
@@ -532,6 +503,7 @@ export function useHomePageData({
       startPolling();
       return;
     }
+
     if (pollingPausedRef.current) return;
     if (document.visibilityState === "hidden") {
       stopPolling();
@@ -549,11 +521,12 @@ export function useHomePageData({
         setGroupMode(false);
         return;
       }
-      const data = (await res.json()) as ClientSettings;
+      const data = (await res.json()) as HomeClientSettings;
       setGroupMode(String(data.github_mode || "merge") === "group");
       setConfigError(null);
     } catch (err) {
-      setConfigError(getErrorMessage(err, "Failed to load server config."));
+      const message = getErrorMessage(err, "Failed to load server config.");
+      setConfigError(message);
       setGroupMode(false);
     }
   }, []);
@@ -603,7 +576,11 @@ export function useHomePageData({
     };
   }, [startPolling, stopPolling]);
 
-  useEffect(() => () => stopPolling(), [stopPolling]);
+  useEffect(() => {
+    return () => {
+      stopPolling();
+    };
+  }, [stopPolling]);
 
   useEffect(() => {
     const running = backgroundStatus?.running ?? false;
@@ -622,43 +599,27 @@ export function useHomePageData({
       }
     }
     wasBackgroundRunningRef.current = running;
-  }, [
-    backgroundStatus?.last_error,
-    backgroundStatus?.running,
-    loadRepos,
-    loadStats,
-    t,
-  ]);
+  }, [backgroundStatus?.last_error, backgroundStatus?.running, loadRepos, loadStats, t]);
 
   useEffect(() => {
     void loadRepos(false);
-  }, [
-    category,
-    loadRepos,
-    minStars,
-    query,
-    selectedTags,
-    sourceUser,
-    subcategory,
-    tagMode,
-    sortMode,
-  ]);
+  }, [loadRepos]);
 
   useEffect(() => {
-    if (!actionMessage || pollingPaused) return;
+    if (!actionMessage) return;
+    if (pollingPaused) return;
     const timer = setTimeout(() => {
-      setActionMessage(null);
-      setActionStatus(null);
+      clearActionFeedback();
     }, 5000);
     return () => clearTimeout(timer);
-  }, [actionMessage, pollingPaused]);
+  }, [actionMessage, clearActionFeedback, pollingPaused]);
 
   const handleSync = useCallback(async () => {
     if (backgroundStatus?.running) return;
     setSyncing(true);
-    setActionMessage(null);
-    setActionStatus(null);
+    clearActionFeedback();
     let queued = false;
+
     try {
       const response = await fetch(`${API_BASE_URL}/sync`, {
         method: "POST",
@@ -668,7 +629,7 @@ export function useHomePageData({
         const detail = await readApiError(response, t("syncFailed"));
         throw new Error(detail);
       }
-      const data = (await response.json()) as Partial<TaskQueued & { count?: number }>;
+      const data = (await response.json()) as Partial<HomeTaskQueued & { count?: number }>;
       if (data.task_id) {
         setSyncTaskId(data.task_id);
         queued = true;
@@ -678,14 +639,12 @@ export function useHomePageData({
         const count = typeof data.count === "number" ? data.count : 0;
         setActionMessage(t("syncedWithValue", { count }));
         setActionStatus("success");
-        await loadStatus();
-        await loadStats(true);
-        setSourceUser(null);
-        await loadRepos(false);
+        await refreshAfterSync();
         setSyncing(false);
       }
     } catch (err) {
-      setActionMessage(getErrorMessage(err, t("syncFailed")));
+      const message = getErrorMessage(err, t("syncFailed"));
+      setActionMessage(message);
       setActionStatus("error");
       setSyncing(false);
     } finally {
@@ -693,12 +652,11 @@ export function useHomePageData({
         setSyncing(false);
       }
     }
-  }, [backgroundStatus?.running, loadRepos, loadStats, loadStatus, setSourceUser, t]);
+  }, [backgroundStatus?.running, clearActionFeedback, refreshAfterSync, t]);
 
   const handleBackgroundStart = useCallback(async () => {
     if (syncing || backgroundStatus?.running) return;
-    setActionMessage(null);
-    setActionStatus(null);
+    clearActionFeedback();
     try {
       const res = await fetch(`${API_BASE_URL}/classify/background`, {
         method: "POST",
@@ -713,15 +671,15 @@ export function useHomePageData({
       setActionMessage(t("backgroundClassify"));
       setActionStatus("success");
     } catch (err) {
-      setActionMessage(getErrorMessage(err, t("classifyFailed")));
+      const message = getErrorMessage(err, t("classifyFailed"));
+      setActionMessage(message);
       setActionStatus("error");
     }
-  }, [backgroundStatus?.running, loadBackgroundStatus, syncing, t]);
+  }, [backgroundStatus?.running, clearActionFeedback, loadBackgroundStatus, syncing, t]);
 
   const handleBackgroundStop = useCallback(async () => {
     if (!backgroundStatus?.running) return;
-    setActionMessage(null);
-    setActionStatus(null);
+    clearActionFeedback();
     try {
       const res = await fetch(`${API_BASE_URL}/classify/stop`, {
         method: "POST",
@@ -735,35 +693,125 @@ export function useHomePageData({
       setActionMessage(t("stop"));
       setActionStatus("success");
     } catch (err) {
-      setActionMessage(getErrorMessage(err, t("classifyFailed")));
+      const message = getErrorMessage(err, t("classifyFailed"));
+      setActionMessage(message);
       setActionStatus("error");
     }
-  }, [backgroundStatus?.running, loadBackgroundStatus, t]);
+  }, [backgroundStatus?.running, clearActionFeedback, loadBackgroundStatus, t]);
+
+  const userCounts = useMemo<HomeStatsItem[]>(() => {
+    if (stats?.users?.length) return stats.users;
+    return [];
+  }, [stats]);
+
+  const tagGroupsWithCounts = useMemo<HomeTagGroupWithCounts[]>(() => {
+    if (!stats?.tags) return [];
+    return TAG_GROUPS.map((group) => {
+      const groupTagCounts = stats.tags.filter((tag) =>
+        group.tags.includes(tag.name)
+      );
+      if (groupTagCounts.length === 0) return null;
+      return { ...group, tagCounts: groupTagCounts };
+    }).filter((group): group is HomeTagGroupWithCounts => group !== null);
+  }, [stats?.tags]);
+
+  const lastSyncLabel = status?.last_sync_at
+    ? new Date(status.last_sync_at).toLocaleString()
+    : t("never");
+
+  const backgroundRunning = backgroundStatus?.running ?? false;
+  const backgroundProcessed = backgroundStatus?.processed ?? 0;
+  const backgroundRemaining = backgroundStatus?.remaining ?? 0;
+  const unclassifiedCount = stats?.unclassified ?? 0;
+  const overallTotal = stats?.total ?? 0;
+
+  const taskStatus = taskInfo?.status || "";
+  const taskType = taskInfo?.task_type || "";
+  const syncRunning =
+    syncing ||
+    (taskType === "sync" &&
+      (taskStatus === "running" || taskStatus === "queued"));
+
+  const simpleOperationStatus = backgroundRunning
+    ? t("classifying")
+    : syncRunning
+      ? t("syncing")
+      : t("backgroundIdle");
+
+  const hasActiveFilters =
+    !!query ||
+    selectedTags.length > 0 ||
+    sourceUser !== null;
+
+  const activeFilterCount = [
+    !!query,
+    selectedTags.length > 0,
+    sourceUser !== null,
+  ].filter(Boolean).length;
+
+  const loadNextPage = useCallback(() => {
+    void loadRepos(true, nextOffset ?? repos.length);
+  }, [loadRepos, nextOffset, repos.length]);
 
   return {
-    repos,
-    stats,
-    status,
-    loading,
-    loadingMore,
-    hasMore,
-    nextOffset,
-    error,
-    configError,
-    actionMessage,
-    actionStatus,
-    syncing,
-    backgroundStatus,
-    taskInfo,
-    pollingPaused,
-    groupMode,
-    loadRepos,
-    handleRepoClick,
-    handleSync,
-    handleBackgroundStart,
-    handleBackgroundStop,
-    handleResumePolling,
-    setActionMessage,
-    setActionStatus,
+    filters: {
+      query,
+      queryInput,
+      selectedTags,
+      tagMode,
+      sortMode,
+      sourceUser,
+      hasActiveFilters,
+      activeFilterCount,
+      setQuery,
+      setQueryInput,
+      setSelectedTags,
+      setTagMode,
+      setSortMode,
+      setSourceUser,
+      clearAllFilters,
+      handleTagToggle,
+    },
+    repoList: {
+      repos,
+      loading,
+      loadingMore,
+      hasMore,
+      activeError,
+      handleRepoClick,
+      loadNextPage,
+    },
+    operations: {
+      backgroundRunning,
+      syncRunning,
+      disableSyncAction: syncing || backgroundRunning,
+      disableClassifyAction: syncing,
+      handleSync,
+      handleBackgroundStart,
+      handleBackgroundStop,
+    },
+    sidebar: {
+      groupMode,
+      userCounts,
+      tagGroupsWithCounts,
+      overallTotal,
+      unclassifiedCount,
+    },
+    summary: {
+      lastSyncLabel,
+      overallTotal,
+      shownCount: repos.length,
+    },
+    statusBanner: {
+      actionMessage,
+      actionStatus,
+      pollingPaused,
+      simpleOperationStatus,
+      backgroundRunning,
+      backgroundProcessed,
+      backgroundRemaining,
+      handleResumePolling,
+      dismissAction: clearActionFeedback,
+    },
   };
 }

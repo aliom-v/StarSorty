@@ -188,12 +188,17 @@ npm run status
 npm run stop
 ```
 
+说明：
+
+- `npm run start` / `npm run start:unix` / `npm run start:win` 会自动把本地 SQLite 指到仓库内 `data/app.db`。
+- 如果你直接在宿主机运行 `uvicorn`，请把 `DATABASE_URL` 改成仓库绝对路径，例如 `sqlite:////absolute/path/to/StarSorty/data/app.db`；`.env.example` 里的 `sqlite:////data/app.db` 是 Docker / Compose 默认值。
+
 ### 后端
 
 ```bash
 cd api
 python -m venv .venv
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 4321
 ```
 

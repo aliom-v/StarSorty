@@ -97,6 +97,14 @@ quality_metrics = {
     "uncategorized_total": 0,
     "search_total": 0,
     "search_zero_result_total": 0,
+    "api_request_total": 0,
+    "api_error_total": 0,
+    "api_request_latency_ms_total": 0,
+    "task_queued_total": 0,
+    "task_finished_total": 0,
+    "task_failed_total": 0,
+    "cache_hit_total": 0,
+    "cache_miss_total": 0,
     "db_lock_conflict_total": 0,
     "db_lock_retry_total": 0,
     "db_lock_retry_exhausted_total": 0,
@@ -130,9 +138,21 @@ async def _get_quality_metrics() -> dict:
         data = dict(quality_metrics)
     classification_total = max(1, int(data.get("classification_total", 0)))
     search_total = max(1, int(data.get("search_total", 0)))
+    api_request_total = max(1, int(data.get("api_request_total", 0)))
+    task_queued_total = max(1, int(data.get("task_queued_total", 0)))
+    cache_total = max(
+        1,
+        int(data.get("cache_hit_total", 0)) + int(data.get("cache_miss_total", 0)),
+    )
     data["rule_hit_rate"] = data.get("rule_hit_total", 0) / classification_total
     data["ai_fallback_rate"] = data.get("ai_fallback_total", 0) / classification_total
     data["empty_tag_rate"] = data.get("empty_tag_total", 0) / classification_total
     data["uncategorized_rate"] = data.get("uncategorized_total", 0) / classification_total
     data["search_zero_result_rate"] = data.get("search_zero_result_total", 0) / search_total
+    data["api_error_rate"] = data.get("api_error_total", 0) / api_request_total
+    data["api_request_latency_ms_avg"] = (
+        data.get("api_request_latency_ms_total", 0) / api_request_total
+    )
+    data["task_failure_rate"] = data.get("task_failed_total", 0) / task_queued_total
+    data["cache_hit_rate"] = data.get("cache_hit_total", 0) / cache_total
     return data

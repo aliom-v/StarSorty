@@ -14,6 +14,8 @@ npm run status
 npm run stop
 ```
 
+- `npm run start`：在宿主机启动本地开发栈，API 会默认把 SQLite 数据写到仓库内 `data/app.db`，不依赖容器内 `/data/app.db`。
+
 测试与验证命令：
 
 ```bash

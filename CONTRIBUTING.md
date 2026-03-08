@@ -21,7 +21,7 @@
 
 ### 基础依赖
 
-- Python `3.11`
+- Python `3.11` - `3.14`
 - Node.js `20`
 - npm
 - Docker / Docker Compose（推荐，用于完整联调）
@@ -43,6 +43,11 @@ npm run start
 npm run status
 npm run stop
 ```
+
+说明：
+
+- `npm run start` 会自动把本地 SQLite 指到仓库内 `data/app.db`。
+- 如果你手动启动后端，请把 `DATABASE_URL` 改成仓库绝对路径，例如 `sqlite:////absolute/path/to/StarSorty/data/app.db`；`.env.example` 里的 `sqlite:////data/app.db` 是 Docker / Compose 默认值。
 
 ### 方式 B：分别启动前后端
 

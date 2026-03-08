@@ -8,6 +8,7 @@
 - 在线 OpenAPI 文档：`/docs`
 - 健康检查接口：`GET /health`
 - 主要返回格式：JSON；导出接口返回 ZIP 文件
+- 所有 API 响应都会返回 `X-Request-ID`，可用于关联服务端日志；客户端也可主动传入该请求头复用自己的追踪 ID
 
 ## 鉴权约定
 
@@ -136,6 +137,9 @@ curl -X POST "http://localhost:4321/sync" \
 
 - `classification_total`、`rule_hit_total`、`ai_fallback_total`、`empty_tag_total`、`uncategorized_total`
 - `search_total`、`search_zero_result_total`
+- `api_request_total`、`api_error_total`、`api_request_latency_ms_total`、`api_request_latency_ms_avg`
+- `task_queued_total`、`task_finished_total`、`task_failed_total`、`task_failure_rate`
+- `cache_hit_total`、`cache_miss_total`、`cache_hit_rate`
 - `db_lock_conflict_total`：捕获到 SQLite 锁冲突的次数
 - `db_lock_retry_total`：进入退避重试的次数
 - `db_lock_retry_exhausted_total`：达到最大重试次数后仍失败的次数

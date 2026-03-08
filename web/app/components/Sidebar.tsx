@@ -1,18 +1,11 @@
 "use client";
 
 import type { Messages, MessageValues } from "../lib/i18n";
-
-type StatsItem = {
-  name: string;
-  count: number;
-};
-
-type TagGroup = {
-  id: string;
-  name: string;
-  tags: string[];
-  tagCounts: StatsItem[];
-};
+import type {
+  HomeStatsItem,
+  HomeTagGroupWithCounts,
+  HomeTagMode,
+} from "../lib/homePageTypes";
 
 type SidebarProps = {
   t: (key: keyof Messages, params?: MessageValues) => string;
@@ -21,13 +14,13 @@ type SidebarProps = {
   selectedTags: string[];
   handleTagToggle: (tag: string) => void;
   setSelectedTags: (tags: string[]) => void;
-  tagMode: "or" | "and";
-  setTagMode: (mode: "or" | "and") => void;
-  tagGroups: TagGroup[];
+  tagMode: HomeTagMode;
+  setTagMode: (mode: HomeTagMode) => void;
+  tagGroups: HomeTagGroupWithCounts[];
   groupMode: boolean;
   sourceUser: string | null;
   setSourceUser: (user: string | null) => void;
-  userCounts: StatsItem[];
+  userCounts: HomeStatsItem[];
   overallTotal: number;
   unclassifiedCount: number;
 };

@@ -130,7 +130,7 @@ html {
   }
 
   .hero-metric {
-    @apply inline-flex items-center rounded-full border border-ink/10 bg-surface/65 px-3.5 py-1.5 text-[10px] font-semibold tracking-[0.06em] text-ink/60 shadow-soft md:px-4 md:py-2 md:text-[11px];
+    @apply inline-flex items-center rounded-full border border-ink/10 bg-surface/70 px-3.5 py-1.5 text-[10px] font-semibold tracking-[0.06em] text-ink/60 shadow-soft md:px-4 md:py-2 md:text-[11px];
   }
 
   .card-sheen {
@@ -177,7 +177,7 @@ html {
   }
 
   .info-label {
-    @apply block text-[10px] font-semibold tracking-[0.08em] text-ink/45;
+    @apply block text-[10px] font-semibold tracking-[0.08em] text-ink/50;
   }
 
   .info-tile {
@@ -205,7 +205,7 @@ html {
   }
 
   .icon-button {
-    @apply flex h-10 w-10 items-center justify-center rounded-full btn-ios-secondary text-ink/50 transition-all hover:-translate-y-[1px] hover:text-moss md:h-10.5 md:w-10.5;
+    @apply flex h-10 w-10 items-center justify-center rounded-full btn-ios-secondary text-ink/50 transition-all hover:-translate-y-[1px] hover:text-moss md:h-11 md:w-11;
   }
 
   /* iOS 级别的按钮基础样式 */
@@ -226,7 +226,7 @@ html {
   }
 
   .feedback-banner {
-    @apply flex items-start gap-3 rounded-[1.5rem] border border-ink/10 bg-surface/78 px-4 py-3 shadow-soft backdrop-blur-md;
+    @apply flex items-start gap-3 rounded-[1.5rem] border border-ink/10 bg-surface/80 px-4 py-3 shadow-soft backdrop-blur-md;
   }
 
   .feedback-banner-success {
@@ -238,7 +238,7 @@ html {
   }
 
   .feedback-icon {
-    @apply mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-ink/35;
+    @apply mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-ink/40;
     box-shadow: 0 0 0 6px rgba(var(--ink), 0.06);
   }
 

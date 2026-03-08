@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 node_modules/
+.npm-cache/
 .next/
 *.tsbuildinfo
 out/
@@ -34,6 +35,7 @@ test_*
 !api/tests/*.py
 pytest.ini
 *-dev.*
+!api/requirements-dev.txt
 *.draft
 *.draft.*
 dist/

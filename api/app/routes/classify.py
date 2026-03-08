@@ -35,6 +35,7 @@ from ..deps import (
 )
 from ..github import GitHubClient
 from ..models import RepoBase
+from ..observability import create_observed_task
 from ..rate_limit import limiter, RATE_LIMIT_HEAVY
 from ..rules import load_rules
 from ..schemas import (
@@ -62,7 +63,6 @@ from ..state import (
     classification_lock,
     classification_state,
     classification_stop,
-    classification_task,
 )
 from ..taxonomy import load_taxonomy, normalize_tags_to_ids
 
@@ -718,15 +718,17 @@ async def _start_background_classify(
     task_id: str,
     allow_fallback: bool = False,
 ) -> bool:
-    import api.app.state as _state
+    from .. import state as _state
     async with classification_lock:
         if classification_state["running"]:
             return False
         classification_stop.clear()
         classification_state["running"] = True
         classification_state["task_id"] = task_id
-        _state.classification_task = asyncio.create_task(
-            _background_classify_loop(payload, allow_fallback, task_id)
+        _state.classification_task = create_observed_task(
+            _background_classify_loop(payload, allow_fallback, task_id),
+            task_id=task_id,
+            name=f"classify:{task_id}",
         )
     return True
 
@@ -860,6 +862,7 @@ async def _background_classify_loop(
         await cache.invalidate_prefix("stats")
         await cache.invalidate_prefix("repos")
     except Exception as exc:
+        logger.exception("Background classification failed")
         state = await _get_classification_state()
         await _update_classification_state(
             running=False,

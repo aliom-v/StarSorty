@@ -67,6 +67,10 @@ const translations = {
     loadingSettings: "Loading settings...",
     noRepos: "No repos yet. Run the sync API to pull your GitHub stars.",
     noReposForFilters: "No repos match current filters. Try clearing filters.",
+    noReposHint:
+      "Start by syncing your GitHub stars to see them here.",
+    noReposForFiltersHint:
+      "Try adjusting your search or filters to find what you're looking for.",
     clearFilters: "Clear filters",
     noDescription: "No description yet.",
     viewOnGithub: "View on GitHub",
@@ -303,6 +307,8 @@ const translations = {
     loadingSettings: "加载设置中...",
     noRepos: "还没有仓库。请运行同步接口拉取你的 GitHub Star。",
     noReposForFilters: "当前筛选条件下没有结果，试试清空筛选。",
+    noReposHint: "先同步你的 GitHub Star，这里才会出现仓库列表。",
+    noReposForFiltersHint: "可以调整搜索词或筛选条件，再试一次。",
     clearFilters: "清空筛选",
     noDescription: "暂无描述。",
     viewOnGithub: "在 GitHub 查看",

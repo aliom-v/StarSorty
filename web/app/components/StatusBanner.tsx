@@ -1,15 +1,15 @@
 "use client";
 
 import type { Messages, MessageValues } from "../lib/i18n";
+import type { HomeActionStatus } from "../lib/homePageTypes";
 
 type StatusBannerProps = {
   t: (key: keyof Messages, params?: MessageValues) => string;
   actionMessage: string | null;
-  actionStatus: "success" | "error" | null;
+  actionStatus: HomeActionStatus;
   pollingPaused: boolean;
   handleResumePolling: () => void;
-  setActionMessage: (msg: string | null) => void;
-  setActionStatus: (status: "success" | "error" | null) => void;
+  dismissAction: () => void;
   simpleOperationStatus: string;
   backgroundRunning: boolean;
   backgroundProcessed: number;
@@ -22,8 +22,7 @@ const StatusBanner = ({
   actionStatus,
   pollingPaused,
   handleResumePolling,
-  setActionMessage,
-  setActionStatus,
+  dismissAction,
   simpleOperationStatus,
   backgroundRunning,
   backgroundProcessed,
@@ -83,10 +82,7 @@ const StatusBanner = ({
 
             {(actionMessage || !backgroundRunning) && (
               <button
-                onClick={() => {
-                  setActionMessage(null);
-                  setActionStatus(null);
-                }}
+                onClick={dismissAction}
                 className="flex h-8 w-8 items-center justify-center rounded-full text-ink/30 transition-colors hover:bg-ink/5 hover:text-ink/55"
                 aria-label={t("dismiss")}
               >

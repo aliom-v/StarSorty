@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import uuid
 
@@ -15,6 +14,7 @@ from ..deps import (
     require_admin,
 )
 from ..github import GitHubClient
+from ..observability import create_observed_task
 from ..rate_limit import limiter, RATE_LIMIT_HEAVY
 from ..schemas import (
     BackgroundClassifyRequest,
@@ -44,6 +44,7 @@ async def _run_sync_task(task_id: str, app_state: object) -> None:
     try:
         targets = await github_client.resolve_targets()
     except Exception as exc:
+        logger.exception("Sync target resolution failed")
         await update_sync_status("error", str(exc))
         await _set_task_status(task_id, "failed", finished_at=_now_iso(), message=str(exc))
         return
@@ -74,6 +75,7 @@ async def _run_sync_task(task_id: str, app_state: object) -> None:
             ),
         )
     except Exception as exc:
+        logger.exception("Sync repository refresh failed")
         await update_sync_status("error", str(exc))
         await _set_task_status(task_id, "failed", finished_at=_now_iso(), message=str(exc))
         return
@@ -121,6 +123,10 @@ async def _run_sync_task(task_id: str, app_state: object) -> None:
 async def sync(request: Request) -> TaskQueuedResponse:
     task_id = str(uuid.uuid4())
     await _register_task(task_id, "sync", payload={})
-    bg_task = asyncio.create_task(_run_sync_task(task_id, request.app.state))
+    bg_task = create_observed_task(
+        _run_sync_task(task_id, request.app.state),
+        task_id=task_id,
+        name=f"sync:{task_id}",
+    )
     bg_task.add_done_callback(_handle_task_exception)
     return TaskQueuedResponse(task_id=task_id, status="queued", message="Sync queued")

@@ -1,6 +1,7 @@
 "use client";
 
 import type { Messages, MessageValues } from "../lib/i18n";
+import type { HomeSortMode } from "../lib/homePageTypes";
 
 type SearchSectionProps = {
   t: (key: keyof Messages, params?: MessageValues) => string;
@@ -9,8 +10,8 @@ type SearchSectionProps = {
   setQuery: (value: string) => void;
   shownCount: number;
   activeFilterCount: number;
-  sortMode: "relevance" | "stars" | "updated";
-  setSortMode: (mode: "relevance" | "stars" | "updated") => void;
+  sortMode: HomeSortMode;
+  setSortMode: (mode: HomeSortMode) => void;
   activeError: string | null;
   loading: boolean;
   hasActiveFilters: boolean;

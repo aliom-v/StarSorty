@@ -8,7 +8,9 @@ from typing import Dict, List, Optional
 from fastapi import Header, HTTPException
 
 from .db import create_task, update_task
+from .observability import bind_log_context
 from .security import get_admin_token
+from .state import _add_quality_metrics
 
 logger = logging.getLogger("starsorty.api")
 
@@ -83,7 +85,11 @@ def _handle_task_exception(task: asyncio.Task) -> None:
     try:
         exc = task.exception()
         if exc is not None:
-            logger.error("Background task failed: %s", exc, exc_info=exc)
+            with bind_log_context(
+                request_id=getattr(task, "_starsorty_request_id", None),
+                task_id=getattr(task, "_starsorty_task_id", None),
+            ):
+                logger.error("Background task failed: %s", exc, exc_info=exc)
     except asyncio.CancelledError:
         pass
 
@@ -95,23 +101,48 @@ async def _register_task(
     payload: dict | None = None,
     retry_from_task_id: str | None = None,
 ) -> None:
-    await create_task(
-        task_id,
-        task_type,
-        status="queued",
-        message=message,
-        payload=payload,
-        retry_from_task_id=retry_from_task_id,
-    )
+    with bind_log_context(task_id=task_id):
+        await create_task(
+            task_id,
+            task_type,
+            status="queued",
+            message=message,
+            payload=payload,
+            retry_from_task_id=retry_from_task_id,
+        )
+        await _add_quality_metrics(task_queued_total=1)
+        logger.info(
+            "task_registered type=%s status=queued retry_from=%s",
+            task_type,
+            retry_from_task_id or "-",
+        )
 
 
 async def _set_task_status(task_id: str, status: str, **updates: object) -> None:
-    await update_task(
-        task_id,
-        status,
-        started_at=updates.get("started_at"),
-        finished_at=updates.get("finished_at"),
-        message=updates.get("message"),
-        result=updates.get("result"),
-        cursor_full_name=updates.get("cursor_full_name"),
-    )
+    with bind_log_context(task_id=task_id):
+        await update_task(
+            task_id,
+            status,
+            started_at=updates.get("started_at"),
+            finished_at=updates.get("finished_at"),
+            message=updates.get("message"),
+            result=updates.get("result"),
+            cursor_full_name=updates.get("cursor_full_name"),
+        )
+        if status == "finished":
+            await _add_quality_metrics(task_finished_total=1)
+        elif status == "failed":
+            await _add_quality_metrics(task_failed_total=1)
+
+        should_log = (
+            status != "running"
+            or updates.get("started_at") is not None
+            or updates.get("message") is not None
+        )
+        if should_log:
+            log_fn = logger.warning if status == "failed" else logger.info
+            log_fn(
+                "task_status_updated status=%s message=%s",
+                status,
+                updates.get("message") or "-",
+            )

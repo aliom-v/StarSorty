@@ -4,9 +4,10 @@ const { existsSync } = require('node:fs');
 const path = require('node:path');
 
 const root = process.cwd();
+const apiDevRequirements = 'api/requirements-dev.txt';
 const benchmarkArgs = ['evaluation/benchmark_api_perf.py', ...process.argv.slice(2)];
 const dockerInstallAndRun = [
-  'pip install --no-cache-dir -r api/requirements-dev.txt >/tmp/pip-install.log',
+  `pip install --no-cache-dir -r ${apiDevRequirements} >/tmp/pip-install.log`,
   'python evaluation/benchmark_api_perf.py "$@"',
 ].join(' && ');
 
@@ -55,7 +56,7 @@ function isUsablePython(command) {
     return false;
   }
   const [major, minor] = output.split('.').map((value) => Number.parseInt(value, 10));
-  if (major !== 3 || minor >= 14) {
+  if (major !== 3 || minor < 11 || minor >= 15) {
     return false;
   }
   const imports = runCapture(
@@ -99,5 +100,8 @@ if (dockerResult) {
   process.exit(dockerResult.status ?? 1);
 }
 
-console.error('No usable Python environment or Docker runtime found for API benchmarks.');
+console.error(
+  `No usable Python environment or Docker runtime found for API benchmarks.\n` +
+  `Install ${apiDevRequirements} into a local Python 3.11-3.14 environment, or enable Docker fallback.`
+);
 process.exit(1);

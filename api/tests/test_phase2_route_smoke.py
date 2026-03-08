@@ -1,5 +1,6 @@
 import asyncio
 import json
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,13 @@ from api.app.classification.engine import (
     PreparedClassification,
 )
 from api.app.deps import require_admin
+from api.app.observability import (
+    bind_log_context,
+    create_observed_task,
+    get_request_id,
+    get_task_id,
+    resolve_request_id,
+)
 from api.app.routes import classify as classify_routes
 from api.app.routes import repos as repos_routes
 from api.app.routes import settings as settings_routes
@@ -118,13 +126,14 @@ def test_sync_status_and_sync_queue(disable_limiters: None, monkeypatch: pytest.
             del callback
             task_created["done_callback_added"] = True
 
-    def _fake_create_task(coro):
+    def _fake_create_observed_task(coro, *, task_id=None, request_id=None, name=None):
+        del task_id, request_id, name
         coro.close()
         return _FakeTask()
 
     monkeypatch.setattr(sync_routes, "get_sync_status", _fake_status)
     monkeypatch.setattr(sync_routes, "_register_task", _fake_register_task)
-    monkeypatch.setattr(sync_routes.asyncio, "create_task", _fake_create_task)
+    monkeypatch.setattr(sync_routes, "create_observed_task", _fake_create_observed_task)
     monkeypatch.setattr(sync_routes.uuid, "uuid4", lambda: "sync-task-id")
 
     status_response = _run(sync_routes.status())
@@ -721,3 +730,33 @@ def test_classify_batch_uses_batch_ai_when_available(monkeypatch: pytest.MonkeyP
         "uncategorized_total": 0,
     }
     assert captured["failed_names"] == []
+
+
+def test_resolve_request_id_uses_explicit_value_and_falls_back_to_uuid() -> None:
+    assert resolve_request_id("demo-request-id") == "demo-request-id"
+    generated = resolve_request_id("   ")
+    assert str(uuid.UUID(generated)) == generated
+
+
+def test_bind_log_context_sets_and_resets_ids() -> None:
+    assert get_request_id() is None
+    assert get_task_id() is None
+
+    with bind_log_context(request_id="req-1", task_id="task-1"):
+        assert get_request_id() == "req-1"
+        assert get_task_id() == "task-1"
+
+    assert get_request_id() is None
+    assert get_task_id() is None
+
+
+def test_create_observed_task_propagates_request_and_task_context() -> None:
+    async def _capture() -> tuple[str | None, str | None]:
+        return get_request_id(), get_task_id()
+
+    async def _run_capture() -> tuple[str | None, str | None]:
+        with bind_log_context(request_id="req-outer"):
+            task = create_observed_task(_capture(), task_id="task-outer")
+            return await task
+
+    assert _run(_run_capture()) == ("req-outer", "task-outer")

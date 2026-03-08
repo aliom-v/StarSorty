@@ -106,8 +106,16 @@
   - 首页任务轮询从固定 `setInterval` 改为单次调度，避免请求慢时叠加并发轮询。
   - 轮询失败时按指数退避延长下一次请求间隔，恢复后自动回到基础轮询间隔。
 - 已落地（P2 / frontend maintainability）：
-  - `web/app/page.tsx` 按“视图层 + filter state hook + data/request hook”拆分，首页主文件从约 1k 行收敛到约 360 行。
+  - `web/app/page.tsx` 拆分为布局页、首页数据控制 hook 与结果列表组件，首页状态、请求与视图分层更清晰。
   - 首页共享类型迁移到独立模块，减少页面文件内联类型与请求编排耦合。
+  - 首页主文件从约 `1045` 行收缩到 `153` 行，同时保留现有分页、请求竞态保护与任务轮询行为。
+- 已落地（P2 / observability）：
+  - API middleware 统一生成/透传 `X-Request-ID`，所有 `starsorty.*` 日志默认带上 `request_id/task_id` 上下文。
+  - 后台同步与后台分类任务创建时继承请求上下文，并在任务注册、状态更新、异常日志中关联 `task_id`。
+  - `/metrics/quality` 补充 API 请求、错误、延迟、任务吞吐与缓存命中指标，用于更快定位慢请求与后台任务异常。
+- 已补充（P2 / observability follow-up）：
+  - 新增可观测性回归测试，覆盖 request id 透传/生成、API 错误计数、任务指标累计与派生质量指标计算。
+  - `docs/guides/deployment-operations.md` 增加故障定位手册，覆盖同步失败、分类失败、SQLite 锁冲突与 Web 构建失败排查链路。
 
 ---
 
