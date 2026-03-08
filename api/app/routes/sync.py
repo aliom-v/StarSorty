@@ -35,7 +35,7 @@ async def status() -> StatusResponse:
 
 
 async def _run_sync_task(task_id: str, app_state: object) -> None:
-    from .classify import _start_background_classify
+    from .classify import _queue_background_classify_task
 
     await _set_task_status(task_id, "running", started_at=_now_iso())
     current = get_settings()
@@ -91,31 +91,19 @@ async def _run_sync_task(task_id: str, app_state: object) -> None:
     await cache.invalidate_prefix("repos")
 
     if current.auto_classify_after_sync:
-        classify_task_id = str(uuid.uuid4())
         auto_payload = BackgroundClassifyRequest(
             limit=DEFAULT_CLASSIFY_BATCH_SIZE,
             force=False,
             include_readme=True,
             concurrency=DEFAULT_CLASSIFY_CONCURRENCY,
         )
-        await _register_task(
-            classify_task_id,
-            "classify",
-            "Auto classify after sync",
-            payload=auto_payload.model_dump(),
-        )
-        started = await _start_background_classify(
+        classify_task_id = await _queue_background_classify_task(
             auto_payload,
-            classify_task_id,
+            message="Auto classify after sync",
             allow_fallback=True,
         )
-        if not started:
-            await _set_task_status(
-                classify_task_id,
-                "failed",
-                finished_at=_now_iso(),
-                message="Classification already running",
-            )
+        if classify_task_id is None:
+            logger.info("Auto classify skipped because classification is already running")
 
 
 @router.post("/sync", response_model=TaskQueuedResponse, status_code=202, dependencies=[Depends(require_admin)])

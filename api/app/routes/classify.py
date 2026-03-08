@@ -733,6 +733,42 @@ async def _start_background_classify(
     return True
 
 
+async def _queue_background_classify_task(
+    payload: BackgroundClassifyRequest,
+    *,
+    message: str,
+    allow_fallback: bool = False,
+    retry_from_task_id: str | None = None,
+    task_id: str | None = None,
+) -> str | None:
+    from .. import state as _state
+
+    effective_task_id = task_id or str(uuid.uuid4())
+    payload_data = payload.model_dump()
+
+    async with classification_lock:
+        if classification_state["running"]:
+            return None
+
+        await _register_task(
+            effective_task_id,
+            "classify",
+            message,
+            payload=payload_data,
+            retry_from_task_id=retry_from_task_id,
+        )
+        classification_stop.clear()
+        classification_state["running"] = True
+        classification_state["task_id"] = effective_task_id
+        _state.classification_task = create_observed_task(
+            _background_classify_loop(payload, allow_fallback, effective_task_id),
+            task_id=effective_task_id,
+            name=f"classify:{effective_task_id}",
+        )
+
+    return effective_task_id
+
+
 async def _background_classify_loop(
     payload: BackgroundClassifyRequest,
     allow_fallback: bool,
@@ -893,7 +929,6 @@ async def classify(request: Request, payload: ClassifyRequest) -> ClassifyRespon
 
     if payload.force:
         force_limit = 0 if payload.limit == 0 else _clamp_batch_size(payload.limit)
-        task_id = str(uuid.uuid4())
         force_payload = BackgroundClassifyRequest(
             limit=force_limit,
             force=True,
@@ -901,12 +936,12 @@ async def classify(request: Request, payload: ClassifyRequest) -> ClassifyRespon
             preference_user=payload.preference_user,
             concurrency=DEFAULT_CLASSIFY_CONCURRENCY,
         )
-        await _register_task(
-            task_id, "classify", "Force classification queued",
-            payload=force_payload.model_dump(),
+        task_id = await _queue_background_classify_task(
+            force_payload,
+            message="Force classification queued",
+            allow_fallback=False,
         )
-        started = await _start_background_classify(force_payload, task_id, allow_fallback=False)
-        if not started:
+        if task_id is None:
             raise HTTPException(status_code=409, detail="Classification already running")
         response = TaskQueuedResponse(task_id=task_id, status="queued", message="Classification queued")
         return JSONResponse(status_code=202, content=response.model_dump())
@@ -961,13 +996,12 @@ async def classify(request: Request, payload: ClassifyRequest) -> ClassifyRespon
 )
 @limiter.limit(RATE_LIMIT_HEAVY)
 async def classify_background(request: Request, payload: BackgroundClassifyRequest) -> BackgroundClassifyResponse:
-    task_id = str(uuid.uuid4())
-    await _register_task(
-        task_id, "classify", "Background classification queued",
-        payload=payload.model_dump(),
+    task_id = await _queue_background_classify_task(
+        payload,
+        message="Background classification queued",
+        allow_fallback=False,
     )
-    started = await _start_background_classify(payload, task_id, allow_fallback=False)
-    if not started:
+    if task_id is None:
         raise HTTPException(status_code=409, detail="Classification already running")
     return BackgroundClassifyResponse(
         started=True,

@@ -12,6 +12,7 @@ from api.app.classification.engine import (
     PendingAIClassification,
     PreparedClassification,
 )
+from api.app import state as app_state
 from api.app.deps import require_admin
 from api.app.observability import (
     bind_log_context,
@@ -155,15 +156,18 @@ def test_classify_force_queue_and_background_controls(
     disable_limiters: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    registered: list[tuple] = []
-    started_payloads: list[tuple] = []
+    queued_payloads: list[tuple] = []
 
-    async def _fake_register_task(task_id: str, task_type: str, message: str | None = None, payload: dict | None = None) -> None:
-        registered.append((task_id, task_type, message, payload))
-
-    async def _fake_start(payload, task_id: str, allow_fallback: bool) -> bool:
-        started_payloads.append((payload, task_id, allow_fallback))
-        return True
+    async def _fake_queue(
+        payload,
+        *,
+        message: str,
+        allow_fallback: bool = False,
+        retry_from_task_id: str | None = None,
+        task_id: str | None = None,
+    ) -> str | None:
+        queued_payloads.append((payload, message, allow_fallback, retry_from_task_id, task_id))
+        return task_id or "classify-task-id"
 
     async def _fake_state() -> dict:
         return {
@@ -190,11 +194,9 @@ def test_classify_force_queue_and_background_controls(
         lambda: SimpleNamespace(ai_taxonomy_path="taxonomy.json", rules_json="[]"),
     )
     monkeypatch.setattr(classify_routes, "load_taxonomy", lambda path: {"path": path})
-    monkeypatch.setattr(classify_routes, "_register_task", _fake_register_task)
-    monkeypatch.setattr(classify_routes, "_start_background_classify", _fake_start)
+    monkeypatch.setattr(classify_routes, "_queue_background_classify_task", _fake_queue)
     monkeypatch.setattr(classify_routes, "_get_classification_state", _fake_state)
     monkeypatch.setattr(classify_routes, "_update_classification_state", _fake_update_state)
-    monkeypatch.setattr(classify_routes.uuid, "uuid4", lambda: "classify-task-id")
 
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
     payload = ClassifyRequest(limit=9999, force=True, include_readme=False, preference_user="demo")
@@ -207,11 +209,11 @@ def test_classify_force_queue_and_background_controls(
         "status": "queued",
         "message": "Classification queued",
     }
-    assert registered[0][0] == "classify-task-id"
-    force_payload = started_payloads[0][0]
+    force_payload = queued_payloads[0][0]
     assert force_payload.force is True
     assert force_payload.concurrency == classify_routes.DEFAULT_CLASSIFY_CONCURRENCY
     assert force_payload.limit == classify_routes.CLASSIFY_BATCH_SIZE_MAX
+    assert queued_payloads[0][1] == "Force classification queued"
 
     background_response = _run(
         classify_routes.classify_background(
@@ -234,6 +236,101 @@ def test_classify_force_queue_and_background_controls(
         assert updated_state[-1] == {"last_error": "Stopped by user"}
     finally:
         classify_routes.classification_stop.clear()
+
+
+def test_queue_background_classify_task_skips_registration_when_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registered: list[tuple] = []
+    original_state = dict(classify_routes.classification_state)
+    original_task = app_state.classification_task
+
+    async def _fake_register_task(*args, **kwargs) -> None:
+        registered.append((args, kwargs))
+
+    monkeypatch.setattr(classify_routes, "_register_task", _fake_register_task)
+    classify_routes.classification_state.update({"running": True, "task_id": "existing-task"})
+
+    try:
+        task_id = _run(
+            classify_routes._queue_background_classify_task(
+                BackgroundClassifyRequest(limit=10, force=False, include_readme=True, concurrency=2),
+                message="Background classification queued",
+            )
+        )
+        assert task_id is None
+        assert registered == []
+    finally:
+        classify_routes.classification_state.clear()
+        classify_routes.classification_state.update(original_state)
+        app_state.classification_task = original_task
+
+
+def test_queue_background_classify_task_registers_before_starting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registered: list[tuple] = []
+    created_tasks: list[tuple] = []
+    original_state = dict(classify_routes.classification_state)
+    original_task = app_state.classification_task
+
+    async def _fake_register_task(
+        task_id: str,
+        task_type: str,
+        message: str | None = None,
+        payload: dict | None = None,
+        retry_from_task_id: str | None = None,
+    ) -> None:
+        registered.append((task_id, task_type, message, payload, retry_from_task_id))
+
+    class _FakeTask:
+        pass
+
+    def _fake_create_observed_task(coro, *, task_id=None, request_id=None, name=None):
+        created_tasks.append((task_id, request_id, name))
+        coro.close()
+        return _FakeTask()
+
+    monkeypatch.setattr(classify_routes, "_register_task", _fake_register_task)
+    monkeypatch.setattr(classify_routes, "create_observed_task", _fake_create_observed_task)
+    monkeypatch.setattr(classify_routes.uuid, "uuid4", lambda: "queued-classify-task-id")
+    classify_routes.classification_state.update({"running": False, "task_id": None})
+
+    try:
+        task_id = _run(
+            classify_routes._queue_background_classify_task(
+                BackgroundClassifyRequest(limit=10, force=False, include_readme=True, concurrency=2),
+                message="Background classification queued",
+                retry_from_task_id="retry-source",
+            )
+        )
+
+        assert task_id == "queued-classify-task-id"
+        assert registered == [
+            (
+                "queued-classify-task-id",
+                "classify",
+                "Background classification queued",
+                {
+                    "limit": 10,
+                    "force": False,
+                    "include_readme": True,
+                    "preference_user": "global",
+                    "concurrency": 2,
+                    "cursor_full_name": None,
+                },
+                "retry-source",
+            )
+        ]
+        assert created_tasks == [
+            ("queued-classify-task-id", None, "classify:queued-classify-task-id")
+        ]
+        assert classify_routes.classification_state["running"] is True
+        assert classify_routes.classification_state["task_id"] == "queued-classify-task-id"
+    finally:
+        classify_routes.classification_state.clear()
+        classify_routes.classification_state.update(original_state)
+        app_state.classification_task = original_task
 
 
 def test_classify_foreground_returns_summary_and_invalidates_cache(

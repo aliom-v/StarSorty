@@ -209,10 +209,12 @@ curl "http://localhost:4321/metrics/quality"
 
 建议按下面顺序排查：
 
-1. 查看 `GET /classify/status`，确认 `running/processed/remaining/last_error/task_id`
-2. 如果已有 `task_id`，继续查 `GET /tasks/{task_id}`
-3. 用 `task_id` 或该次请求的 `X-Request-ID` 过滤 API 日志
-4. 查看 `/metrics/quality` 中的 `task_failed_total`、`task_failure_rate`
+1. 触发后台分类时，先记录 `POST /classify/background` 返回体里的 `task_id`
+2. 查看 `GET /classify/status`，确认 `running/processed/remaining/last_error`
+3. 如果当前仍在运行，`/classify/status` 里的 `task_id` 可继续用于追踪；任务结束后请优先使用最初返回的 `task_id`
+4. 查询 `GET /tasks/{task_id}`
+5. 用 `task_id` 或该次请求的 `X-Request-ID` 过滤 API 日志
+6. 查看 `/metrics/quality` 中的 `task_failed_total`、`task_failure_rate`
 
 示例：
 

@@ -27,6 +27,10 @@ import {
   shouldPollBackgroundStatus,
 } from "./taskPolling";
 import { TAG_GROUPS } from "./tagGroups";
+import {
+  buildRepoSearchParams,
+  countActiveFilters,
+} from "./homePageFilters.js";
 
 const PAGE_SIZE = 60;
 
@@ -55,9 +59,13 @@ export function useHomePageData(t: Translate) {
   const [pollingPaused, setPollingPaused] = useState(false);
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
+  const [language, setLanguage] = useState("");
+  const [category, setCategory] = useState<string | null>(null);
+  const [subcategory, setSubcategory] = useState<string | null>(null);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagMode, setTagMode] = useState<HomeTagMode>("or");
   const [sortMode, setSortMode] = useState<HomeSortMode>("stars");
+  const [minStars, setMinStars] = useState<number | null>(null);
   const [sourceUser, setSourceUser] = useState<string | null>(null);
   const [groupMode, setGroupMode] = useState(false);
 
@@ -86,9 +94,13 @@ export function useHomePageData(t: Translate) {
   const clearAllFilters = useCallback(() => {
     setQueryInput("");
     setQuery("");
+    setLanguage("");
+    setCategory(null);
+    setSubcategory(null);
     setSelectedTags([]);
     setTagMode("or");
     setSortMode("stars");
+    setMinStars(null);
     setSourceUser(null);
   }, []);
 
@@ -265,16 +277,20 @@ export function useHomePageData(t: Translate) {
       try {
         const offset =
           append && typeof offsetOverride === "number" ? offsetOverride : 0;
-        const params = new URLSearchParams({
-          limit: String(PAGE_SIZE),
-          offset: String(offset),
+        const params = buildRepoSearchParams({
+          query,
+          language,
+          minStars,
+          category,
+          subcategory,
+          selectedTags,
+          tagMode,
+          sortMode,
+          activePreferenceUser,
+          sourceUser,
+          limit: PAGE_SIZE,
+          offset,
         });
-        if (query) params.set("q", query);
-        if (selectedTags.length > 0) params.set("tags", selectedTags.join(","));
-        params.set("tag_mode", tagMode);
-        params.set("sort", sortMode);
-        params.set("user_id", activePreferenceUser);
-        if (sourceUser) params.set("star_user", sourceUser);
 
         const res = await fetch(`${API_BASE_URL}/repos?${params}`);
         if (!reposRequestTrackerRef.current.isCurrent(requestId)) return;
@@ -299,6 +315,8 @@ export function useHomePageData(t: Translate) {
               query,
               results_count: page.total,
               selected_tags: selectedTags,
+              category,
+              subcategory,
             }),
           }).catch(() => {});
         }
@@ -315,6 +333,10 @@ export function useHomePageData(t: Translate) {
     [
       activePreferenceUser,
       query,
+      language,
+      minStars,
+      category,
+      subcategory,
       selectedTags,
       sourceUser,
       tagMode,
@@ -704,6 +726,30 @@ export function useHomePageData(t: Translate) {
     return [];
   }, [stats]);
 
+  const categoryCounts = useMemo<HomeStatsItem[]>(() => {
+    if (stats?.categories?.length) return stats.categories;
+    return [];
+  }, [stats]);
+
+  const subcategoryCounts = useMemo(() => {
+    const items = stats?.subcategories ?? [];
+    if (!category) return items;
+    return items.filter((item) => item.category === category);
+  }, [category, stats?.subcategories]);
+
+  useEffect(() => {
+    const allSubcategories = stats?.subcategories;
+    if (!subcategory || !allSubcategories?.length) {
+      return;
+    }
+    const currentOptions = category
+      ? allSubcategories.filter((item) => item.category === category)
+      : allSubcategories;
+    if (!currentOptions.some((item) => item.name === subcategory)) {
+      setSubcategory(null);
+    }
+  }, [category, stats?.subcategories, subcategory]);
+
   const tagGroupsWithCounts = useMemo<HomeTagGroupWithCounts[]>(() => {
     if (!stats?.tags) return [];
     return TAG_GROUPS.map((group) => {
@@ -738,16 +784,16 @@ export function useHomePageData(t: Translate) {
       ? t("syncing")
       : t("backgroundIdle");
 
-  const hasActiveFilters =
-    !!query ||
-    selectedTags.length > 0 ||
-    sourceUser !== null;
-
-  const activeFilterCount = [
-    !!query,
-    selectedTags.length > 0,
-    sourceUser !== null,
-  ].filter(Boolean).length;
+  const activeFilterCount = countActiveFilters({
+    query,
+    language,
+    minStars,
+    category,
+    subcategory,
+    selectedTags,
+    sourceUser,
+  });
+  const hasActiveFilters = activeFilterCount > 0;
 
   const loadNextPage = useCallback(() => {
     void loadRepos(true, nextOffset ?? repos.length);
@@ -757,6 +803,10 @@ export function useHomePageData(t: Translate) {
     filters: {
       query,
       queryInput,
+      language,
+      minStars,
+      category,
+      subcategory,
       selectedTags,
       tagMode,
       sortMode,
@@ -765,6 +815,10 @@ export function useHomePageData(t: Translate) {
       activeFilterCount,
       setQuery,
       setQueryInput,
+      setLanguage,
+      setMinStars,
+      setCategory,
+      setSubcategory,
       setSelectedTags,
       setTagMode,
       setSortMode,
@@ -793,6 +847,8 @@ export function useHomePageData(t: Translate) {
     sidebar: {
       groupMode,
       userCounts,
+      categoryCounts,
+      subcategoryCounts,
       tagGroupsWithCounts,
       overallTotal,
       unclassifiedCount,

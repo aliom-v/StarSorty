@@ -1,12 +1,7 @@
-import uuid
-
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..db import get_task
 from ..deps import (
-    _now_iso,
-    _register_task,
-    _set_task_status,
     require_admin,
 )
 from ..schemas import (
@@ -34,7 +29,7 @@ async def task_status(task_id: str) -> TaskStatusResponse:
     dependencies=[Depends(require_admin)],
 )
 async def retry_task(task_id: str) -> TaskQueuedResponse:
-    from .classify import _start_background_classify
+    from .classify import _queue_background_classify_task
 
     task = await get_task(task_id)
     if not task:
@@ -57,21 +52,12 @@ async def retry_task(task_id: str) -> TaskQueuedResponse:
             **{**request_payload.model_dump(), "cursor_full_name": cursor_full_name}
         )
 
-    new_task_id = str(uuid.uuid4())
-    await _register_task(
-        new_task_id,
-        "classify",
-        f"Retry of {task_id}",
-        payload=request_payload.model_dump(),
+    new_task_id = await _queue_background_classify_task(
+        request_payload,
+        message=f"Retry of {task_id}",
         retry_from_task_id=task_id,
+        allow_fallback=False,
     )
-    started = await _start_background_classify(request_payload, new_task_id, allow_fallback=False)
-    if not started:
-        await _set_task_status(
-            new_task_id,
-            "failed",
-            finished_at=_now_iso(),
-            message="Classification already running",
-        )
+    if new_task_id is None:
         raise HTTPException(status_code=409, detail="Classification already running")
     return TaskQueuedResponse(task_id=new_task_id, status="queued", message="Retry queued")

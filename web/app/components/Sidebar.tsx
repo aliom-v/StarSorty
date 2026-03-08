@@ -3,6 +3,7 @@
 import type { Messages, MessageValues } from "../lib/i18n";
 import type {
   HomeStatsItem,
+  HomeSubcategoryStatsItem,
   HomeTagGroupWithCounts,
   HomeTagMode,
 } from "../lib/homePageTypes";
@@ -11,11 +12,21 @@ type SidebarProps = {
   t: (key: keyof Messages, params?: MessageValues) => string;
   sidebarOpen: boolean;
   setSidebarOpen: (open: boolean) => void;
+  language: string;
+  setLanguage: (value: string) => void;
+  minStars: number | null;
+  setMinStars: (value: number | null) => void;
+  category: string | null;
+  setCategory: (value: string | null) => void;
+  subcategory: string | null;
+  setSubcategory: (value: string | null) => void;
   selectedTags: string[];
   handleTagToggle: (tag: string) => void;
   setSelectedTags: (tags: string[]) => void;
   tagMode: HomeTagMode;
   setTagMode: (mode: HomeTagMode) => void;
+  categoryCounts: HomeStatsItem[];
+  subcategoryCounts: HomeSubcategoryStatsItem[];
   tagGroups: HomeTagGroupWithCounts[];
   groupMode: boolean;
   sourceUser: string | null;
@@ -29,11 +40,21 @@ const Sidebar = ({
   t,
   sidebarOpen,
   setSidebarOpen,
+  language,
+  setLanguage,
+  minStars,
+  setMinStars,
+  category,
+  setCategory,
+  subcategory,
+  setSubcategory,
   selectedTags,
   handleTagToggle,
   setSelectedTags,
   tagMode,
   setTagMode,
+  categoryCounts,
+  subcategoryCounts,
   tagGroups,
   groupMode,
   sourceUser,
@@ -63,6 +84,73 @@ const Sidebar = ({
       </div>
 
       <div className="custom-scrollbar -mr-4 flex flex-1 flex-col gap-10 overflow-y-auto pr-4">
+        <div className="space-y-4">
+          <h3 className="section-kicker px-1">{t("filters")}</h3>
+          <div className="panel-muted space-y-4 p-5">
+            <label className="block space-y-2">
+              <span className="info-label">{t("language")}</span>
+              <input
+                type="text"
+                value={language}
+                onChange={(event) => setLanguage(event.target.value)}
+                placeholder={t("language")}
+                className="w-full rounded-[1.1rem] border border-ink/10 bg-surface/80 px-4 py-3 text-sm font-medium text-ink outline-none transition-colors focus:border-moss/40 focus:ring-2 focus:ring-moss/10"
+              />
+            </label>
+
+            <label className="block space-y-2">
+              <span className="info-label">{t("minStars")}</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                inputMode="numeric"
+                value={minStars ?? ""}
+                onChange={(event) => {
+                  const rawValue = event.target.value;
+                  const parsed = Number.parseInt(rawValue, 10);
+                  setMinStars(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
+                }}
+                placeholder="100"
+                className="w-full rounded-[1.1rem] border border-ink/10 bg-surface/80 px-4 py-3 text-sm font-medium text-ink outline-none transition-colors focus:border-moss/40 focus:ring-2 focus:ring-moss/10"
+              />
+            </label>
+
+            <label className="block space-y-2">
+              <span className="info-label">{t("category")}</span>
+              <select
+                value={category ?? ""}
+                onChange={(event) => setCategory(event.target.value || null)}
+                className="w-full rounded-[1.1rem] border border-ink/10 bg-surface/80 px-4 py-3 text-sm font-medium text-ink outline-none transition-colors focus:border-moss/40 focus:ring-2 focus:ring-moss/10"
+              >
+                <option value="">{t("all")}</option>
+                {categoryCounts.map((item) => (
+                  <option key={item.name} value={item.name}>
+                    {item.name} ({item.count})
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block space-y-2">
+              <span className="info-label">{t("subcategory")}</span>
+              <select
+                value={subcategory ?? ""}
+                onChange={(event) => setSubcategory(event.target.value || null)}
+                className="w-full rounded-[1.1rem] border border-ink/10 bg-surface/80 px-4 py-3 text-sm font-medium text-ink outline-none transition-colors focus:border-moss/40 focus:ring-2 focus:ring-moss/10 disabled:cursor-not-allowed disabled:text-ink/35"
+                disabled={subcategoryCounts.length === 0}
+              >
+                <option value="">{t("all")}</option>
+                {subcategoryCounts.map((item) => (
+                  <option key={`${item.category}:${item.name}`} value={item.name}>
+                    {category ? item.name : `${item.category} / ${item.name}`} ({item.count})
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+
         {selectedTags.length > 0 && (
           <div className="animate-fade-in space-y-4">
             <div className="flex items-center justify-between px-1">
