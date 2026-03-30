@@ -1,20 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { setSessionToken } from "../../lib/admin";
+import { useEffect, useState } from "react";
 import { API_BASE_URL } from "../../lib/apiBase";
+import { readApiError } from "../../lib/apiError";
 import type { TFunction } from "../../lib/i18n";
 
 type Props = {
   t: TFunction;
+  initialError?: string | null;
   onAuthenticated: () => void;
 };
 
-export default function AdminAuth({ t, onAuthenticated }: Props) {
+export default function AdminAuth({ t, initialError = null, onAuthenticated }: Props) {
   const [password, setPassword] = useState("");
   const [verifying, setVerifying] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setAuthError(initialError);
+  }, [initialError]);
 
   const verifyPassword = async () => {
     if (!password.trim()) {
@@ -24,14 +29,21 @@ export default function AdminAuth({ t, onAuthenticated }: Props) {
     setVerifying(true);
     setAuthError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/check`, {
-        headers: { "X-Admin-Token": password },
+      const res = await fetch(`${API_BASE_URL}/auth/session`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
       });
       if (res.ok) {
-        setSessionToken(password);
+        setPassword("");
         onAuthenticated();
       } else {
-        setAuthError(t("passwordIncorrect"));
+        if (res.status === 401) {
+          setAuthError(t("passwordIncorrect"));
+        } else {
+          setAuthError(await readApiError(res, t("unknownError")));
+        }
       }
     } catch {
       setAuthError(t("unknownError"));
@@ -47,15 +59,15 @@ export default function AdminAuth({ t, onAuthenticated }: Props) {
           <div className="hero-orb hero-orb-moss" />
           <div className="hero-orb hero-orb-copper" />
           <div className="relative">
-          <p className="section-kicker text-copper">
-            {t("admin")}
-          </p>
-          <h1 className="mt-3 section-title text-3xl font-semibold">
-            {t("adminPageTitle")}
-          </h1>
-          <p className="mt-2 text-sm text-soft">
-            {t("enterPassword")}
-          </p>
+            <p className="section-kicker text-copper">
+              {t("admin")}
+            </p>
+            <h1 className="mt-3 section-title text-3xl font-semibold">
+              {t("adminPageTitle")}
+            </h1>
+            <p className="mt-2 text-sm text-soft">
+              {t("enterPassword")}
+            </p>
           </div>
         </header>
 

@@ -1,7 +1,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 
 from ..db import iter_repos_for_export
 from ..deps import require_admin
@@ -17,14 +17,13 @@ async def export_obsidian(
     request: Request,
     tags: Optional[str] = None,
     language: Optional[str] = None,
-) -> Response:
+) -> StreamingResponse:
     tag_list = None
     if tags:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     repo_iter = iter_repos_for_export(language=language, tags=tag_list)
-    zip_bytes = await generate_obsidian_zip_streaming(repo_iter)
-    return Response(
-        content=zip_bytes,
+    return StreamingResponse(
+        generate_obsidian_zip_streaming(repo_iter),
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="starsorty-export.zip"'},
     )

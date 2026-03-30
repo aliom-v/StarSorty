@@ -1,4 +1,6 @@
-function normalizeTextFilter(value) {
+import type { HomeSortMode, HomeTagMode } from "./homePageTypes";
+
+function normalizeTextFilter(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -6,7 +8,15 @@ function normalizeTextFilter(value) {
   return normalized || null;
 }
 
-export function normalizeMinStars(value) {
+export function normalizeQueryInput(value: unknown): string {
+  return normalizeTextFilter(value) ?? "";
+}
+
+export function hasPendingSearchQuery(queryInput: unknown, query: unknown): boolean {
+  return normalizeQueryInput(queryInput) !== normalizeQueryInput(query);
+}
+
+export function normalizeMinStars(value: unknown): number | null {
   if (value === null || value === undefined || value === "") {
     return null;
   }
@@ -16,6 +26,21 @@ export function normalizeMinStars(value) {
   }
   return parsed;
 }
+
+type BuildRepoSearchParamsArgs = {
+  query: string;
+  language: string;
+  minStars: number | null;
+  category: string | null;
+  subcategory: string | null;
+  selectedTags: string[];
+  tagMode: HomeTagMode;
+  sortMode: HomeSortMode;
+  activePreferenceUser: string;
+  sourceUser: string | null;
+  limit: number;
+  offset: number;
+};
 
 export function buildRepoSearchParams({
   query,
@@ -30,7 +55,7 @@ export function buildRepoSearchParams({
   sourceUser,
   limit,
   offset,
-}) {
+}: BuildRepoSearchParamsArgs): URLSearchParams {
   const params = new URLSearchParams({
     limit: String(limit),
     offset: String(offset),
@@ -53,13 +78,23 @@ export function buildRepoSearchParams({
   if (normalizedMinStars !== null) {
     params.set("min_stars", String(normalizedMinStars));
   }
-  if (Array.isArray(selectedTags) && selectedTags.length > 0) {
+  if (selectedTags.length > 0) {
     params.set("tags", selectedTags.join(","));
   }
   if (normalizedSourceUser) params.set("star_user", normalizedSourceUser);
 
   return params;
 }
+
+type CountActiveFiltersArgs = {
+  query: string;
+  language: string;
+  minStars: number | null;
+  category: string | null;
+  subcategory: string | null;
+  selectedTags: string[];
+  sourceUser: string | null;
+};
 
 export function countActiveFilters({
   query,
@@ -69,13 +104,13 @@ export function countActiveFilters({
   subcategory,
   selectedTags,
   sourceUser,
-}) {
+}: CountActiveFiltersArgs): number {
   return [
     normalizeTextFilter(query),
     normalizeTextFilter(language),
     normalizeTextFilter(category),
     normalizeTextFilter(subcategory),
-    Array.isArray(selectedTags) && selectedTags.length > 0,
+    selectedTags.length > 0,
     normalizeMinStars(minStars) !== null,
     normalizeTextFilter(sourceUser),
   ].filter(Boolean).length;

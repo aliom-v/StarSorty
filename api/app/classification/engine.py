@@ -20,6 +20,7 @@ class PendingAIClassification:
     top_candidate: Optional[RuleCandidate]
     rule_candidates: List[RuleCandidate]
     ai_input: Dict[str, Any]
+    allow_rule_fallback: bool = True
 
 
 @dataclass(frozen=True)
@@ -65,17 +66,18 @@ class ClassificationEngine:
         candidates: List[RuleCandidate],
     ) -> Dict[str, Any]:
         ai_input = dict(repo)
-        ai_input["rule_candidates"] = [
-            {
-                "rule_id": candidate.rule_id,
-                "category": candidate.category,
-                "subcategory": candidate.subcategory,
-                "score": candidate.score,
-                "evidence": candidate.evidence,
-                "tag_ids": candidate.tag_ids,
-            }
-            for candidate in candidates[:3]
-        ]
+        if candidates:
+            ai_input["rule_candidates"] = [
+                {
+                    "rule_id": candidate.rule_id,
+                    "category": candidate.category,
+                    "subcategory": candidate.subcategory,
+                    "score": candidate.score,
+                    "evidence": candidate.evidence,
+                    "tag_ids": candidate.tag_ids,
+                }
+                for candidate in candidates[:3]
+            ]
         return ai_input
 
     def _build_outcome(
@@ -114,14 +116,30 @@ class ClassificationEngine:
     def prepare_classification(self, repo: Dict[str, Any]) -> PreparedClassification:
         candidates = self.candidates_for_repo(repo)
         top_candidate = candidates[0] if candidates else None
-        decision = decide_route(self._classify_mode, self._use_ai, top_candidate, self._policy)
+        runner_up = None
+        if top_candidate is not None:
+            for candidate in candidates[1:]:
+                if (candidate.category, candidate.subcategory) != (
+                    top_candidate.category,
+                    top_candidate.subcategory,
+                ):
+                    runner_up = candidate
+                    break
+        decision = decide_route(
+            self._classify_mode,
+            self._use_ai,
+            top_candidate,
+            runner_up,
+            self._policy,
+        )
 
         if decision.route in ("direct_rule", "rule_fallback"):
             if not decision.candidate:
                 raise ValueError("Rule route selected without candidate")
             result = self._candidate_to_result(decision.candidate)
+            source = "rules_fallback" if decision.route == "rule_fallback" else "rules"
             return PreparedClassification(
-                outcome=self._build_outcome(result, "rules", decision.reason, candidates)
+                outcome=self._build_outcome(result, source, decision.reason, candidates)
             )
 
         if decision.route == "skip":
@@ -145,9 +163,13 @@ class ClassificationEngine:
         return PreparedClassification(
             pending_ai=PendingAIClassification(
                 reason=decision.reason,
-                top_candidate=top_candidate,
+                top_candidate=decision.candidate if decision.allow_rule_fallback else None,
                 rule_candidates=candidates,
-                ai_input=self._rule_candidates_to_ai_input(repo, candidates),
+                ai_input=self._rule_candidates_to_ai_input(
+                    repo,
+                    candidates if decision.include_rule_candidates else [],
+                ),
+                allow_rule_fallback=decision.allow_rule_fallback,
             )
         )
 
@@ -184,7 +206,7 @@ class ClassificationEngine:
                 prepared.pending_ai.rule_candidates,
             )
         except Exception:
-            if prepared.pending_ai.top_candidate is None:
+            if not prepared.pending_ai.allow_rule_fallback or prepared.pending_ai.top_candidate is None:
                 raise
             return self._fallback_outcome(
                 prepared.pending_ai.top_candidate,

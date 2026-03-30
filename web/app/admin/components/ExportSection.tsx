@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { adminFetch } from "../../lib/admin";
 import { API_BASE_URL } from "../../lib/apiBase";
 import { getErrorMessage, readApiError } from "../../lib/apiError";
 import type { TFunction } from "../../lib/i18n";
@@ -17,7 +18,7 @@ export default function ExportSection({ t, setMessage }: Props) {
     setExporting(true);
     setMessage(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/export/obsidian`);
+      const res = await adminFetch(`${API_BASE_URL}/export/obsidian`);
       if (!res.ok) {
         const detail = await readApiError(res, t("exportFailed"));
         throw new Error(detail);

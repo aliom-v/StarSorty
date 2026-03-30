@@ -4,14 +4,16 @@ import test from "node:test";
 import {
   buildRepoSearchParams,
   countActiveFilters,
+  hasPendingSearchQuery,
   normalizeMinStars,
-} from "../app/lib/homePageFilters.js";
+  normalizeQueryInput,
+} from "../app/lib/homePageFilters";
 
 test("buildRepoSearchParams includes trimmed homepage filters", () => {
   const params = buildRepoSearchParams({
     query: "  agents  ",
     language: " TypeScript ",
-    minStars: "120",
+    minStars: 120,
     category: " AI ",
     subcategory: " SDK ",
     selectedTags: ["rag", "agent"],
@@ -38,22 +40,34 @@ test("buildRepoSearchParams includes trimmed homepage filters", () => {
 });
 
 test("countActiveFilters counts all supported homepage filters", () => {
-  const count = countActiveFilters({
-    query: "agents",
-    language: "Python",
-    minStars: 500,
-    category: "AI",
-    subcategory: "Agents",
-    selectedTags: ["rag"],
-    sourceUser: "alice",
-  });
-
-  assert.equal(count, 7);
+  assert.equal(
+    countActiveFilters({
+      query: "rag",
+      language: "TypeScript",
+      minStars: 300,
+      category: "AI",
+      subcategory: "Agent",
+      selectedTags: ["tooling", "sdk"],
+      sourceUser: "alice",
+    }),
+    7
+  );
 });
 
 test("normalizeMinStars ignores zero, empty, and invalid values", () => {
-  assert.equal(normalizeMinStars(""), null);
   assert.equal(normalizeMinStars("0"), null);
+  assert.equal(normalizeMinStars(""), null);
   assert.equal(normalizeMinStars("abc"), null);
-  assert.equal(normalizeMinStars(42), 42);
+  assert.equal(normalizeMinStars("42"), 42);
+});
+
+test("normalizeQueryInput trims and normalizes empty values", () => {
+  assert.equal(normalizeQueryInput("  repo search  "), "repo search");
+  assert.equal(normalizeQueryInput("    "), "");
+  assert.equal(normalizeQueryInput(null), "");
+});
+
+test("hasPendingSearchQuery only flags submitted-query changes", () => {
+  assert.equal(hasPendingSearchQuery("  rag ", "rag"), false);
+  assert.equal(hasPendingSearchQuery("agent", "rag"), true);
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { buildAdminHeaders } from "../../lib/admin";
+import { adminFetch } from "../../lib/admin";
 import { API_BASE_URL } from "../../lib/apiBase";
 import { getErrorMessage, readApiError } from "../../lib/apiError";
 import type { TFunction } from "../../lib/i18n";
@@ -12,6 +12,7 @@ type Stats = {
 };
 
 type BackgroundStatus = {
+  status: string;
   running: boolean;
   processed: number;
   failed: number;
@@ -119,9 +120,9 @@ export default function ClassifySection({ t, setMessage }: Props) {
       if (forceReclassify) {
         payload.force = true;
       }
-      const res = await fetch(`${API_BASE_URL}/classify`, {
+      const res = await adminFetch(`${API_BASE_URL}/classify`, {
         method: "POST",
-        headers: buildAdminHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
@@ -161,9 +162,9 @@ export default function ClassifySection({ t, setMessage }: Props) {
       if (forceReclassify) {
         payload.force = true;
       }
-      const res = await fetch(`${API_BASE_URL}/classify/background`, {
+      const res = await adminFetch(`${API_BASE_URL}/classify/background`, {
         method: "POST",
-        headers: buildAdminHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
@@ -181,9 +182,8 @@ export default function ClassifySection({ t, setMessage }: Props) {
     if (!backgroundRunning) return;
     setMessage(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/classify/stop`, {
+      const res = await adminFetch(`${API_BASE_URL}/classify/stop`, {
         method: "POST",
-        headers: buildAdminHeaders(),
       });
       if (!res.ok) {
         const detail = await readApiError(res, t("classifyFailed"));
@@ -200,6 +200,8 @@ export default function ClassifySection({ t, setMessage }: Props) {
   const simpleStatus = backgroundRunning ? t("classifying") : t("backgroundIdle");
   const disableBackgroundToggle = classifying;
   const disableForegroundClassify = classifying || backgroundRunning;
+  const terminalBackgroundError =
+    backgroundStatus?.status === "failed" ? backgroundStatus.last_error : null;
 
   return (
     <div className="admin-section">
@@ -278,15 +280,14 @@ export default function ClassifySection({ t, setMessage }: Props) {
               {t("concurrency")}: {backgroundStatus.concurrency}
             </span>
           </div>
-          {backgroundStatus.last_error &&
-            backgroundStatus.last_error !== "Stopped by user" && (
-              <div className="feedback-banner feedback-banner-error mt-3">
-                <span className="feedback-icon" aria-hidden="true" />
-                <p className="text-xs leading-6 text-copper">
-                  {backgroundStatus.last_error}
-                </p>
-              </div>
-            )}
+          {terminalBackgroundError && (
+            <div className="feedback-banner feedback-banner-error mt-3">
+              <span className="feedback-icon" aria-hidden="true" />
+              <p className="text-xs leading-6 text-copper">
+                {terminalBackgroundError}
+              </p>
+            </div>
+          )}
         </div>
       ) : null}
 

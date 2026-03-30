@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { buildAdminHeaders } from "../../lib/admin";
+import { adminFetch } from "../../lib/admin";
 import { API_BASE_URL } from "../../lib/apiBase";
 import { getErrorMessage, readApiError } from "../../lib/apiError";
 import type { TFunction } from "../../lib/i18n";
@@ -18,9 +18,8 @@ export default function SyncSection({ t, setMessage }: Props) {
     setSyncing(true);
     setMessage(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/sync`, {
+      const res = await adminFetch(`${API_BASE_URL}/sync`, {
         method: "POST",
-        headers: buildAdminHeaders(),
       });
       if (!res.ok) {
         const detail = await readApiError(res, t("syncFailed"));

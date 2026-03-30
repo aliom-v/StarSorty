@@ -1,4 +1,3 @@
-import io
 import re
 import zipfile
 from datetime import datetime, timezone
@@ -102,48 +101,98 @@ exported_at: {exported_at}
     return frontmatter + body
 
 
+def _repo_to_dict(repo: Any) -> Dict[str, Any]:
+    if hasattr(repo, "model_dump"):
+        return repo.model_dump()
+    if isinstance(repo, dict):
+        return repo
+    return dict(repo)
+
+
+def _obsidian_markdown_filename(repo: Dict[str, Any]) -> str:
+    category = repo.get("category") or "未分类"
+    owner = repo.get("owner", "unknown")
+    name = repo.get("name", "unknown")
+
+    safe_category = sanitize_filename(category)
+    safe_owner = sanitize_filename(owner)
+    safe_name = sanitize_filename(name)
+    return f"{safe_category}/{safe_owner}_{safe_name}.md"
+
+
+def _write_repo_to_zip(zf: zipfile.ZipFile, repo: Dict[str, Any]) -> None:
+    filename = _obsidian_markdown_filename(repo)
+    content = generate_repo_markdown(repo)
+    zf.writestr(filename, content.encode("utf-8"))
+
+
+class _StreamingZipBuffer:
+    def __init__(self) -> None:
+        self._pending: list[bytes] = []
+        self._position = 0
+
+    def writable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return False
+
+    def write(self, data: bytes | bytearray | memoryview) -> int:
+        chunk = bytes(data)
+        if not chunk:
+            return 0
+        self._pending.append(chunk)
+        self._position += len(chunk)
+        return len(chunk)
+
+    def tell(self) -> int:
+        return self._position
+
+    def flush(self) -> None:
+        return None
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        del offset, whence
+        raise OSError("Streaming ZIP buffer does not support seek()")
+
+    def read_pending(self) -> bytes:
+        if not self._pending:
+            return b""
+        if len(self._pending) == 1:
+            chunk = self._pending[0]
+        else:
+            chunk = b"".join(self._pending)
+        self._pending.clear()
+        return chunk
+
+
 def generate_obsidian_zip(repos: List[Dict[str, Any]]) -> bytes:
     """Generate a ZIP file with Markdown files organized by category."""
-    buffer = io.BytesIO()
+    from io import BytesIO
+
+    buffer = BytesIO()
 
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for repo in repos:
-            category = repo.get("category") or "未分类"
-            owner = repo.get("owner", "unknown")
-            name = repo.get("name", "unknown")
-
-            safe_category = sanitize_filename(category)
-            safe_owner = sanitize_filename(owner)
-            safe_name = sanitize_filename(name)
-
-            filename = f"{safe_category}/{safe_owner}_{safe_name}.md"
-            content = generate_repo_markdown(repo)
-
-            zf.writestr(filename, content.encode("utf-8"))
+            _write_repo_to_zip(zf, _repo_to_dict(repo))
 
     buffer.seek(0)
     return buffer.getvalue()
 
 
-async def generate_obsidian_zip_streaming(repo_iter: AsyncIterator[Any]) -> bytes:
-    """Generate a ZIP file from an async iterator of repos (memory-efficient)."""
-    buffer = io.BytesIO()
+async def generate_obsidian_zip_streaming(
+    repo_iter: AsyncIterator[Any],
+) -> AsyncIterator[bytes]:
+    """Generate a ZIP stream from an async iterator of repos."""
+    buffer = _StreamingZipBuffer()
 
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         async for repo in repo_iter:
-            repo_dict = repo.model_dump() if hasattr(repo, "model_dump") else repo
-            category = repo_dict.get("category") or "未分类"
-            owner = repo_dict.get("owner", "unknown")
-            name = repo_dict.get("name", "unknown")
+            _write_repo_to_zip(zf, _repo_to_dict(repo))
+            pending = buffer.read_pending()
+            if pending:
+                yield pending
 
-            safe_category = sanitize_filename(category)
-            safe_owner = sanitize_filename(owner)
-            safe_name = sanitize_filename(name)
-
-            filename = f"{safe_category}/{safe_owner}_{safe_name}.md"
-            content = generate_repo_markdown(repo_dict)
-
-            zf.writestr(filename, content.encode("utf-8"))
-
-    buffer.seek(0)
-    return buffer.getvalue()
+    pending = buffer.read_pending()
+    if pending:
+        yield pending

@@ -1,19 +1,30 @@
 import asyncio
+import io
 import json
 import os
 import time
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiosqlite
 import pytest
 
+from api.app import export as export_mod
 from api.app import rules as rules_mod
 from api.app import taxonomy as taxonomy_mod
 from api.app.db import helpers as helpers_db
 from api.app.db import repos as repos_db
+from api.app.db.runtime_guard import get_async_sqlite_runtime_issue
 from api.app.db import schema as schema_db
 from api.app.db import search as search_db
+from api.app.db import stats as stats_db
+
+ASYNC_SQLITE_RUNTIME_ISSUE = get_async_sqlite_runtime_issue()
+pytestmark = pytest.mark.skipif(
+    ASYNC_SQLITE_RUNTIME_ISSUE is not None,
+    reason=ASYNC_SQLITE_RUNTIME_ISSUE or "",
+)
 
 
 def _run(coro):
@@ -99,6 +110,10 @@ def _sync_repo_payload(index: int, stars: int, users: list[str] | None = None) -
     }
 
 
+async def _collect_chunks(iterator):
+    return [chunk async for chunk in iterator]
+
+
 @pytest.fixture
 def db_connection_factory(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
@@ -107,6 +122,7 @@ def db_connection_factory(tmp_path, monkeypatch):
     monkeypatch.setattr(schema_db, "get_connection", get_connection)
     monkeypatch.setattr(search_db, "get_connection", get_connection)
     monkeypatch.setattr(repos_db, "get_connection", get_connection)
+    monkeypatch.setattr(stats_db, "get_connection", get_connection)
     monkeypatch.setattr(search_db, "is_fts_enabled", lambda: False)
 
     _run(schema_db.init_db())
@@ -242,6 +258,80 @@ def test_upsert_repos_keeps_star_user_merge_when_batched(
 
     assert _run(_fetch_star_users("owner/repo-1")) == ["user-1", "user-2"]
     assert _run(_fetch_star_users("owner/repo-2")) == ["user-3"]
+
+
+def test_generate_obsidian_zip_streaming_yields_incremental_valid_zip() -> None:
+    async def _repo_iter():
+        yield {
+            "full_name": "owner/repo-1",
+            "name": "repo-1",
+            "owner": "owner",
+            "html_url": "https://example.com/owner/repo-1",
+            "description": "repo 1",
+            "language": "Python",
+            "stargazers_count": 101,
+            "forks_count": 3,
+            "category": "AI",
+            "tags": ["Agent"],
+            "keywords": ["agent"],
+            "starred_at": "2026-03-01T00:00:00+00:00",
+            "summary_zh": "repo one",
+        }
+        yield {
+            "full_name": "owner/repo-2",
+            "name": "repo-2",
+            "owner": "owner",
+            "html_url": "https://example.com/owner/repo-2",
+            "description": "repo 2",
+            "language": "Go",
+            "stargazers_count": 88,
+            "forks_count": 1,
+            "category": "Infra",
+            "tags": ["Ops"],
+            "keywords": ["infra"],
+            "starred_at": "2026-03-02T00:00:00+00:00",
+            "summary_zh": "repo two",
+        }
+
+    chunks = _run(_collect_chunks(export_mod.generate_obsidian_zip_streaming(_repo_iter())))
+
+    assert len(chunks) >= 2
+    archive = io.BytesIO(b"".join(chunks))
+    with zipfile.ZipFile(archive, "r") as zf:
+        names = sorted(zf.namelist())
+        assert names == ["AI/owner_repo-1.md", "Infra/owner_repo-2.md"]
+        first = zf.read("AI/owner_repo-1.md").decode("utf-8")
+        second = zf.read("Infra/owner_repo-2.md").decode("utf-8")
+    assert "# repo-1" in first
+    assert "#Agent" in first
+    assert "# repo-2" in second
+
+
+def test_repo_lookup_tables_power_tag_and_user_filters(db_connection_factory) -> None:
+    first = _repo_row(index=1, stars=100, token="agents")
+    first["star_users"] = json.dumps(["alice", "bob"])
+    first["ai_tags"] = json.dumps(["Agent"])
+    first["ai_tag_ids"] = json.dumps(["agent"])
+    first["override_tags"] = None
+    first["override_tag_ids"] = None
+
+    second = _repo_row(index=2, stars=200, token="rag")
+    second["star_users"] = json.dumps(["carol"])
+    second["ai_tags"] = json.dumps(["Ignored"])
+    second["ai_tag_ids"] = json.dumps(["ignored"])
+    second["override_tags"] = json.dumps(["RAG"])
+    second["override_tag_ids"] = json.dumps(["rag"])
+
+    _run(_insert_repos(db_connection_factory, [first, second]))
+
+    tag_page = _run(search_db.list_repos(tag="rag"))
+    user_page = _run(search_db.list_repos(star_user="alice"))
+    stats_payload = _run(stats_db.get_repo_stats(refresh=True, use_snapshot=False))
+
+    assert [item.full_name for item in tag_page.items] == ["owner/repo-2"]
+    assert [item.full_name for item in user_page.items] == ["owner/repo-1"]
+    assert any(item["name"] == "RAG" and item["count"] == 1 for item in stats_payload["tags"])
+    assert any(item["name"] == "alice" and item["count"] == 1 for item in stats_payload["users"])
 
 
 def test_taxonomy_cache_reloads_on_file_change(tmp_path, monkeypatch):

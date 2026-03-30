@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { memo } from "react";
 import type { Messages, MessageValues } from "../lib/i18n";
+import { buildRepoDetailHref } from "../lib/repoRoutes";
 
 type Repo = {
   full_name: string;
@@ -135,12 +137,12 @@ const RepoCard = memo(function RepoCard({
         </div>
 
         <div className="flex w-full shrink-0 items-center justify-between gap-3 sm:w-auto sm:justify-end md:flex-col md:items-end">
-          <a
-            href={`/repo/?full_name=${encodeURIComponent(repo.full_name)}`}
+          <Link
+            href={buildRepoDetailHref(repo.full_name)}
             className="flex flex-1 items-center justify-center rounded-full btn-ios-primary px-5 py-2.5 text-xs font-semibold tracking-[0.08em] sm:flex-none sm:px-6 sm:py-3"
           >
             {t("details")}
-          </a>
+          </Link>
           <a
             href={repo.html_url}
             target="_blank"

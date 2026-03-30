@@ -133,25 +133,19 @@ async def _compute_repo_stats(conn) -> Dict[str, Any]:
     )).fetchall()
     tag_rows = await (await conn.execute(
         """
-        SELECT tag.value AS name, COUNT(*) AS count
-        FROM repos, json_each(
-            CASE
-                WHEN override_tags IS NOT NULL AND override_tags != '' AND override_tags != 'null'
-                THEN override_tags
-                ELSE COALESCE(ai_tags, '[]')
-            END
-        ) AS tag
-        WHERE tag.value IS NOT NULL AND tag.value != ''
-        GROUP BY tag.value
+        SELECT tag AS name, COUNT(*) AS count
+        FROM repo_effective_tags
+        WHERE tag IS NOT NULL AND tag != ''
+        GROUP BY tag
         ORDER BY count DESC, name ASC
         """
     )).fetchall()
     user_rows = await (await conn.execute(
         """
-        SELECT user.value AS name, COUNT(*) AS count
-        FROM repos, json_each(COALESCE(star_users, '[]')) AS user
-        WHERE user.value IS NOT NULL AND user.value != ''
-        GROUP BY user.value
+        SELECT star_user AS name, COUNT(*) AS count
+        FROM repo_star_users
+        WHERE star_user IS NOT NULL AND star_user != ''
+        GROUP BY star_user
         ORDER BY count DESC, name ASC
         """
     )).fetchall()

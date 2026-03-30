@@ -116,31 +116,46 @@ async def list_repos(
 
     if tag:
         clauses.append(
-            "("
-            "COALESCE(NULLIF(override_tag_ids, ''), ai_tag_ids, '') LIKE ? "
-            "OR COALESCE(NULLIF(override_tags, ''), ai_tags, '') LIKE ?"
-            ")"
+            """
+            EXISTS (
+                SELECT 1
+                FROM repo_effective_tags
+                WHERE repo_effective_tags.repo_id = repos.id
+                  AND (repo_effective_tags.tag = ? OR repo_effective_tags.tag_id = ?)
+            )
+            """
         )
-        params.append(f"%\"{tag}\"%")
-        params.append(f"%\"{tag}\"%")
+        params.extend([tag, tag])
 
     if tags:
         tag_clauses = []
         for t in tags:
             tag_clauses.append(
-                "("
-                "COALESCE(NULLIF(override_tag_ids, ''), ai_tag_ids, '') LIKE ? "
-                "OR COALESCE(NULLIF(override_tags, ''), ai_tags, '') LIKE ?"
-                ")"
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM repo_effective_tags
+                    WHERE repo_effective_tags.repo_id = repos.id
+                      AND (repo_effective_tags.tag = ? OR repo_effective_tags.tag_id = ?)
+                )
+                """
             )
-            params.append(f'%"{t}"%')
-            params.append(f'%"{t}"%')
+            params.extend([t, t])
         joiner = " AND " if str(tag_mode).lower() == "and" else " OR "
         clauses.append("(" + joiner.join(tag_clauses) + ")")
 
     if star_user:
-        clauses.append("star_users LIKE ?")
-        params.append(f"%\"{star_user}\"%")
+        clauses.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM repo_star_users
+                WHERE repo_star_users.repo_id = repos.id
+                  AND repo_star_users.star_user = ?
+            )
+            """
+        )
+        params.append(star_user)
 
     where_sql = ""
     if clauses:
@@ -248,13 +263,16 @@ async def iter_repos_for_export(
         tag_clauses = []
         for t in tags:
             tag_clauses.append(
-                "("
-                "COALESCE(NULLIF(override_tag_ids, ''), ai_tag_ids, '') LIKE ? "
-                "OR COALESCE(NULLIF(override_tags, ''), ai_tags, '') LIKE ?"
-                ")"
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM repo_effective_tags
+                    WHERE repo_effective_tags.repo_id = repos.id
+                      AND (repo_effective_tags.tag = ? OR repo_effective_tags.tag_id = ?)
+                )
+                """
             )
-            params.append(f'%"{t}"%')
-            params.append(f'%"{t}"%')
+            params.extend([t, t])
         clauses.append("(" + " OR ".join(tag_clauses) + ")")
 
     cursor_stars: Optional[int] = None

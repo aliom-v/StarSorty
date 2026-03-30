@@ -1,61 +1,63 @@
 "use client";
 
-const STORAGE_KEY = "starsorty.admin_token";
-const SESSION_KEY = "starsorty.admin_session";
+const LEGACY_STORAGE_KEY = "starsorty.admin_token";
+const LEGACY_SESSION_KEY = "starsorty.admin_session";
+const CSRF_COOKIE_KEY = "starsorty_admin_csrf";
 
-export const getAdminToken = () => {
-  if (typeof window === "undefined") return "";
+const clearLegacyAdminState = () => {
+  if (typeof window === "undefined") return;
   try {
-    return window.localStorage.getItem(STORAGE_KEY) || "";
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+    window.sessionStorage.removeItem(LEGACY_SESSION_KEY);
+  } catch {}
+};
+
+const getCookieValue = (cookieName: string) => {
+  if (typeof document === "undefined") return "";
+  try {
+    const prefix = `${cookieName}=`;
+    const match = document.cookie
+      .split(";")
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(prefix));
+    return match ? decodeURIComponent(match.slice(prefix.length)) : "";
   } catch {
     return "";
   }
 };
 
-export const setAdminToken = (token: string) => {
-  if (typeof window === "undefined") return;
+const expireCookie = (cookieName: string) => {
+  if (typeof document === "undefined") return;
   try {
-    if (token) {
-      window.localStorage.setItem(STORAGE_KEY, token);
-    } else {
-      window.localStorage.removeItem(STORAGE_KEY);
-    }
+    document.cookie = `${cookieName}=; Max-Age=0; Path=/; SameSite=Lax`;
   } catch {}
 };
 
-export const getSessionToken = () => {
-  if (typeof window === "undefined") return "";
-  try {
-    return window.sessionStorage.getItem(SESSION_KEY) || "";
-  } catch {
-    return "";
-  }
-};
-
-export const setSessionToken = (token: string) => {
-  if (typeof window === "undefined") return;
-  try {
-    if (token) {
-      window.sessionStorage.setItem(SESSION_KEY, token);
-    } else {
-      window.sessionStorage.removeItem(SESSION_KEY);
-    }
-  } catch {}
-};
-
-export const clearSessionToken = () => {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.removeItem(SESSION_KEY);
-  } catch {}
-};
-
-export const isSessionAuthenticated = () => {
-  return getSessionToken().length > 0;
+export const getAdminCsrfToken = () => {
+  clearLegacyAdminState();
+  return getCookieValue(CSRF_COOKIE_KEY);
 };
 
 export const buildAdminHeaders = (base: Record<string, string> = {}) => {
-  const token = getSessionToken() || getAdminToken();
-  if (!token) return base;
-  return { ...base, "X-Admin-Token": token };
+  const csrfToken = getAdminCsrfToken();
+  if (!csrfToken) return base;
+  return { ...base, "X-CSRF-Token": csrfToken };
+};
+
+export const clearAdminClientState = () => {
+  clearLegacyAdminState();
+  expireCookie(CSRF_COOKIE_KEY);
+};
+
+type AdminFetchInit = Omit<RequestInit, "headers"> & {
+  headers?: Record<string, string>;
+};
+
+export const adminFetch = (input: RequestInfo | URL, init: AdminFetchInit = {}) => {
+  const { headers = {}, ...rest } = init;
+  return fetch(input, {
+    ...rest,
+    credentials: "include",
+    headers: buildAdminHeaders(headers),
+  });
 };

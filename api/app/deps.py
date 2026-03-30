@@ -5,11 +5,16 @@ import secrets
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from fastapi import Header, HTTPException
+from fastapi import Cookie, Header, HTTPException, Request
 
-from .db import create_task, update_task
+from .db import create_task, create_task_if_available, get_admin_session, update_task
 from .observability import bind_log_context
-from .security import get_admin_token
+from .security import (
+    ADMIN_SESSION_COOKIE_NAME,
+    admin_request_requires_csrf,
+    allow_unauthenticated_admin_in_dev,
+    get_admin_token,
+)
 from .state import _add_quality_metrics
 
 logger = logging.getLogger("starsorty.api")
@@ -17,19 +22,79 @@ logger = logging.getLogger("starsorty.api")
 _admin_token_warned = False
 
 
-def require_admin(x_admin_token: str | None = Header(default=None, alias="X-Admin-Token")) -> None:
+def _admin_auth_failure_exception() -> HTTPException:
+    if get_admin_token():
+        return HTTPException(status_code=401, detail="Admin authentication required")
+    return HTTPException(
+        status_code=503,
+        detail=(
+            "Admin endpoints are disabled because ADMIN_TOKEN is not configured. "
+            "Set ADMIN_TOKEN, or enable ALLOW_UNAUTHENTICATED_ADMIN_IN_DEV=1 for local development only."
+        ),
+    )
+
+
+async def _resolve_admin_session_auth(
+    request: Request,
+    *,
+    admin_session: str | None,
+    x_csrf_token: str | None,
+) -> str | None:
+    if not admin_session:
+        return None
+    session = await get_admin_session(admin_session)
+    if not session:
+        return None
+    if admin_request_requires_csrf(request.method):
+        if not x_csrf_token:
+            return None
+        if not secrets.compare_digest(x_csrf_token, session["csrf_token"]):
+            return None
+    return "session"
+
+
+async def resolve_admin_auth_mode(
+    request: Request,
+    x_admin_token: str | None = None,
+    x_csrf_token: str | None = None,
+    admin_session: str | None = None,
+) -> str | None:
     global _admin_token_warned
     admin_token = get_admin_token()
-    if not admin_token:
+    if admin_token:
+        if x_admin_token and secrets.compare_digest(x_admin_token, admin_token):
+            return "token"
+        return await _resolve_admin_session_auth(
+            request,
+            admin_session=admin_session,
+            x_csrf_token=x_csrf_token,
+        )
+    if allow_unauthenticated_admin_in_dev():
         if not _admin_token_warned:
             logger.warning(
-                "ADMIN_TOKEN is not set. Admin endpoints are unprotected. "
-                "Set ADMIN_TOKEN environment variable for production use."
+                "ADMIN_TOKEN is not set, but admin endpoints remain enabled because "
+                "ALLOW_UNAUTHENTICATED_ADMIN_IN_DEV is active outside production."
             )
             _admin_token_warned = True
+        return "dev_override"
+    return None
+
+
+async def require_admin(
+    request: Request,
+    x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    x_csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
+    admin_session: str | None = Cookie(default=None, alias=ADMIN_SESSION_COOKIE_NAME),
+) -> None:
+    auth_mode = await resolve_admin_auth_mode(
+        request,
+        x_admin_token=x_admin_token,
+        x_csrf_token=x_csrf_token,
+        admin_session=admin_session,
+    )
+    if auth_mode is not None:
         return
-    if not secrets.compare_digest(x_admin_token or "", admin_token):
-        raise HTTPException(status_code=401, detail="Admin token required")
+    raise _admin_auth_failure_exception()
 
 
 def _now_iso() -> str:
@@ -118,6 +183,33 @@ async def _register_task(
         )
 
 
+async def _register_task_if_available(
+    task_id: str,
+    task_type: str,
+    message: str | None = None,
+    payload: dict | None = None,
+    retry_from_task_id: str | None = None,
+) -> bool:
+    with bind_log_context(task_id=task_id):
+        created = await create_task_if_available(
+            task_id,
+            task_type,
+            status="queued",
+            message=message,
+            payload=payload,
+            retry_from_task_id=retry_from_task_id,
+        )
+        if not created:
+            return False
+        await _add_quality_metrics(task_queued_total=1)
+        logger.info(
+            "task_registered type=%s status=queued retry_from=%s",
+            task_type,
+            retry_from_task_id or "-",
+        )
+        return True
+
+
 async def _set_task_status(task_id: str, status: str, **updates: object) -> None:
     with bind_log_context(task_id=task_id):
         await update_task(
@@ -133,6 +225,8 @@ async def _set_task_status(task_id: str, status: str, **updates: object) -> None
             await _add_quality_metrics(task_finished_total=1)
         elif status == "failed":
             await _add_quality_metrics(task_failed_total=1)
+        elif status == "stopped":
+            await _add_quality_metrics(task_stopped_total=1)
 
         should_log = (
             status != "running"

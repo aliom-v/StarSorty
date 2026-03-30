@@ -1,4 +1,5 @@
 const envApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+const serverEnvApiBaseUrl = process.env.API_BASE_URL;
 
 const guessApiBaseUrl = () => {
   if (envApiBaseUrl) {
@@ -18,3 +19,13 @@ const guessApiBaseUrl = () => {
 };
 
 export const API_BASE_URL = guessApiBaseUrl();
+
+export const getServerApiBaseUrl = () => {
+  if (serverEnvApiBaseUrl) {
+    return serverEnvApiBaseUrl;
+  }
+  if (envApiBaseUrl) {
+    return envApiBaseUrl;
+  }
+  return "http://localhost:4321";
+};

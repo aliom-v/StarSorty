@@ -16,10 +16,13 @@
     "status:unix": "bash scripts/unix/status.sh",
     "api:test": "node scripts/run-api-tests.js",
     "api:bench": "node scripts/run-api-bench.js",
-    "web:dev": "npm --prefix web run dev",
-    "web:build": "npm --prefix web run build",
-    "web:lint": "npm --prefix web run lint",
-    "web:test": "npm --prefix web run test",
-    "web:smoke": "npm --prefix web run smoke"
+    "docs:check": "node scripts/check-docs.js",
+    "scripts:test": "node --no-warnings --test tests-node/*.test.js",
+    "web:install": "npm --prefix web install",
+    "web:dev": "node scripts/run-web-command.js dev",
+    "web:build": "node scripts/run-web-command.js build",
+    "web:lint": "node scripts/run-web-command.js lint",
+    "web:test": "node scripts/run-web-command.js test",
+    "web:smoke": "node scripts/run-web-command.js smoke"
   }
 }

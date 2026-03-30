@@ -167,6 +167,7 @@ def test_quality_metrics_derive_observability_rates(
             "task_queued_total": 5,
             "task_finished_total": 3,
             "task_failed_total": 2,
+            "task_stopped_total": 1,
             "cache_hit_total": 6,
             "cache_miss_total": 2,
             "db_lock_conflict_total": 0,
@@ -250,6 +251,14 @@ def test_task_registration_and_status_updates_emit_observability_metrics(
             message="boom",
         )
     )
+    _run(
+        deps_mod._set_task_status(
+            "task-sync-3",
+            "stopped",
+            finished_at="2026-03-08T00:02:00+00:00",
+            message="Stopped by user",
+        )
+    )
 
     assert created_tasks == [
         {
@@ -263,8 +272,10 @@ def test_task_registration_and_status_updates_emit_observability_metrics(
     ]
     assert updated_tasks[0]["status"] == "finished"
     assert updated_tasks[1]["status"] == "failed"
+    assert updated_tasks[2]["status"] == "stopped"
     assert metric_calls == [
         {"task_queued_total": 1},
         {"task_finished_total": 1},
         {"task_failed_total": 1},
+        {"task_stopped_total": 1},
     ]

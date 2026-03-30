@@ -3,51 +3,12 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { buildAdminHeaders } from "../lib/admin";
+import { adminFetch } from "../lib/admin";
 import { API_BASE_URL } from "../lib/apiBase";
 import { getErrorMessage, readApiError } from "../lib/apiError";
 import { useI18n } from "../lib/i18n";
 import { createRequestTracker } from "../lib/requestTracker";
-
-type RepoDetail = {
-  full_name: string;
-  name: string;
-  owner: string;
-  html_url: string;
-  description?: string | null;
-  language?: string | null;
-  stargazers_count?: number | null;
-  forks_count?: number | null;
-  topics: string[];
-  star_users?: string[];
-  category?: string | null;
-  subcategory?: string | null;
-  tags?: string[];
-  ai_category?: string | null;
-  ai_subcategory?: string | null;
-  ai_confidence?: number | null;
-  ai_tags?: string[];
-  ai_provider?: string | null;
-  ai_model?: string | null;
-  ai_updated_at?: string | null;
-  override_category?: string | null;
-  override_subcategory?: string | null;
-  override_tags?: string[];
-  override_note?: string | null;
-  readme_summary?: string | null;
-  readme_fetched_at?: string | null;
-  pushed_at?: string | null;
-  updated_at?: string | null;
-  starred_at?: string | null;
-};
-
-type OverrideHistoryItem = {
-  category?: string | null;
-  subcategory?: string | null;
-  tags?: string[];
-  note?: string | null;
-  updated_at?: string | null;
-};
+import type { OverrideHistoryItem, RepoDetail } from "../lib/repoDetailTypes";
 
 const formatDate = (value?: string | null, fallback = "—") => {
   if (!value) return fallback;
@@ -77,14 +38,27 @@ const StarIcon = () => (
   </svg>
 );
 
-export default function RepoDetailClient() {
+type RepoDetailClientProps = {
+  initialFullName?: string;
+  initialRepo?: RepoDetail | null;
+  initialError?: string | null;
+};
+
+export default function RepoDetailClient({
+  initialFullName = "",
+  initialRepo = null,
+  initialError = null,
+}: RepoDetailClientProps) {
   const { t } = useI18n();
   const searchParams = useSearchParams();
-  const fullName = (searchParams.get("full_name") || "").trim();
-  const [repo, setRepo] = useState<RepoDetail | null>(null);
+  const searchParamFullName = (searchParams.get("full_name") || "").trim();
+  const fullName = initialFullName || searchParamFullName;
+  const [repo, setRepo] = useState<RepoDetail | null>(initialRepo);
   const [history, setHistory] = useState<OverrideHistoryItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(
+    Boolean(fullName) && initialRepo === null && initialError === null
+  );
+  const [error, setError] = useState<string | null>(initialError);
   const [message, setMessage] = useState<string | null>(null);
   const [messageStatus, setMessageStatus] = useState<"success" | "error">("success");
   const [fetchingReadme, setFetchingReadme] = useState(false);
@@ -155,9 +129,22 @@ export default function RepoDetailClient() {
       setLoading(false);
       return;
     }
-    loadRepo();
+
+    const shouldReuseInitialPayload =
+      fullName === initialFullName &&
+      (initialRepo !== null || initialError !== null);
+    if (shouldReuseInitialPayload) {
+      setRepo(initialRepo);
+      setError(initialError);
+      setLoading(false);
+    } else {
+      setRepo(null);
+      setError(null);
+      setLoading(true);
+      loadRepo();
+    }
     loadHistory();
-  }, [fullName, loadHistory, loadRepo]);
+  }, [fullName, initialError, initialFullName, initialRepo, loadHistory, loadRepo]);
 
   const handleFetchReadme = async () => {
     if (!fullName) return;
@@ -165,9 +152,8 @@ export default function RepoDetailClient() {
     setMessage(null);
     setMessageStatus("success");
     try {
-      const res = await fetch(`${API_BASE_URL}/repos/${encodedFullName}/readme`, {
+      const res = await adminFetch(`${API_BASE_URL}/repos/${encodedFullName}/readme`, {
         method: "POST",
-        headers: buildAdminHeaders(),
       });
       if (!res.ok) {
         const detail = await readApiError(res, t("readmeUpdateFailed"));

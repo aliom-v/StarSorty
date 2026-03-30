@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { mergeRepoItems, normalizeRepoPage } from "../app/lib/repoListState.js";
+import { mergeRepoItems, normalizeRepoPage } from "../app/lib/repoListState";
 
 test("normalizeRepoPage uses server pagination fields when present", () => {
   const page = normalizeRepoPage(

@@ -33,7 +33,7 @@
         "tailscale",
         "zerotier",
         "openvpn",
-        "cloudflare",
+        "cloudflare warp",
         "warp",
         "1.1.1.1",
         "ipsec",
@@ -134,15 +134,13 @@
         "gpt-3.5",
         "dall-e",
         "sora",
-        "whisper",
-        "api-key",
-        "sam altman"
+        "whisper"
       ],
       "category": "ai",
       "subcategory": "openai",
       "tags": [
-        "ai",
-        "chatgpt"
+        "LLM",
+        "ChatGPT"
       ]
     },
     {
@@ -164,8 +162,7 @@
       "category": "ai",
       "subcategory": "llm",
       "tags": [
-        "ai",
-        "llm"
+        "LLM"
       ]
     },
     {
@@ -173,7 +170,8 @@
         "midjourney",
         "stable-diffusion",
         "comfyui",
-        "webui",
+        "stable-diffusion-webui",
+        "automatic1111",
         "civitai",
         "lora",
         "controlnet",
@@ -185,8 +183,7 @@
       "category": "ai",
       "subcategory": "generation",
       "tags": [
-        "ai",
-        "ai-art"
+        "图像生成"
       ]
     },
     {
@@ -201,8 +198,8 @@
       "category": "ai",
       "subcategory": "devtools",
       "tags": [
-        "ai",
-        "ai-dev"
+        "LLM",
+        "Web应用"
       ]
     },
     {
@@ -217,8 +214,8 @@
       "category": "ai",
       "subcategory": "agent",
       "tags": [
-        "ai",
-        "agent"
+        "LLM",
+        "Agent"
       ]
     },
     {
@@ -239,9 +236,9 @@
       "category": "ai",
       "subcategory": "rag",
       "tags": [
-        "ai",
-        "rag",
-        "vector-db"
+        "LLM",
+        "RAG",
+        "向量数据库"
       ]
     },
     {
@@ -294,10 +291,7 @@
         "ghost",
         "vitepress",
         "vuepress",
-        "docusaurus",
-        "vercel",
-        "netlify",
-        "zeabur"
+        "docusaurus"
       ],
       "category": "productivity",
       "subcategory": "blog",
@@ -314,7 +308,6 @@
         "podman",
         "portainer",
         "registry",
-        "image",
         "container"
       ],
       "category": "devops",
@@ -373,7 +366,6 @@
         "grafana",
         "prometheus",
         "zabbix",
-        "probe",
         "nezha"
       ],
       "category": "devops",

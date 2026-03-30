@@ -1,9 +1,75 @@
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 from .helpers import _load_json_object, _retry_on_lock
 from .pool import get_connection
+
+ACTIVE_TASK_STATUSES = ("queued", "running", "processing")
+
+
+def _task_row_to_dict(row) -> Dict[str, Any]:
+    result: dict | None = None
+    raw_result = row["result"]
+    if raw_result:
+        try:
+            parsed = json.loads(raw_result)
+            if isinstance(parsed, dict):
+                result = parsed
+        except json.JSONDecodeError:
+            result = None
+    return {
+        "task_id": row["task_id"],
+        "task_type": row["task_type"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "started_at": row["started_at"],
+        "finished_at": row["finished_at"],
+        "message": row["message"],
+        "result": result,
+        "cursor_full_name": row["cursor_full_name"],
+        "payload": _load_json_object(row["payload"]),
+        "retry_from_task_id": row["retry_from_task_id"],
+    }
+
+
+async def _insert_task(
+    conn,
+    task_id: str,
+    task_type: str,
+    status: str,
+    message: str | None,
+    payload: dict | None,
+    retry_from_task_id: str | None,
+) -> None:
+    timestamp = datetime.now(timezone.utc).isoformat()
+    payload_json = json.dumps(payload) if payload is not None else None
+    await conn.execute(
+        """
+        INSERT INTO tasks (
+            task_id,
+            task_type,
+            status,
+            created_at,
+            updated_at,
+            message,
+            payload,
+            retry_from_task_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            task_id,
+            task_type,
+            status,
+            timestamp,
+            timestamp,
+            message,
+            payload_json,
+            retry_from_task_id,
+        ),
+    )
 
 
 @_retry_on_lock()
@@ -15,35 +81,44 @@ async def create_task(
     payload: dict | None = None,
     retry_from_task_id: str | None = None,
 ) -> None:
-    timestamp = datetime.now(timezone.utc).isoformat()
-    payload_json = json.dumps(payload) if payload is not None else None
     async with get_connection() as conn:
-        await conn.execute(
-            """
-            INSERT INTO tasks (
-                task_id,
-                task_type,
-                status,
-                created_at,
-                updated_at,
-                message,
-                payload,
-                retry_from_task_id
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                task_id,
-                task_type,
-                status,
-                timestamp,
-                timestamp,
-                message,
-                payload_json,
-                retry_from_task_id,
-            ),
+        await _insert_task(
+            conn,
+            task_id,
+            task_type,
+            status,
+            message,
+            payload,
+            retry_from_task_id,
         )
         await conn.commit()
+
+
+@_retry_on_lock()
+async def create_task_if_available(
+    task_id: str,
+    task_type: str,
+    status: str = "queued",
+    message: str | None = None,
+    payload: dict | None = None,
+    retry_from_task_id: str | None = None,
+) -> bool:
+    async with get_connection() as conn:
+        try:
+            await _insert_task(
+                conn,
+                task_id,
+                task_type,
+                status,
+                message,
+                payload,
+                retry_from_task_id,
+            )
+        except sqlite3.IntegrityError:
+            await conn.rollback()
+            return False
+        await conn.commit()
+    return True
 
 
 @_retry_on_lock()
@@ -85,50 +160,64 @@ async def update_task(
 
 async def get_task(task_id: str) -> Dict[str, Any] | None:
     async with get_connection() as conn:
-        row = await (await conn.execute(
-            """
-            SELECT
-                task_id,
-                task_type,
-                status,
-                created_at,
-                updated_at,
-                started_at,
-                finished_at,
-                message,
-                result,
-                cursor_full_name,
-                payload,
-                retry_from_task_id
-            FROM tasks
-            WHERE task_id = ?
-            """,
-            (task_id,),
-        )).fetchone()
+        row = await (
+            await conn.execute(
+                """
+                SELECT
+                    task_id,
+                    task_type,
+                    status,
+                    created_at,
+                    updated_at,
+                    started_at,
+                    finished_at,
+                    message,
+                    result,
+                    cursor_full_name,
+                    payload,
+                    retry_from_task_id
+                FROM tasks
+                WHERE task_id = ?
+                """,
+                (task_id,),
+            )
+        ).fetchone()
     if not row:
         return None
-    result: dict | None = None
-    raw_result = row["result"]
-    if raw_result:
-        try:
-            parsed = json.loads(raw_result)
-            if isinstance(parsed, dict):
-                result = parsed
-        except json.JSONDecodeError:
-            result = None
-    return {
-        "task_id": row["task_id"],
-        "task_type": row["task_type"],
-        "status": row["status"],
-        "created_at": row["created_at"],
-        "started_at": row["started_at"],
-        "finished_at": row["finished_at"],
-        "message": row["message"],
-        "result": result,
-        "cursor_full_name": row["cursor_full_name"],
-        "payload": _load_json_object(row["payload"]),
-        "retry_from_task_id": row["retry_from_task_id"],
-    }
+    return _task_row_to_dict(row)
+
+
+async def get_active_task(task_type: str) -> Dict[str, Any] | None:
+    placeholders = ",".join("?" for _ in ACTIVE_TASK_STATUSES)
+    async with get_connection() as conn:
+        row = await (
+            await conn.execute(
+                f"""
+                SELECT
+                    task_id,
+                    task_type,
+                    status,
+                    created_at,
+                    updated_at,
+                    started_at,
+                    finished_at,
+                    message,
+                    result,
+                    cursor_full_name,
+                    payload,
+                    retry_from_task_id
+                FROM tasks
+                WHERE task_type = ?
+                  AND status IN ({placeholders})
+                ORDER BY COALESCE(started_at, created_at) DESC, created_at DESC
+                LIMIT 1
+                """,
+                [task_type, *ACTIVE_TASK_STATUSES],
+            )
+        ).fetchone()
+    if not row:
+        return None
+    return _task_row_to_dict(row)
 
 
 @_retry_on_lock()

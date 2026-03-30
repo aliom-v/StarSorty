@@ -2,20 +2,14 @@ const POLLING_FAILURE_LIMIT = 3;
 const POLLING_BASE_DELAY_MS = 8000;
 const POLLING_MAX_DELAY_MS = 60000;
 
-/**
- * @param {number} tick
- * @returns {boolean}
- */
-export function shouldPollBackgroundStatus(tick) {
+export function shouldPollBackgroundStatus(tick: number): boolean {
   return tick % 5 === 0;
 }
 
-/**
- * @param {number} failureCount
- * @param {boolean} hasActiveTask
- * @returns {number}
- */
-export function getPollingDelayMs(failureCount, hasActiveTask) {
+export function getPollingDelayMs(
+  failureCount: number,
+  hasActiveTask: boolean
+): number {
   if (!hasActiveTask) {
     return POLLING_BASE_DELAY_MS;
   }
@@ -23,43 +17,30 @@ export function getPollingDelayMs(failureCount, hasActiveTask) {
   const safeFailureCount = Math.max(0, Number(failureCount) || 0);
   return Math.min(
     POLLING_MAX_DELAY_MS,
-    POLLING_BASE_DELAY_MS * (2 ** safeFailureCount)
+    POLLING_BASE_DELAY_MS * 2 ** safeFailureCount
   );
 }
 
-/**
- * @param {{
- *   currentTaskId: string | null,
- *   expectedTaskId: string | null,
- *   activeRequestId: number,
- *   requestId: number,
- * }} state
- * @returns {boolean}
- */
-function isTrackedPollCurrent(state) {
+type TrackedPollState = {
+  currentTaskId: string | null;
+  expectedTaskId: string | null;
+  activeRequestId: number;
+  requestId: number;
+  failureCount: number;
+};
+
+function isTrackedPollCurrent(state: TrackedPollState): boolean {
   return (
     state.currentTaskId === state.expectedTaskId &&
     state.activeRequestId === state.requestId
   );
 }
 
-/**
- * Evaluate a network or parse failure for tracked task polling.
- *
- * @param {{
- *   currentTaskId: string | null,
- *   expectedTaskId: string | null,
- *   activeRequestId: number,
- *   requestId: number,
- *   failureCount: number,
- * }} state
- * @returns {{
- *   ignore: boolean,
- *   nextFailureCount: number,
- *   pause: boolean,
- * }}
- */
-export function evaluateTrackedPollFailure(state) {
+export function evaluateTrackedPollFailure(state: TrackedPollState): {
+  ignore: boolean;
+  nextFailureCount: number;
+  pause: boolean;
+} {
   if (!isTrackedPollCurrent(state)) {
     return {
       ignore: true,
@@ -76,26 +57,15 @@ export function evaluateTrackedPollFailure(state) {
   };
 }
 
-/**
- * Evaluate a task polling HTTP response after the request is still current.
- *
- * @param {{
- *   currentTaskId: string | null,
- *   expectedTaskId: string | null,
- *   activeRequestId: number,
- *   requestId: number,
- *   status: number,
- *   failureCount: number,
- * }} state
- * @returns {{
- *   ignore: boolean,
- *   acceptResult: boolean,
- *   recoverMissingTask: boolean,
- *   nextFailureCount: number,
- *   pause: boolean,
- * }}
- */
-export function evaluateTrackedPollResponse(state) {
+export function evaluateTrackedPollResponse(
+  state: TrackedPollState & { status: number }
+): {
+  ignore: boolean;
+  acceptResult: boolean;
+  recoverMissingTask: boolean;
+  nextFailureCount: number;
+  pause: boolean;
+} {
   if (!isTrackedPollCurrent(state)) {
     return {
       ignore: true,

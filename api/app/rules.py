@@ -1,4 +1,5 @@
 import json
+import hashlib
 import logging
 import os
 import re
@@ -40,6 +41,42 @@ def _as_keyword_list(value: Any) -> List[str]:
     return normalized
 
 
+def _slug_rule_token(value: Any) -> str:
+    token = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower())
+    return token.strip("-") or "rule"
+
+
+def _stable_rule_id(
+    raw_rule: Dict[str, Any],
+    *,
+    must_keywords: List[str],
+    should_keywords: List[str],
+    exclude_keywords: List[str],
+    category: str,
+    subcategory: str,
+) -> str:
+    def _stable_list(values: List[str]) -> List[str]:
+        return sorted({str(value).strip() for value in values if str(value).strip()})
+
+    payload = {
+        "must_keywords": _stable_list(must_keywords),
+        "should_keywords": _stable_list(should_keywords),
+        "exclude_keywords": _stable_list(exclude_keywords),
+        "candidate_category": category,
+        "candidate_subcategory": subcategory,
+        "tag_ids": _stable_list(_as_keyword_list(raw_rule.get("tag_ids"))),
+        "tags": _stable_list(_as_keyword_list(raw_rule.get("tags"))),
+    }
+    digest = hashlib.sha1(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:10]
+    return (
+        f"{_slug_rule_token(category)}."
+        f"{_slug_rule_token(subcategory)}."
+        f"{digest}"
+    )
+
+
 def _parse_rules(data: Any) -> List[Dict[str, Any]]:
     rules = data.get("rules") if isinstance(data, dict) else None
     if not isinstance(rules, list):
@@ -48,7 +85,6 @@ def _parse_rules(data: Any) -> List[Dict[str, Any]]:
     for index, raw_rule in enumerate(rules):
         if not isinstance(raw_rule, dict):
             continue
-        rule_id = str(raw_rule.get("rule_id") or f"rule_{index + 1}").strip()
         must_keywords = (
             _as_keyword_list(raw_rule.get("must_keywords"))
             or _as_keyword_list(raw_rule.get("must"))
@@ -79,6 +115,14 @@ def _parse_rules(data: Any) -> List[Dict[str, Any]]:
             candidate_category = "uncategorized"
         if not candidate_subcategory:
             candidate_subcategory = "other"
+        rule_id = str(raw_rule.get("rule_id") or "").strip() or _stable_rule_id(
+            raw_rule,
+            must_keywords=must_keywords,
+            should_keywords=should_keywords,
+            exclude_keywords=exclude_keywords,
+            category=candidate_category,
+            subcategory=candidate_subcategory,
+        )
 
         parsed.append(
             {

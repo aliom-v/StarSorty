@@ -32,15 +32,15 @@ function Ensure-Started($name, $port, $cmd, $url) {
 }
 
 $apiPython = Join-Path $root "api\\.venv\\Scripts\\python.exe"
-$webNodeModules = Join-Path $root "web\\node_modules"
+$webNextCmd = Join-Path $root "web\\node_modules\\.bin\\next.cmd"
 
 if (-not (Test-Path $apiPython)) {
   Write-Host "Missing API venv. Run: cd api; python -m venv .venv; .venv\\Scripts\\Activate.ps1; pip install -r requirements-dev.txt"
   exit 1
 }
 
-if (-not (Test-Path $webNodeModules)) {
-  Write-Host "Missing web dependencies. Run: cd web; npm install"
+if (-not (Test-Path $webNextCmd)) {
+  Write-Host "Missing or incomplete web dependencies. Run: npm --prefix web install"
   exit 1
 }
 
@@ -50,4 +50,4 @@ if (-not (Test-Path $databaseDir)) {
 
 Ensure-Started "API" $apiPort "`$env:DATABASE_URL = '$databaseUrl'; cd `"$root\\api`"; `"$apiPython`" -m uvicorn app.main:app --reload --host 127.0.0.1 --port 4321" "http://127.0.0.1:4321"
 
-Ensure-Started "Web" $webPort "cd `"$root\\web`"; npm run dev" "http://localhost:1234"
+Ensure-Started "Web" $webPort "cd `"$root`"; npm run web:dev" "http://localhost:1234"

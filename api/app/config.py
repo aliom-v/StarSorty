@@ -1,14 +1,23 @@
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
+
+from .settings_meta import SETTINGS_REGISTRY, coerce_setting_value
 
 logger = logging.getLogger("starsorty.config")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 API_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(REPO_ROOT / ".env")
+
+_settings_cache_lock = threading.RLock()
+_settings_cache: "Settings | None" = None
+_settings_cache_env_signature: tuple[tuple[str, str | None], ...] | None = None
+_settings_cache_store_revision: int | None = None
 
 
 @dataclass(frozen=True)
@@ -38,121 +47,87 @@ class Settings:
     log_level: str
 
 
-def get_settings() -> Settings:
+def _current_settings_env_signature() -> tuple[tuple[str, str | None], ...]:
+    return tuple((key, os.getenv(key)) for key in SETTINGS_REGISTRY)
+
+
+def clear_settings_cache() -> None:
+    global _settings_cache, _settings_cache_env_signature, _settings_cache_store_revision
+    with _settings_cache_lock:
+        _settings_cache = None
+        _settings_cache_env_signature = None
+        _settings_cache_store_revision = None
+
+
+def _read_settings_overrides() -> dict[str, Any]:
     from .settings_store import read_settings
 
-    overrides = {}
     try:
-        overrides = read_settings()
+        return read_settings()
     except Exception as exc:
         logger.warning("Failed to read settings overrides: %s", exc)
-        overrides = {}
+        return {}
 
-    def pick(key: str, default: str) -> str:
-        if key in overrides:
-            value = overrides.get(key)
-            return default if value is None else str(value)
-        return os.getenv(key, default)
 
-    def pick_nonempty(key: str, default: str) -> str:
-        value = pick(key, default)
-        return value if str(value).strip() else default
-
-    def pick_env(key: str, default: str) -> str:
-        return os.getenv(key, default)
-
-    def pick_env_nonempty(key: str, default: str) -> str:
-        value = os.getenv(key)
-        if value is None or not str(value).strip():
-            return default
-        return value
-
-    def pick_env_int(key: str, default: int) -> int:
-        raw = os.getenv(key)
-        if raw is None:
-            return default
-        try:
-            return int(raw)
-        except (TypeError, ValueError):
-            return default
-
-    def pick_env_float(key: str, default: float) -> float:
-        raw = os.getenv(key)
-        if raw is None:
-            return default
-        try:
-            return float(raw)
-        except (TypeError, ValueError):
-            return default
-
-    def pick_int(key: str, default: int) -> int:
-        if key in overrides:
-            value = overrides.get(key)
-            if value is None:
-                return default
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return default
-        try:
-            return int(os.getenv(key, str(default)))
-        except (TypeError, ValueError):
-            return default
-
-    def pick_float(key: str, default: float) -> float:
-        if key in overrides:
-            value = overrides.get(key)
-            if value is None:
-                return default
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return default
-        try:
-            return float(os.getenv(key, str(default)))
-        except (TypeError, ValueError):
-            return default
-
-    def pick_bool(key: str, default: bool) -> bool:
-        if key in overrides:
-            value = overrides.get(key)
-            if value is None:
-                return default
-            if isinstance(value, bool):
-                return value
-            return str(value).lower() in ("1", "true", "yes", "on")
-        return os.getenv(key, str(default)).lower() in ("1", "true", "yes", "on")
-
-    def pick_classify_mode(default: str = "ai_only") -> str:
-        value = str(pick("CLASSIFY_MODE", default)).strip().lower()
-        if value in ("rules_then_ai", "ai_only", "rules_only"):
-            return value
-        return default
+def _build_settings(overrides: dict[str, Any]) -> Settings:
+    def resolve(key: str) -> object:
+        spec = SETTINGS_REGISTRY[key]
+        raw_value = overrides.get(key) if not spec.env_only and key in overrides else os.getenv(key)
+        if key == "AI_TAXONOMY_PATH" and (
+            raw_value is None or not str(raw_value).strip()
+        ):
+            raw_value = str(API_ROOT / "config" / "taxonomy.yaml")
+        if raw_value is None:
+            raw_value = spec.default
+        return coerce_setting_value(spec, raw_value)
 
     return Settings(
-        github_username=pick("GITHUB_USERNAME", ""),
-        github_target_username=pick("GITHUB_TARGET_USERNAME", ""),
-        github_usernames=pick("GITHUB_USERNAMES", ""),
-        github_include_self=pick_bool("GITHUB_INCLUDE_SELF", False),
-        github_mode=pick("GITHUB_MODE", "merge"),
-        github_token=os.getenv("GITHUB_TOKEN", ""),
-        classify_mode=pick_classify_mode(),
-        auto_classify_after_sync=pick_bool("AUTO_CLASSIFY_AFTER_SYNC", True),
-        ai_provider=pick_env_nonempty("AI_PROVIDER", "none"),
-        ai_api_key=os.getenv("AI_API_KEY", ""),
-        ai_model=pick_env("AI_MODEL", ""),
-        ai_base_url=pick_env("AI_BASE_URL", ""),
-        ai_headers_json=pick_env("AI_HEADERS_JSON", ""),
-        ai_temperature=pick_env_float("AI_TEMPERATURE", 0.2),
-        ai_max_tokens=pick_env_int("AI_MAX_TOKENS", 500),
-        ai_timeout=pick_env_int("AI_TIMEOUT", 30),
-        ai_taxonomy_path=pick_env_nonempty(
-            "AI_TAXONOMY_PATH", str(API_ROOT / "config" / "taxonomy.yaml")
-        ),
-        rules_json=pick("RULES_JSON", ""),
-        sync_cron=pick("SYNC_CRON", "0 */6 * * *"),
-        sync_timeout=pick_int("SYNC_TIMEOUT", 30),
-        database_url=os.getenv("DATABASE_URL", "sqlite:////data/app.db"),
-        cors_origins=os.getenv("CORS_ORIGINS", "http://localhost:1234"),
-        log_level=os.getenv("LOG_LEVEL", "INFO"),
+        github_username=str(resolve("GITHUB_USERNAME")),
+        github_target_username=str(resolve("GITHUB_TARGET_USERNAME")),
+        github_usernames=str(resolve("GITHUB_USERNAMES")),
+        github_include_self=bool(resolve("GITHUB_INCLUDE_SELF")),
+        github_mode=str(resolve("GITHUB_MODE")),
+        github_token=str(resolve("GITHUB_TOKEN")),
+        classify_mode=str(resolve("CLASSIFY_MODE")),
+        auto_classify_after_sync=bool(resolve("AUTO_CLASSIFY_AFTER_SYNC")),
+        ai_provider=str(resolve("AI_PROVIDER")),
+        ai_api_key=str(resolve("AI_API_KEY")),
+        ai_model=str(resolve("AI_MODEL")),
+        ai_base_url=str(resolve("AI_BASE_URL")),
+        ai_headers_json=str(resolve("AI_HEADERS_JSON")),
+        ai_temperature=float(resolve("AI_TEMPERATURE")),
+        ai_max_tokens=int(resolve("AI_MAX_TOKENS")),
+        ai_timeout=int(resolve("AI_TIMEOUT")),
+        ai_taxonomy_path=str(resolve("AI_TAXONOMY_PATH")),
+        rules_json=str(resolve("RULES_JSON")),
+        sync_cron=str(resolve("SYNC_CRON")),
+        sync_timeout=int(resolve("SYNC_TIMEOUT")),
+        database_url=str(resolve("DATABASE_URL")),
+        cors_origins=str(resolve("CORS_ORIGINS")),
+        log_level=str(resolve("LOG_LEVEL")),
     )
+
+
+def get_settings() -> Settings:
+    from .settings_store import get_settings_store_revision
+
+    global _settings_cache, _settings_cache_env_signature, _settings_cache_store_revision
+
+    env_signature = _current_settings_env_signature()
+    store_revision = get_settings_store_revision()
+
+    with _settings_cache_lock:
+        if (
+            _settings_cache is not None
+            and _settings_cache_env_signature == env_signature
+            and _settings_cache_store_revision == store_revision
+        ):
+            return _settings_cache
+
+    settings = _build_settings(_read_settings_overrides())
+
+    with _settings_cache_lock:
+        _settings_cache = settings
+        _settings_cache_env_signature = env_signature
+        _settings_cache_store_revision = store_revision
+    return settings

@@ -1,22 +1,17 @@
-/**
- * Normalize repo list pagination, preferring explicit server paging fields.
- *
- * @template {{ full_name: string }} T
- * @param {{
- *   total?: number,
- *   items?: T[],
- *   has_more?: boolean,
- *   next_offset?: number | null,
- * }} data
- * @param {number} offset
- * @returns {{
- *   total: number,
- *   items: T[],
- *   hasMore: boolean,
- *   nextOffset: number | null,
- * }}
- */
-export function normalizeRepoPage(data, offset) {
+export function normalizeRepoPage<T extends { full_name: string }>(
+  data: {
+    total?: number;
+    items?: T[];
+    has_more?: boolean;
+    next_offset?: number | null;
+  },
+  offset: number
+): {
+  total: number;
+  items: T[];
+  hasMore: boolean;
+  nextOffset: number | null;
+} {
   const total = Number(data?.total || 0);
   const items = Array.isArray(data?.items) ? data.items : [];
   const hasMore =
@@ -37,16 +32,11 @@ export function normalizeRepoPage(data, offset) {
   };
 }
 
-/**
- * Merge repo pages while keeping append mode stable and duplicate-free.
- *
- * @template {{ full_name: string }} T
- * @param {T[]} previous
- * @param {T[]} incoming
- * @param {boolean} append
- * @returns {T[]}
- */
-export function mergeRepoItems(previous, incoming, append) {
+export function mergeRepoItems<T extends { full_name: string }>(
+  previous: T[],
+  incoming: T[],
+  append: boolean
+): T[] {
   if (!append) {
     return Array.isArray(incoming) ? incoming : [];
   }

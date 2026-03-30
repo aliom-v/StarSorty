@@ -76,10 +76,16 @@
 推荐顺序：
 
 1. 打开首页确认服务可访问
-2. 进入管理台并录入管理员 token
+2. 进入管理台并录入管理员 token，创建当前浏览器会话
 3. 手动触发一次同步
 4. 触发后台分类
 5. 返回首页检索结果是否出现分类、标签和摘要
+
+补充说明：
+
+- 登录成功后，`/admin` 页面应切换为同步、分类、导出、设置等管理区块，而不是继续停留在登录卡片
+- 浏览器现在只保存管理员会话 cookie，不会再把原始 `ADMIN_TOKEN` 长期放在 `localStorage` / `sessionStorage`
+- 如需结束当前浏览器会话，使用管理台页面中的 `Logout`
 
 ### 2. 搜索和筛选仓库
 
@@ -240,7 +246,9 @@ curl -X POST "http://localhost:4321/sync" \
 优先检查：
 
 - 是否已配置 `ADMIN_TOKEN`
-- 请求头里是否带了正确的 `X-Admin-Token`
+- 如果是在 `/admin` 页面操作，当前浏览器是否已完成登录，且仍保留 `starsorty_admin_session` / `starsorty_admin_csrf` cookie
+- 如果当前实例已是 `APP_ENV=production`，浏览器是否通过 HTTPS 访问管理台；HTTP 下 `Secure` cookie 不会稳定写入
+- 如果是脚本或 CLI 调用，请求头里是否带了正确的 `X-Admin-Token`
 - 是否触发了接口限流
 
 ### 为什么搜索结果很少？
@@ -259,10 +267,3 @@ curl -X POST "http://localhost:4321/sync" \
 - `classify/status` 中的 `remaining` 和 `failed`
 - AI provider 是否变慢或被限流
 - 并发配置是否过高
-
-## 相关阅读
-
-- `docs/README.md`
-- `docs/guides/api-reference.md`
-- `docs/guides/configuration.md`
-- `docs/guides/deployment-operations.md`

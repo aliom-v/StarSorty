@@ -7,8 +7,15 @@ import aiosqlite
 import pytest
 
 from api.app.db import consistency as consistency_db
+from api.app.db.runtime_guard import get_async_sqlite_runtime_issue
 from api.app.db import schema as schema_db
 from api.app.routes import stats as stats_routes
+
+ASYNC_SQLITE_RUNTIME_ISSUE = get_async_sqlite_runtime_issue()
+pytestmark = pytest.mark.skipif(
+    ASYNC_SQLITE_RUNTIME_ISSUE is not None,
+    reason=ASYNC_SQLITE_RUNTIME_ISSUE or "",
+)
 
 
 def _run(coro):

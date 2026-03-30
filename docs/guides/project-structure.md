@@ -5,10 +5,10 @@
 - `api/`：FastAPI 后端服务（同步、分类、检索接口）
 - `web/`：Next.js 前端页面与交互逻辑
 - `scheduler/`：定时任务触发器
+- `deploy/`：反向代理等部署模板
 - `data/`：SQLite 数据与运行时持久化目录
 - `logs/`：本地日志输出目录
 - `evaluation/`：离线评测、回放与压测脚本
-- `openspec/`：需求变更与规范草案
 - `scripts/`：开发辅助脚本
   - `scripts/windows/`：Windows PowerShell 脚本
   - `scripts/unix/`：macOS/Linux Bash 脚本
@@ -19,6 +19,7 @@
 
 - `README.md`：项目总览、快速开始与常用命令
 - `docker-compose.yml`：本地与自托管默认编排方式
+- `deploy/nginx/starsorty.conf.example`：同域 `/api` 反向代理模板
 - `api/app/main.py`：API 入口与中间件挂载
 - `api/app/routes/__init__.py`：全部路由注册位置
 - `api/app/config.py`：运行时配置读取入口
@@ -39,14 +40,15 @@
 ## 前端页面概览
 
 - `/`：仓库检索与列表浏览
-- `/repo`：仓库详情页
+- `/repo/[...fullName]`：仓库详情页主路由
+- `/repo?full_name=`：仓库详情页兼容入口
 - `/admin`：同步、分类、失败仓库、导出、设置、个性化管理
 - `/settings`：运行配置与 token 状态概览
 
 ## 数据与运行关系
 
-- `web` 通过 `NEXT_PUBLIC_API_BASE_URL` 调用 `api`
-- `scheduler` 按 `SYNC_CRON` 定时请求 `api:/sync`
+- `web` 在浏览器侧通过 `NEXT_PUBLIC_API_BASE_URL` 调用 `api`，在服务端渲染时优先使用 `API_BASE_URL`
+- `scheduler` 按 `SYNC_CRON` 定时请求 `API_BASE_URL + /sync`
 - `api` 读写 `data/` 下 SQLite 数据库，并在 `logs/` 输出日志
 - `evaluation/` 脚本用于对 API 性能和分类效果做离线验证
 
@@ -55,18 +57,7 @@
 - `4321`：后端 API
 - `1234`：前端 Web
 
-## 推荐阅读顺序
+## 相关入口
 
-1. `README.md`
-2. `docs/README.md`
-3. `docs/guides/configuration.md`
-4. `docs/guides/api-reference.md`
-5. `docs/guides/deployment-operations.md`
-6. `docs/roadmap/comprehensive-optimization-plan-2026.md`
-
-## 相关阅读
-
-- `README.md`
-- `docs/README.md`
-- `docs/guides/api-reference.md`
-- `docs/guides/configuration.md`
+- 文档总导航见 `docs/README.md`
+- 开发与脚本说明见 `README.md`、`CONTRIBUTING.md`、`scripts/README.md`

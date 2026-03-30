@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { buildAdminHeaders } from "./admin";
+import { adminFetch } from "./admin";
 import { API_BASE_URL } from "./apiBase";
 import { getErrorMessage, readApiError } from "./apiError";
 import type { Messages, MessageValues } from "./i18n";
@@ -9,17 +9,19 @@ import {
   type HomeClientSettings,
   type HomeRepo,
   type HomeRepoListResponse,
-  type HomeSortMode,
   type HomeStats,
   type HomeStatsItem,
   type HomeStatus,
   type HomeTagGroupWithCounts,
-  type HomeTagMode,
   type HomeTaskQueued,
   type HomeTaskStatus,
 } from "./homePageTypes";
 import { mergeRepoItems, normalizeRepoPage } from "./repoListState";
-import { createRequestTracker } from "./requestTracker";
+import {
+  createAbortableRequestTracker,
+  createRequestTracker,
+  isAbortError,
+} from "./requestTracker";
 import {
   evaluateTrackedPollFailure,
   evaluateTrackedPollResponse,
@@ -27,10 +29,8 @@ import {
   shouldPollBackgroundStatus,
 } from "./taskPolling";
 import { TAG_GROUPS } from "./tagGroups";
-import {
-  buildRepoSearchParams,
-  countActiveFilters,
-} from "./homePageFilters.js";
+import { buildRepoSearchParams } from "./homePageFilters";
+import { useHomePageFilters } from "./useHomePageFilters";
 
 const PAGE_SIZE = 60;
 
@@ -57,17 +57,23 @@ export function useHomePageData(t: Translate) {
   const [followActiveTask, setFollowActiveTask] = useState(true);
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
   const [pollingPaused, setPollingPaused] = useState(false);
-  const [queryInput, setQueryInput] = useState("");
-  const [query, setQuery] = useState("");
-  const [language, setLanguage] = useState("");
-  const [category, setCategory] = useState<string | null>(null);
-  const [subcategory, setSubcategory] = useState<string | null>(null);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [tagMode, setTagMode] = useState<HomeTagMode>("or");
-  const [sortMode, setSortMode] = useState<HomeSortMode>("stars");
-  const [minStars, setMinStars] = useState<number | null>(null);
-  const [sourceUser, setSourceUser] = useState<string | null>(null);
   const [groupMode, setGroupMode] = useState(false);
+  const filterState = useHomePageFilters();
+  const {
+    query,
+    language,
+    category,
+    subcategory,
+    selectedTags,
+    tagMode,
+    sortMode,
+    minStars,
+    sourceUser,
+    activePreferenceUser,
+    setSubcategory,
+    setSortMode,
+    setSourceUser,
+  } = filterState;
 
   const wasBackgroundRunningRef = useRef(false);
   const pollTargetIdRef = useRef<string | null>(null);
@@ -77,32 +83,19 @@ export function useHomePageData(t: Translate) {
   const pollFailureCountRef = useRef(0);
   const pollingPausedRef = useRef(false);
   const pollTickRef = useRef(0);
+  const statusRequestTrackerRef = useRef(createAbortableRequestTracker());
+  const backgroundStatusRequestTrackerRef = useRef(
+    createAbortableRequestTracker()
+  );
+  const statsRequestTrackerRef = useRef(createAbortableRequestTracker());
+  const clientSettingsRequestTrackerRef = useRef(
+    createAbortableRequestTracker()
+  );
   const pollRequestTrackerRef = useRef(createRequestTracker());
-  const reposRequestTrackerRef = useRef(createRequestTracker());
-  const statsRequestIdRef = useRef(0);
+  const reposRequestTrackerRef = useRef(createAbortableRequestTracker());
 
   const activeError = configError || error;
   const unknownErrorMessage = t("unknownError");
-  const activePreferenceUser = sourceUser || "global";
-
-  const handleTagToggle = useCallback((tag: string) => {
-    setSelectedTags((prev) =>
-      prev.includes(tag) ? prev.filter((item) => item !== tag) : [...prev, tag]
-    );
-  }, []);
-
-  const clearAllFilters = useCallback(() => {
-    setQueryInput("");
-    setQuery("");
-    setLanguage("");
-    setCategory(null);
-    setSubcategory(null);
-    setSelectedTags([]);
-    setTagMode("or");
-    setSortMode("stars");
-    setMinStars(null);
-    setSourceUser(null);
-  }, []);
 
   const handleRepoClick = useCallback(
     (repo: HomeRepo) => {
@@ -126,19 +119,30 @@ export function useHomePageData(t: Translate) {
   }, []);
 
   const loadStatus = useCallback(async () => {
+    const { requestId, signal } = statusRequestTrackerRef.current.begin();
     setError(null);
     try {
-      const statusRes = await fetch(`${API_BASE_URL}/status`);
+      const statusRes = await fetch(`${API_BASE_URL}/status`, { signal });
+      if (!statusRequestTrackerRef.current.isCurrent(requestId)) return;
       if (!statusRes.ok) {
         const detail = await readApiError(statusRes, unknownErrorMessage);
+        if (!statusRequestTrackerRef.current.isCurrent(requestId)) return;
         setError(detail);
         setStatus(null);
         return;
       }
       const statusData = (await statusRes.json()) as HomeStatus;
+      if (!statusRequestTrackerRef.current.isCurrent(requestId)) return;
       setStatus(statusData);
     } catch (err) {
+      if (
+        !statusRequestTrackerRef.current.isCurrent(requestId) ||
+        isAbortError(err)
+      ) {
+        return;
+      }
       const message = getErrorMessage(err, unknownErrorMessage);
+      setStatus(null);
       setError(message);
     }
   }, [unknownErrorMessage]);
@@ -148,8 +152,7 @@ export function useHomePageData(t: Translate) {
 
   const loadStats = useCallback(
     async (refresh = false) => {
-      const requestId = statsRequestIdRef.current + 1;
-      statsRequestIdRef.current = requestId;
+      const { requestId, signal } = statsRequestTrackerRef.current.begin();
       setError(null);
       try {
         const params = new URLSearchParams();
@@ -159,39 +162,65 @@ export function useHomePageData(t: Translate) {
         const suffix = params.toString();
         const statsRes = await fetch(
           `${API_BASE_URL}/stats${suffix ? `?${suffix}` : ""}`,
-          { cache: "no-store" }
+          { cache: "no-store", signal }
         );
-        if (statsRequestIdRef.current !== requestId) return;
+        if (!statsRequestTrackerRef.current.isCurrent(requestId)) return;
         if (!statsRes.ok) {
           const detail = await readApiError(statsRes, unknownErrorMessage);
-          if (statsRequestIdRef.current !== requestId) return;
+          if (!statsRequestTrackerRef.current.isCurrent(requestId)) return;
+          setStats(null);
           setError(detail);
           return;
         }
         const statsData = (await statsRes.json()) as HomeStats;
-        if (statsRequestIdRef.current !== requestId) return;
+        if (!statsRequestTrackerRef.current.isCurrent(requestId)) return;
         setStats(statsData);
-      } catch {
-        if (statsRequestIdRef.current !== requestId) return;
+      } catch (err) {
+        if (
+          !statsRequestTrackerRef.current.isCurrent(requestId) ||
+          isAbortError(err)
+        ) {
+          return;
+        }
         setStats(null);
+        setError(getErrorMessage(err, unknownErrorMessage));
       }
     },
     [unknownErrorMessage]
   );
 
   const loadBackgroundStatus = useCallback(async () => {
+    const { requestId, signal } =
+      backgroundStatusRequestTrackerRef.current.begin();
     setError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/classify/status`);
+      const res = await fetch(`${API_BASE_URL}/classify/status`, { signal });
+      if (!backgroundStatusRequestTrackerRef.current.isCurrent(requestId)) {
+        return;
+      }
       if (!res.ok) {
         const detail = await readApiError(res, unknownErrorMessage);
+        if (!backgroundStatusRequestTrackerRef.current.isCurrent(requestId)) {
+          return;
+        }
         setError(detail);
+        setBackgroundStatus(null);
         return;
       }
       const data = (await res.json()) as HomeBackgroundStatus;
+      if (!backgroundStatusRequestTrackerRef.current.isCurrent(requestId)) {
+        return;
+      }
       setBackgroundStatus(data);
-    } catch {
+    } catch (err) {
+      if (
+        !backgroundStatusRequestTrackerRef.current.isCurrent(requestId) ||
+        isAbortError(err)
+      ) {
+        return;
+      }
       setBackgroundStatus(null);
+      setError(getErrorMessage(err, unknownErrorMessage));
     }
   }, [unknownErrorMessage]);
 
@@ -262,14 +291,13 @@ export function useHomePageData(t: Translate) {
 
   const loadRepos = useCallback(
     async (append = false, offsetOverride?: number) => {
-      const requestId = reposRequestTrackerRef.current.begin();
+      const { requestId, signal } = reposRequestTrackerRef.current.begin();
 
       if (append) {
         setLoadingMore(true);
       } else {
         setLoading(true);
         setError(null);
-        setRepos([]);
         setHasMore(false);
         setNextOffset(null);
       }
@@ -292,10 +320,13 @@ export function useHomePageData(t: Translate) {
           offset,
         });
 
-        const res = await fetch(`${API_BASE_URL}/repos?${params}`);
+        const res = await fetch(`${API_BASE_URL}/repos?${params}`, { signal });
         if (!reposRequestTrackerRef.current.isCurrent(requestId)) return;
         if (!res.ok) {
-          const detail = await readApiError(res, `Repos fetch failed (${res.status})`);
+          const detail = await readApiError(
+            res,
+            `Repos fetch failed (${res.status})`
+          );
           throw new Error(detail);
         }
         const data = (await res.json()) as HomeRepoListResponse;
@@ -321,7 +352,12 @@ export function useHomePageData(t: Translate) {
           }).catch(() => {});
         }
       } catch (err) {
-        if (!reposRequestTrackerRef.current.isCurrent(requestId)) return;
+        if (
+          !reposRequestTrackerRef.current.isCurrent(requestId) ||
+          isAbortError(err)
+        ) {
+          return;
+        }
         const message = getErrorMessage(err, unknownErrorMessage);
         setError(message);
       } finally {
@@ -346,13 +382,13 @@ export function useHomePageData(t: Translate) {
   );
 
   const refreshAfterSync = useCallback(async () => {
-    await Promise.all([loadStatus(), loadStats(true)]);
     if (sourceUser !== null) {
+      await Promise.all([loadStatus(), loadStats(true)]);
       setSourceUser(null);
       return;
     }
-    await loadRepos(false);
-  }, [loadRepos, loadStats, loadStatus, sourceUser]);
+    await Promise.all([loadStatus(), loadStats(true), loadRepos(false)]);
+  }, [loadRepos, loadStats, loadStatus, setSourceUser, sourceUser]);
 
   const handleMissingTaskRecovery = useCallback(async () => {
     pollTargetIdRef.current = null;
@@ -366,10 +402,12 @@ export function useHomePageData(t: Translate) {
     setSyncing(false);
     setFollowActiveTask(true);
 
-    await loadBackgroundStatus();
-    await loadStatus();
-    await loadStats(true);
-    await loadRepos(false);
+    await Promise.all([
+      loadBackgroundStatus(),
+      loadStatus(),
+      loadStats(true),
+      loadRepos(false),
+    ]);
 
     clearActionFeedback();
   }, [clearActionFeedback, loadBackgroundStatus, loadRepos, loadStats, loadStatus]);
@@ -535,18 +573,37 @@ export function useHomePageData(t: Translate) {
   }, [pollTargetId, startPolling, stopPolling]);
 
   const loadClientSettings = useCallback(async () => {
+    const { requestId, signal } =
+      clientSettingsRequestTrackerRef.current.begin();
     try {
-      const res = await fetch(`${API_BASE_URL}/api/config/client-settings`);
+      const res = await fetch(`${API_BASE_URL}/api/config/client-settings`, {
+        signal,
+      });
+      if (!clientSettingsRequestTrackerRef.current.isCurrent(requestId)) {
+        return;
+      }
       if (!res.ok) {
         const detail = await readApiError(res, "Failed to load server config.");
+        if (!clientSettingsRequestTrackerRef.current.isCurrent(requestId)) {
+          return;
+        }
         setConfigError(detail);
         setGroupMode(false);
         return;
       }
       const data = (await res.json()) as HomeClientSettings;
+      if (!clientSettingsRequestTrackerRef.current.isCurrent(requestId)) {
+        return;
+      }
       setGroupMode(String(data.github_mode || "merge") === "group");
       setConfigError(null);
     } catch (err) {
+      if (
+        !clientSettingsRequestTrackerRef.current.isCurrent(requestId) ||
+        isAbortError(err)
+      ) {
+        return;
+      }
       const message = getErrorMessage(err, "Failed to load server config.");
       setConfigError(message);
       setGroupMode(false);
@@ -554,11 +611,20 @@ export function useHomePageData(t: Translate) {
   }, []);
 
   useEffect(() => {
+    if (sortMode !== "relevance" || query) {
+      return;
+    }
+    setSortMode("stars");
+  }, [query, setSortMode, sortMode]);
+
+  useEffect(() => {
     const load = async () => {
-      await loadStatus();
-      await loadStats();
-      await loadBackgroundStatus();
-      await loadClientSettings();
+      await Promise.all([
+        loadStatus(),
+        loadStats(),
+        loadBackgroundStatus(),
+        loadClientSettings(),
+      ]);
     };
     void load();
   }, [loadBackgroundStatus, loadClientSettings, loadStats, loadStatus]);
@@ -599,8 +665,21 @@ export function useHomePageData(t: Translate) {
   }, [startPolling, stopPolling]);
 
   useEffect(() => {
+    const statusTracker = statusRequestTrackerRef.current;
+    const backgroundStatusTracker = backgroundStatusRequestTrackerRef.current;
+    const statsTracker = statsRequestTrackerRef.current;
+    const clientSettingsTracker = clientSettingsRequestTrackerRef.current;
+    const reposTracker = reposRequestTrackerRef.current;
+    const pollTracker = pollRequestTrackerRef.current;
+
     return () => {
       stopPolling();
+      statusTracker.reset();
+      backgroundStatusTracker.reset();
+      statsTracker.reset();
+      clientSettingsTracker.reset();
+      reposTracker.reset();
+      pollTracker.reset();
     };
   }, [stopPolling]);
 
@@ -621,7 +700,13 @@ export function useHomePageData(t: Translate) {
       }
     }
     wasBackgroundRunningRef.current = running;
-  }, [backgroundStatus?.last_error, backgroundStatus?.running, loadRepos, loadStats, t]);
+  }, [
+    backgroundStatus?.last_error,
+    backgroundStatus?.running,
+    loadRepos,
+    loadStats,
+    t,
+  ]);
 
   useEffect(() => {
     void loadRepos(false);
@@ -643,9 +728,8 @@ export function useHomePageData(t: Translate) {
     let queued = false;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/sync`, {
+      const response = await adminFetch(`${API_BASE_URL}/sync`, {
         method: "POST",
-        headers: buildAdminHeaders(),
       });
       if (!response.ok) {
         const detail = await readApiError(response, t("syncFailed"));
@@ -680,9 +764,9 @@ export function useHomePageData(t: Translate) {
     if (syncing || backgroundStatus?.running) return;
     clearActionFeedback();
     try {
-      const res = await fetch(`${API_BASE_URL}/classify/background`, {
+      const res = await adminFetch(`${API_BASE_URL}/classify/background`, {
         method: "POST",
-        headers: buildAdminHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ limit: 20, concurrency: 3 }),
       });
       if (!res.ok) {
@@ -703,9 +787,8 @@ export function useHomePageData(t: Translate) {
     if (!backgroundStatus?.running) return;
     clearActionFeedback();
     try {
-      const res = await fetch(`${API_BASE_URL}/classify/stop`, {
+      const res = await adminFetch(`${API_BASE_URL}/classify/stop`, {
         method: "POST",
-        headers: buildAdminHeaders(),
       });
       if (!res.ok) {
         const detail = await readApiError(res, t("classifyFailed"));
@@ -748,7 +831,7 @@ export function useHomePageData(t: Translate) {
     if (!currentOptions.some((item) => item.name === subcategory)) {
       setSubcategory(null);
     }
-  }, [category, stats?.subcategories, subcategory]);
+  }, [category, setSubcategory, stats?.subcategories, subcategory]);
 
   const tagGroupsWithCounts = useMemo<HomeTagGroupWithCounts[]>(() => {
     if (!stats?.tags) return [];
@@ -784,48 +867,12 @@ export function useHomePageData(t: Translate) {
       ? t("syncing")
       : t("backgroundIdle");
 
-  const activeFilterCount = countActiveFilters({
-    query,
-    language,
-    minStars,
-    category,
-    subcategory,
-    selectedTags,
-    sourceUser,
-  });
-  const hasActiveFilters = activeFilterCount > 0;
-
   const loadNextPage = useCallback(() => {
     void loadRepos(true, nextOffset ?? repos.length);
   }, [loadRepos, nextOffset, repos.length]);
 
   return {
-    filters: {
-      query,
-      queryInput,
-      language,
-      minStars,
-      category,
-      subcategory,
-      selectedTags,
-      tagMode,
-      sortMode,
-      sourceUser,
-      hasActiveFilters,
-      activeFilterCount,
-      setQuery,
-      setQueryInput,
-      setLanguage,
-      setMinStars,
-      setCategory,
-      setSubcategory,
-      setSelectedTags,
-      setTagMode,
-      setSortMode,
-      setSourceUser,
-      clearAllFilters,
-      handleTagToggle,
-    },
+    filters: filterState,
     repoList: {
       repos,
       loading,

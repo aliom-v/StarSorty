@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { buildAdminHeaders } from "../../lib/admin";
+import { adminFetch } from "../../lib/admin";
 import { API_BASE_URL } from "../../lib/apiBase";
 import { getErrorMessage, readApiError } from "../../lib/apiError";
 import type { TFunction } from "../../lib/i18n";
@@ -136,12 +136,8 @@ export default function PersonalizationSection({ t, setMessage }: Props) {
     setLocalError(null);
     try {
       const [prefRes, profileRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/preferences/${encodeURIComponent(activeUserId)}`, {
-          headers: buildAdminHeaders(),
-        }),
-        fetch(`${API_BASE_URL}/interest/${encodeURIComponent(activeUserId)}`, {
-          headers: buildAdminHeaders(),
-        }),
+        adminFetch(`${API_BASE_URL}/preferences/${encodeURIComponent(activeUserId)}`),
+        adminFetch(`${API_BASE_URL}/interest/${encodeURIComponent(activeUserId)}`),
       ]);
       if (!prefRes.ok) {
         const detail = await readApiError(prefRes, t("unknownError"));
@@ -158,9 +154,8 @@ export default function PersonalizationSection({ t, setMessage }: Props) {
       setProfile(profileData);
       setUpdatedAt(prefData.updated_at || null);
       if (showSamples) {
-        const sampleRes = await fetch(
-          `${API_BASE_URL}/training/samples?user_id=${encodeURIComponent(activeUserId)}&limit=50`,
-          { headers: buildAdminHeaders() }
+        const sampleRes = await adminFetch(
+          `${API_BASE_URL}/training/samples?user_id=${encodeURIComponent(activeUserId)}&limit=50`
         );
         if (sampleRes.ok) {
           const sampleData = (await sampleRes.json()) as TrainingSamplesResponse;
@@ -168,9 +163,8 @@ export default function PersonalizationSection({ t, setMessage }: Props) {
         }
       }
       if (showFewshot) {
-        const fewshotRes = await fetch(
-          `${API_BASE_URL}/training/fewshot?user_id=${encodeURIComponent(activeUserId)}&limit=30`,
-          { headers: buildAdminHeaders() }
+        const fewshotRes = await adminFetch(
+          `${API_BASE_URL}/training/fewshot?user_id=${encodeURIComponent(activeUserId)}&limit=30`
         );
         if (fewshotRes.ok) {
           const fewshotData = (await fewshotRes.json()) as FewShotResponse;
@@ -197,11 +191,11 @@ export default function PersonalizationSection({ t, setMessage }: Props) {
         tag_mapping: parseMappingText(mappingText),
         rule_priority: parsePriorityText(priorityText),
       };
-      const res = await fetch(
+      const res = await adminFetch(
         `${API_BASE_URL}/preferences/${encodeURIComponent(activeUserId)}`,
         {
           method: "PATCH",
-          headers: buildAdminHeaders({ "Content-Type": "application/json" }),
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         }
       );

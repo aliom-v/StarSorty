@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 
-from ..cache import cache, CACHE_TTL_STATS
 from ..config import get_settings
 from ..db import get_repo_consistency_report, get_repo_stats
 from ..deps import require_admin
@@ -37,11 +36,7 @@ async def stats(
     refresh: bool = Query(default=False),
     snapshot: bool = Query(default=True),
 ) -> StatsResponse:
+    del request
     response.headers["Cache-Control"] = "no-store"
-    if not refresh and snapshot:
-        cached = await cache.get("stats")
-        if cached:
-            return StatsResponse(**cached)
     data = await get_repo_stats(refresh=refresh, use_snapshot=snapshot)
-    await cache.set("stats", data, CACHE_TTL_STATS)
     return StatsResponse(**data)

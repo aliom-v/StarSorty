@@ -2,11 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import {
-  buildAdminHeaders,
-  clearSessionToken,
-  isSessionAuthenticated,
-} from "../lib/admin";
+import { adminFetch, clearAdminClientState } from "../lib/admin";
 import { API_BASE_URL } from "../lib/apiBase";
 import { getErrorMessage, readApiError } from "../lib/apiError";
 import { useI18n } from "../lib/i18n";
@@ -37,28 +33,67 @@ type Settings = {
 export default function AdminPage() {
   const { t } = useI18n();
   const [authenticated, setAuthenticated] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (isSessionAuthenticated()) {
-      setAuthenticated(true);
+  const checkAuth = useCallback(async () => {
+    setAuthChecking(true);
+    try {
+      const res = await adminFetch(`${API_BASE_URL}/auth/check`);
+      if (res.ok) {
+        setAuthenticated(true);
+        setAuthError(null);
+        return;
+      }
+      if (res.status === 401) {
+        setAuthenticated(false);
+        setAuthError(null);
+        return;
+      }
+      setAuthenticated(false);
+      setAuthError(await readApiError(res, t("unknownError")));
+    } catch (err) {
+      setAuthenticated(false);
+      setAuthError(getErrorMessage(err, t("unknownError")));
+    } finally {
+      setAuthChecking(false);
     }
-  }, []);
+  }, [t]);
 
-  const handleLogout = () => {
-    clearSessionToken();
+  useEffect(() => {
+    void checkAuth();
+  }, [checkAuth]);
+
+  const handleLogout = useCallback(async () => {
+    setMessage(null);
+    try {
+      const res = await adminFetch(`${API_BASE_URL}/auth/session`, {
+        method: "DELETE",
+      });
+      if (!res.ok && res.status !== 401) {
+        const detail = await readApiError(res, t("unknownError"));
+        throw new Error(detail);
+      }
+    } catch (err) {
+      setMessage(getErrorMessage(err, t("unknownError")));
+      return;
+    }
+    clearAdminClientState();
     setAuthenticated(false);
-  };
+    setAuthError(null);
+    setSettings(null);
+    setLoading(false);
+  }, [t]);
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
+    setMessage(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/settings`, {
-        headers: buildAdminHeaders(),
-      });
+      const res = await adminFetch(`${API_BASE_URL}/settings`);
       if (!res.ok) {
         const detail = await readApiError(res, t("unknownError"));
         throw new Error(detail);
@@ -74,19 +109,60 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (authenticated) {
-      loadSettings();
+      void loadSettings();
     }
   }, [authenticated, loadSettings]);
 
   if (!authenticated) {
-    return <AdminAuth t={t} onAuthenticated={() => setAuthenticated(true)} />;
+    return (
+      <AdminAuth
+        t={t}
+        initialError={authChecking ? null : authError}
+        onAuthenticated={() => {
+          setAuthenticated(true);
+          setAuthError(null);
+        }}
+      />
+    );
   }
 
-  if (loading || !settings) {
+  if (loading) {
     return (
       <main className="min-h-screen px-6 py-10 lg:px-12">
         <section className="mx-auto max-w-4xl panel-muted p-8">
           <p className="text-sm text-soft">{t("loadingSettings")}</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!settings) {
+    return (
+      <main className="min-h-screen px-6 py-10 lg:px-12">
+        <section className="mx-auto max-w-4xl space-y-6">
+          <div className="feedback-banner">
+            <span className="feedback-icon" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium leading-6 text-ink">
+                {message || t("unknownError")}
+              </p>
+            </div>
+          </div>
+          <div className="subtle-panel flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="rounded-full btn-ios-secondary px-5 py-2 text-sm font-semibold"
+            >
+              {t("logout")}
+            </button>
+            <Link
+              href="/"
+              className="rounded-full btn-ios-secondary px-5 py-2 text-sm font-semibold"
+            >
+              {t("back")}
+            </Link>
+          </div>
         </section>
       </main>
     );

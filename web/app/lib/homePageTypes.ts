@@ -61,6 +61,7 @@ export type HomeStats = {
 };
 
 export type HomeBackgroundStatus = {
+  status: string;
   running: boolean;
   started_at?: string | null;
   finished_at?: string | null;

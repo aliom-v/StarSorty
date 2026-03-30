@@ -26,26 +26,43 @@ services:
   web:
     build:
       context: ./web
+      # Browser API base is baked into the web image at build time.
+      # Behind a same-site reverse proxy, prefer NEXT_PUBLIC_API_BASE_URL=/api and rebuild after changing it.
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4321}
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: 1234
+      # SSR and server-side fetches must keep using the internal service address.
+      API_BASE_URL: ${API_BASE_URL:-http://api:4321}
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4321}
     ports:
-      - "1234:80"
+      - "1234:1234"
     depends_on:
       api:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:80"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:1234').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1))",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 5s
+      start_period: 15s
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 384M
         reservations:
-          memory: 64M
+          memory: 96M
 
   scheduler:
     build:

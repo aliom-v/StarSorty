@@ -9,11 +9,24 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
+RUN mkdir -p public
 RUN npm run build
 
-FROM nginx:1.25-alpine
+FROM node:20-alpine AS runner
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=builder /app/out /usr/share/nginx/html
+WORKDIR /app
+ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV PORT=1234
 
-EXPOSE 80
+RUN addgroup -S nextjs && adduser -S nextjs -G nextjs
+
+COPY --from=builder --chown=nextjs:nextjs /app/public ./public
+COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
+
+USER nextjs
+
+EXPOSE 1234
+
+CMD ["node", "server.js"]

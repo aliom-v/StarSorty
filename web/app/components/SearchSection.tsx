@@ -5,9 +5,12 @@ import type { HomeSortMode } from "../lib/homePageTypes";
 
 type SearchSectionProps = {
   t: (key: keyof Messages, params?: MessageValues) => string;
+  query: string;
   queryInput: string;
   setQueryInput: (value: string) => void;
-  setQuery: (value: string) => void;
+  submitSearch: () => void;
+  clearSearch: () => void;
+  searchDirty: boolean;
   shownCount: number;
   activeFilterCount: number;
   sortMode: HomeSortMode;
@@ -27,9 +30,12 @@ const sortLabelKeys: Record<SearchSectionProps["sortMode"], keyof Messages> = {
 
 const SearchSection = ({
   t,
+  query,
   queryInput,
   setQueryInput,
-  setQuery,
+  submitSearch,
+  clearSearch,
+  searchDirty,
   shownCount,
   activeFilterCount,
   sortMode,
@@ -40,9 +46,18 @@ const SearchSection = ({
   clearAllFilters,
   onOpenFilters,
 }: SearchSectionProps) => {
+  const disableSearchAction = loading || !searchDirty;
+  const disableRelevanceSort = !query;
+
   return (
     <div className="animate-fade-up sticky top-0 z-30 -mx-4 mb-5 space-y-4 border-b border-ink/5 bg-sand/70 px-4 py-4 backdrop-blur-2xl dark:border-white/5 dark:bg-sand/42 md:-mx-12 md:mb-6 md:space-y-5 md:px-12 md:py-5 lg:-mx-16 lg:px-16">
-      <div className="group relative mx-auto w-full max-w-6xl">
+      <form
+        className="group relative mx-auto w-full max-w-6xl"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submitSearch();
+        }}
+      >
         <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-5 text-ink/20 transition-all duration-500 group-focus-within:scale-110 group-focus-within:text-moss dark:text-ink/35 sm:pl-6">
           <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -54,7 +69,6 @@ const SearchSection = ({
           placeholder={t("searchPlaceholder")}
           value={queryInput}
           onChange={(event) => setQueryInput(event.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && setQuery(queryInput.trim())}
         />
         <div className="absolute inset-y-1.5 right-1.5 flex items-center gap-2 sm:inset-y-2 sm:right-2 sm:gap-3">
           {!queryInput && (
@@ -67,23 +81,24 @@ const SearchSection = ({
             <button
               type="button"
               className="hidden h-10 px-4 text-[11px] font-semibold tracking-[0.06em] text-ink/40 transition-all hover:text-ink/60 active:scale-90 dark:text-ink/50 dark:hover:text-ink/80 sm:block"
-              onClick={() => {
-                setQueryInput("");
-                setQuery("");
-              }}
+              onClick={clearSearch}
             >
               {t("clear")}
             </button>
           )}
           <button
-            type="button"
-            className="btn-ios-moss h-10 rounded-[1.1rem] px-4 text-[11px] font-semibold tracking-[0.08em] sm:h-11 sm:rounded-[1.25rem] sm:px-5 md:px-7"
-            onClick={() => setQuery(queryInput.trim())}
+            type="submit"
+            disabled={disableSearchAction}
+            className={`btn-ios-moss h-10 rounded-[1.1rem] px-4 text-[11px] font-semibold tracking-[0.08em] sm:h-11 sm:rounded-[1.25rem] sm:px-5 md:px-7 ${
+              disableSearchAction
+                ? "cursor-not-allowed opacity-55 hover:shadow-none active:scale-100"
+                : ""
+            }`}
           >
             {t("search")}
           </button>
         </div>
-      </div>
+      </form>
 
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-3.5 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-wrap items-center gap-2.5 text-[11px] font-semibold text-subtle sm:gap-3">
@@ -113,10 +128,15 @@ const SearchSection = ({
                 <button
                   key={mode}
                   type="button"
+                  disabled={mode === "relevance" && disableRelevanceSort}
                   className={`rounded-xl px-3 py-2 text-[11px] font-semibold tracking-[0.06em] transition-all duration-300 sm:px-4 md:px-5 ${
                     sortMode === mode
                       ? "bg-surface text-ink shadow-soft dark:bg-white/[0.1]"
                       : "text-ink/40 hover:bg-ink/[0.02] hover:text-ink/70 dark:text-ink/55 dark:hover:bg-white/[0.04] dark:hover:text-ink/80"
+                  } ${
+                    mode === "relevance" && disableRelevanceSort
+                      ? "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-ink/40 dark:hover:bg-transparent dark:hover:text-ink/55"
+                      : ""
                   }`}
                   onClick={() => setSortMode(mode)}
                 >

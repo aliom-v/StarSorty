@@ -19,17 +19,32 @@ class RuleCandidate:
     evidence: List[str]
 
 
-def _build_haystack(repo: Dict[str, Any]) -> str:
-    return " ".join(
-        [
-            str(repo.get("name") or ""),
-            str(repo.get("full_name") or ""),
-            str(repo.get("description") or ""),
-            str(repo.get("language") or ""),
-            " ".join(repo.get("topics") or []),
-            str(repo.get("readme_summary") or ""),
-        ]
-    ).lower()
+FIELD_WEIGHTS = {
+    "name": 1.0,
+    "full_name": 0.95,
+    "topics": 0.9,
+    "description": 0.7,
+    "readme_summary": 0.45,
+    "language": 0.35,
+}
+
+
+@dataclass(frozen=True)
+class KeywordHit:
+    keyword: str
+    fields: List[str]
+    best_weight: float
+
+
+def _build_field_texts(repo: Dict[str, Any]) -> Dict[str, str]:
+    return {
+        "name": str(repo.get("name") or "").lower(),
+        "full_name": str(repo.get("full_name") or "").lower(),
+        "topics": " ".join(repo.get("topics") or []).lower(),
+        "description": str(repo.get("description") or "").lower(),
+        "readme_summary": str(repo.get("readme_summary") or "").lower(),
+        "language": str(repo.get("language") or "").lower(),
+    }
 
 
 def _keyword_match(keyword: str, haystack: str) -> bool:
@@ -42,6 +57,44 @@ def _keyword_match(keyword: str, haystack: str) -> bool:
     return token in haystack
 
 
+def _find_keyword_fields(keyword: str, field_texts: Dict[str, str]) -> List[str]:
+    matched_fields: List[str] = []
+    for field_name, haystack in field_texts.items():
+        if haystack and _keyword_match(keyword, haystack):
+            matched_fields.append(field_name)
+    return matched_fields
+
+
+def _collect_keyword_hits(keywords: List[str], field_texts: Dict[str, str]) -> List[KeywordHit]:
+    hits: List[KeywordHit] = []
+    for keyword in keywords:
+        matched_fields = _find_keyword_fields(keyword, field_texts)
+        if not matched_fields:
+            continue
+        best_weight = max(FIELD_WEIGHTS.get(field_name, 0.0) for field_name in matched_fields)
+        hits.append(
+            KeywordHit(
+                keyword=keyword,
+                fields=matched_fields,
+                best_weight=best_weight,
+            )
+        )
+    return hits
+
+
+def _average_weight(hits: List[KeywordHit]) -> float:
+    if not hits:
+        return 0.0
+    return sum(hit.best_weight for hit in hits) / len(hits)
+
+
+def _format_evidence(label: str, hits: List[KeywordHit]) -> str:
+    parts: List[str] = []
+    for hit in hits[:4]:
+        parts.append(f"{hit.keyword}@{'/'.join(hit.fields[:2])}")
+    return f"{label}={';'.join(parts)}"
+
+
 def rank_rule_candidates(
     repo: Dict[str, Any],
     rules: List[Dict[str, Any]],
@@ -49,7 +102,7 @@ def rank_rule_candidates(
 ) -> List[RuleCandidate]:
     if not rules:
         return []
-    haystack = _build_haystack(repo)
+    field_texts = _build_field_texts(repo)
     candidates: List[RuleCandidate] = []
 
     for rule in rules:
@@ -68,23 +121,45 @@ def rank_rule_candidates(
         except (TypeError, ValueError):
             priority = 0
 
-        if any(_keyword_match(keyword, haystack) for keyword in exclude_keywords):
+        exclude_hits = _collect_keyword_hits(exclude_keywords, field_texts)
+        if exclude_hits:
             continue
 
-        must_hits = [keyword for keyword in must_keywords if _keyword_match(keyword, haystack)]
-        if must_keywords and len(must_hits) != len(must_keywords):
+        must_hit_details = _collect_keyword_hits(must_keywords, field_texts)
+        if must_keywords and len(must_hit_details) != len(must_keywords):
             continue
-        should_hits = [keyword for keyword in should_keywords if _keyword_match(keyword, haystack)]
-        if not must_keywords and not should_hits:
+        should_hit_details = _collect_keyword_hits(should_keywords, field_texts)
+        if not must_keywords and not should_hit_details:
             continue
 
         score = 0.0
         if must_keywords:
-            score += 0.55
+            must_avg_weight = _average_weight(must_hit_details)
+            strong_must_hit = any(hit.best_weight >= 0.9 for hit in must_hit_details)
+            score += 0.45
+            score += 0.15 * must_avg_weight
+            score += 0.1
+            if strong_must_hit:
+                score += 0.1
         if should_keywords:
-            score += min(0.35, 0.35 * (len(should_hits) / max(1, len(should_keywords))))
+            should_best_weight = max(
+                (hit.best_weight for hit in should_hit_details),
+                default=0.0,
+            )
+            should_avg_weight = _average_weight(should_hit_details)
+            should_coverage = min(1.0, len(should_hit_details) / 2.0)
+            strong_should_field_bonus = 0.0
+            if should_best_weight >= 0.9:
+                strong_should_field_bonus = 0.15
+            elif should_best_weight >= 0.7:
+                strong_should_field_bonus = 0.08
+            score += 0.25 * should_coverage
+            score += 0.2 * should_best_weight
+            score += 0.1 * should_avg_weight
+            score += strong_should_field_bonus
+            score += min(0.1, max(0, len(should_hit_details) - 1) * 0.05)
         else:
-            score += 0.2
+            score += 0.1
         score += min(0.1, max(0, priority) * 0.02)
         score = max(0.0, min(1.0, score))
 
@@ -93,10 +168,10 @@ def rank_rule_candidates(
         normalized_tag_ids, _ = normalize_tag_ids(raw_tag_ids + raw_tags, taxonomy)
 
         evidence = []
-        if must_hits:
-            evidence.append(f"must={','.join(must_hits[:4])}")
-        if should_hits:
-            evidence.append(f"should={','.join(should_hits[:4])}")
+        if must_hit_details:
+            evidence.append(_format_evidence("must", must_hit_details))
+        if should_hit_details:
+            evidence.append(_format_evidence("should", should_hit_details))
 
         candidates.append(
             RuleCandidate(
@@ -107,8 +182,8 @@ def rank_rule_candidates(
                 priority=priority,
                 tag_ids=normalized_tag_ids,
                 tags=raw_tags,
-                must_hits=must_hits,
-                should_hits=should_hits,
+                must_hits=[hit.keyword for hit in must_hit_details],
+                should_hits=[hit.keyword for hit in should_hit_details],
                 evidence=evidence,
             )
         )

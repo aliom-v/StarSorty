@@ -218,7 +218,6 @@ async def repo_override(full_name: str, payload: OverrideRequest) -> OverrideRes
         if not await get_repo(full_name):
             raise HTTPException(status_code=404, detail="Repo not found")
         return OverrideResponse(updated=False)
-    await cache.invalidate_prefix("stats")
     await cache.invalidate_prefix("repos")
     return OverrideResponse(updated=True)
 

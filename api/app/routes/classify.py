@@ -18,6 +18,7 @@ from ..config import get_settings
 from ..db import (
     count_repos_for_classification,
     count_unclassified_repos,
+    get_active_task,
     get_user_preferences,
     increment_classify_fail_count,
     record_readme_fetch,
@@ -29,7 +30,7 @@ from ..db import (
 from ..deps import (
     _normalize_preference_user,
     _now_iso,
-    _register_task,
+    _register_task_if_available,
     _set_task_status,
     require_admin,
 )
@@ -55,10 +56,15 @@ from ..state import (
     CLASSIFY_REMAINING_REFRESH_EVERY,
     DEFAULT_CLASSIFY_BATCH_SIZE,
     DEFAULT_CLASSIFY_CONCURRENCY,
+    RULE_AMBIGUITY_GAP,
     RULE_AI_THRESHOLD,
     RULE_DIRECT_THRESHOLD,
+    RULE_MIN_THRESHOLD,
     _add_quality_metrics,
     _get_classification_state,
+    _is_classification_stop_requested,
+    _set_classification_state_snapshot,
+    _set_classification_stop_requested,
     _update_classification_state,
     classification_lock,
     classification_state,
@@ -69,6 +75,17 @@ from ..taxonomy import load_taxonomy, normalize_tags_to_ids
 logger = logging.getLogger("starsorty.api")
 
 router = APIRouter()
+
+CLASSIFY_STATUS_IDLE = "idle"
+CLASSIFY_STATUS_QUEUED = "queued"
+CLASSIFY_STATUS_RUNNING = "running"
+CLASSIFY_STATUS_FINISHED = "finished"
+CLASSIFY_STATUS_STOPPED = "stopped"
+CLASSIFY_STATUS_FAILED = "failed"
+
+CLASSIFY_STOP_REQUESTED_MESSAGE = "Stop requested by user"
+CLASSIFY_STOPPED_MESSAGE = "Stopped by user"
+CLASSIFY_NO_SOURCES_MESSAGE = "No classification sources available"
 
 
 # ---------------------------------------------------------------------------
@@ -255,8 +272,15 @@ def _classification_policy() -> DecisionPolicy:
         return DecisionPolicy(
             direct_rule_threshold=RULE_DIRECT_THRESHOLD,
             ai_required_threshold=RULE_AI_THRESHOLD,
+            min_rule_threshold=RULE_MIN_THRESHOLD,
+            ambiguity_gap=RULE_AMBIGUITY_GAP,
         )
-    return DecisionPolicy(direct_rule_threshold=0.0, ai_required_threshold=1.0)
+    return DecisionPolicy(
+        direct_rule_threshold=0.0,
+        ai_required_threshold=1.0,
+        min_rule_threshold=0.0,
+        ambiguity_gap=0.0,
+    )
 
 
 def _build_classification_engine(
@@ -713,23 +737,96 @@ async def _classify_repos_concurrent(
 # Background classify loop & start helper
 # ---------------------------------------------------------------------------
 
+def _queued_background_classify_state(
+    payload: BackgroundClassifyRequest,
+    task_id: str,
+) -> dict[str, object]:
+    requested_batch_size = (
+        payload.limit
+        if payload.limit and payload.limit > 0
+        else DEFAULT_CLASSIFY_BATCH_SIZE
+    )
+    concurrency_value = (
+        payload.concurrency
+        if payload.concurrency and payload.concurrency > 0
+        else DEFAULT_CLASSIFY_CONCURRENCY
+    )
+    return {
+        "status": CLASSIFY_STATUS_QUEUED,
+        "running": True,
+        "started_at": None,
+        "finished_at": None,
+        "processed": 0,
+        "failed": 0,
+        "remaining": 0,
+        "last_error": None,
+        "batch_size": _clamp_batch_size(requested_batch_size),
+        "concurrency": _clamp_concurrency(concurrency_value),
+        "task_id": task_id,
+    }
+
+
+async def _finalize_background_classify(
+    task_id: str,
+    *,
+    status: str,
+    processed: int,
+    classified: int,
+    failed: int,
+    remaining: int,
+    batch_size: int,
+    concurrency: int,
+    last_error: str | None = None,
+    message: str | None = None,
+) -> None:
+    finished_at = _now_iso()
+    await _update_classification_state(
+        status=status,
+        running=False,
+        finished_at=finished_at,
+        processed=processed,
+        failed=failed,
+        remaining=remaining,
+        last_error=last_error,
+        batch_size=batch_size,
+        concurrency=concurrency,
+        task_id=None,
+    )
+    await _set_task_status(
+        task_id,
+        status,
+        finished_at=finished_at,
+        message=message,
+        result={
+            "processed": processed,
+            "classified": classified,
+            "failed": failed,
+        },
+    )
+    await _set_classification_stop_requested(False)
+
+
 async def _start_background_classify(
     payload: BackgroundClassifyRequest,
     task_id: str,
     allow_fallback: bool = False,
 ) -> bool:
     from .. import state as _state
+    state_snapshot: dict[str, object] | None = None
     async with classification_lock:
         if classification_state["running"]:
             return False
         classification_stop.clear()
-        classification_state["running"] = True
-        classification_state["task_id"] = task_id
+        classification_state.update(_queued_background_classify_state(payload, task_id))
+        state_snapshot = dict(classification_state)
         _state.classification_task = create_observed_task(
             _background_classify_loop(payload, allow_fallback, task_id),
             task_id=task_id,
             name=f"classify:{task_id}",
         )
+    if state_snapshot is not None:
+        await _set_classification_state_snapshot(state_snapshot)
+    await _set_classification_stop_requested(False)
     return True
 
 
@@ -745,27 +842,35 @@ async def _queue_background_classify_task(
 
     effective_task_id = task_id or str(uuid.uuid4())
     payload_data = payload.model_dump()
+    state_snapshot: dict[str, object] | None = None
 
     async with classification_lock:
         if classification_state["running"]:
             return None
 
-        await _register_task(
+        created = await _register_task_if_available(
             effective_task_id,
             "classify",
             message,
             payload=payload_data,
             retry_from_task_id=retry_from_task_id,
         )
+        if not created:
+            return None
         classification_stop.clear()
-        classification_state["running"] = True
-        classification_state["task_id"] = effective_task_id
+        classification_state.update(
+            _queued_background_classify_state(payload, effective_task_id)
+        )
+        state_snapshot = dict(classification_state)
         _state.classification_task = create_observed_task(
             _background_classify_loop(payload, allow_fallback, effective_task_id),
             task_id=effective_task_id,
             name=f"classify:{effective_task_id}",
         )
 
+    if state_snapshot is not None:
+        await _set_classification_state_snapshot(state_snapshot)
+    await _set_classification_stop_requested(False)
     return effective_task_id
 
 
@@ -775,6 +880,13 @@ async def _background_classify_loop(
     task_id: str,
 ) -> None:
     from ..main import app
+
+    success_total = 0
+    processed_total = 0
+    failed_total = 0
+    batch_size = 0
+    concurrency = 0
+    remaining = 0
 
     try:
         await _set_task_status(task_id, "running", started_at=_now_iso())
@@ -789,16 +901,18 @@ async def _background_classify_loop(
 
         should_run = use_ai or (classify_mode != "ai_only" and bool(rules))
         if not should_run:
-            await _update_classification_state(
-                running=False,
-                finished_at=datetime.now(timezone.utc).isoformat(),
-                processed=0, failed=0, remaining=0,
-                last_error=warning or "No classification sources available",
-                batch_size=0, concurrency=0, task_id=task_id,
-            )
-            await _set_task_status(
-                task_id, "failed", finished_at=_now_iso(),
-                message=warning or "No classification sources available",
+            error_message = warning or CLASSIFY_NO_SOURCES_MESSAGE
+            await _finalize_background_classify(
+                task_id,
+                status=CLASSIFY_STATUS_FAILED,
+                processed=0,
+                classified=0,
+                failed=0,
+                remaining=0,
+                batch_size=0,
+                concurrency=0,
+                last_error=error_message,
+                message=error_message,
             )
             return
 
@@ -822,21 +936,26 @@ async def _background_classify_loop(
             remaining = await count_repos_for_classification(False)
 
         await _update_classification_state(
+            status=CLASSIFY_STATUS_RUNNING,
             running=True,
-            started_at=datetime.now(timezone.utc).isoformat(),
+            started_at=_now_iso(),
             finished_at=None,
-            processed=0, failed=0, remaining=remaining,
+            processed=0,
+            failed=0,
+            remaining=remaining,
             last_error=None,
-            batch_size=batch_size, concurrency=concurrency,
+            batch_size=batch_size,
+            concurrency=concurrency,
             task_id=task_id,
         )
+        await _set_classification_stop_requested(False)
 
-        success_total = 0
-        processed_total = 0
-        failed_total = 0
         remaining_refresh_every = max(1, CLASSIFY_REMAINING_REFRESH_EVERY)
         refresh_counter = 0
-        while not classification_stop.is_set():
+        while True:
+            if classification_stop.is_set() or await _is_classification_stop_requested():
+                classification_stop.set()
+                break
             if force_mode:
                 repos_to_classify = await select_repos_for_classification(
                     batch_size, True, cursor_full_name,
@@ -886,32 +1005,70 @@ async def _background_classify_loop(
             if CLASSIFY_BATCH_DELAY_MS > 0:
                 await asyncio.sleep(CLASSIFY_BATCH_DELAY_MS / 1000)
 
-        await _update_classification_state(
-            running=False,
-            finished_at=datetime.now(timezone.utc).isoformat(),
-            task_id=None,
-        )
-        await _set_task_status(
-            task_id, "finished", finished_at=_now_iso(),
-            result={"processed": processed_total, "classified": success_total, "failed": failed_total},
-        )
-        await cache.invalidate_prefix("stats")
-        await cache.invalidate_prefix("repos")
+        state = await _get_classification_state()
+        final_remaining = int(state.get("remaining", remaining) or 0)
+        if classification_stop.is_set():
+            await _finalize_background_classify(
+                task_id,
+                status=CLASSIFY_STATUS_STOPPED,
+                processed=processed_total,
+                classified=success_total,
+                failed=failed_total,
+                remaining=final_remaining,
+                batch_size=batch_size,
+                concurrency=concurrency,
+                last_error=CLASSIFY_STOPPED_MESSAGE,
+                message=CLASSIFY_STOPPED_MESSAGE,
+            )
+        else:
+            await _finalize_background_classify(
+                task_id,
+                status=CLASSIFY_STATUS_FINISHED,
+                processed=processed_total,
+                classified=success_total,
+                failed=failed_total,
+                remaining=final_remaining,
+                batch_size=batch_size,
+                concurrency=concurrency,
+            )
+        if processed_total > 0:
+            await cache.invalidate_prefix("repos")
     except Exception as exc:
         logger.exception("Background classification failed")
         state = await _get_classification_state()
-        await _update_classification_state(
-            running=False,
-            finished_at=datetime.now(timezone.utc).isoformat(),
-            processed=state.get("processed", 0),
-            failed=state.get("failed", 0),
-            remaining=state.get("remaining", 0),
+        await _finalize_background_classify(
+            task_id,
+            status=CLASSIFY_STATUS_FAILED,
+            processed=int(state.get("processed", processed_total) or 0),
+            classified=success_total,
+            failed=int(state.get("failed", failed_total) or 0),
+            remaining=int(state.get("remaining", remaining) or 0),
+            batch_size=int(state.get("batch_size", batch_size) or 0),
+            concurrency=int(state.get("concurrency", concurrency) or 0),
             last_error=str(exc),
-            batch_size=state.get("batch_size", 0),
-            concurrency=state.get("concurrency", 0),
-            task_id=None,
+            message=str(exc),
         )
-        await _set_task_status(task_id, "failed", finished_at=_now_iso(), message=str(exc))
+        if processed_total > 0:
+            await cache.invalidate_prefix("repos")
+    except asyncio.CancelledError:
+        state = await _get_classification_state()
+        stop_requested = classification_stop.is_set() or await _is_classification_stop_requested()
+        message = CLASSIFY_STOPPED_MESSAGE if stop_requested else "Background classification cancelled"
+        await _finalize_background_classify(
+            task_id,
+            status=CLASSIFY_STATUS_STOPPED if stop_requested else CLASSIFY_STATUS_FAILED,
+            processed=int(state.get("processed", processed_total) or 0),
+            classified=success_total,
+            failed=int(state.get("failed", failed_total) or 0),
+            remaining=int(state.get("remaining", remaining) or 0),
+            batch_size=int(state.get("batch_size", batch_size) or 0),
+            concurrency=int(state.get("concurrency", concurrency) or 0),
+            last_error=message,
+            message=message,
+        )
+        if processed_total > 0:
+            await cache.invalidate_prefix("repos")
+        return
 
 
 # ---------------------------------------------------------------------------
@@ -977,7 +1134,6 @@ async def classify(request: Request, payload: ClassifyRequest) -> ClassifyRespon
     )
 
     if repos_to_classify:
-        await cache.invalidate_prefix("stats")
         await cache.invalidate_prefix("repos")
 
     return ClassifyResponse(
@@ -1014,13 +1170,47 @@ async def classify_background(request: Request, payload: BackgroundClassifyReque
 @router.get("/classify/status", response_model=BackgroundClassifyStatusResponse)
 async def classify_status() -> BackgroundClassifyStatusResponse:
     state = await _get_classification_state()
-    if not state.get("running"):
+    if state.get("running"):
+        return BackgroundClassifyStatusResponse(**state)
+
+    active_task = await get_active_task("classify")
+    if not active_task:
         state["task_id"] = None
-    return BackgroundClassifyStatusResponse(**state)
+        return BackgroundClassifyStatusResponse(**state)
+
+    payload = active_task.get("payload") or {}
+    return BackgroundClassifyStatusResponse(
+        status=str(active_task.get("status") or CLASSIFY_STATUS_RUNNING),
+        running=bool(active_task.get("status") in ("queued", "running", "processing")),
+        started_at=active_task.get("started_at") or active_task.get("created_at"),
+        finished_at=active_task.get("finished_at"),
+        processed=int((active_task.get("result") or {}).get("processed") or 0),
+        failed=int((active_task.get("result") or {}).get("failed") or 0),
+        remaining=0,
+        last_error=active_task.get("message"),
+        batch_size=int(payload.get("limit") or 0),
+        concurrency=int(payload.get("concurrency") or 0),
+        task_id=active_task["task_id"],
+    )
 
 
 @router.post("/classify/stop", dependencies=[Depends(require_admin)])
 async def classify_stop() -> dict:
-    classification_stop.set()
-    await _update_classification_state(last_error="Stopped by user")
+    from .. import state as _state
+
+    await _get_classification_state()
+    state_snapshot: dict[str, object] | None = None
+    task_to_cancel = None
+    async with classification_lock:
+        if not classification_state["running"]:
+            return {"stopped": False}
+        classification_stop.set()
+        classification_state["last_error"] = CLASSIFY_STOP_REQUESTED_MESSAGE
+        state_snapshot = dict(classification_state)
+        task_to_cancel = _state.classification_task
+    if state_snapshot is not None:
+        await _set_classification_state_snapshot(state_snapshot)
+    await _set_classification_stop_requested(True)
+    if task_to_cancel is not None and not task_to_cancel.done():
+        task_to_cancel.cancel()
     return {"stopped": True}

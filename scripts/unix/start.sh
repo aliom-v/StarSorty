@@ -45,8 +45,8 @@ if [[ ! -x "$ROOT/api/.venv/bin/python" ]]; then
   exit 1
 fi
 
-if [[ ! -d "$ROOT/web/node_modules" ]]; then
-  echo "Missing web dependencies: cd web && npm install"
+if [[ ! -e "$ROOT/web/node_modules/.bin/next" ]]; then
+  echo "Missing or incomplete web dependencies: npm --prefix web install"
   exit 1
 fi
 
@@ -60,6 +60,6 @@ start_service \
 start_service \
   "Web" \
   "$WEB_PORT" \
-  "cd '$ROOT/web' && npm run dev" \
+  "cd '$ROOT' && npm run web:dev" \
   "$RUNTIME_DIR/web.pid" \
   "$LOG_DIR/web.dev.log"

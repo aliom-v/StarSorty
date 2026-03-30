@@ -7,6 +7,7 @@ import aiosqlite
 
 from ..config import get_settings
 from .helpers import _env_int, _sqlite_path, _ensure_parent_dir
+from .runtime_guard import ensure_async_sqlite_runtime_supported
 
 logger = logging.getLogger("starsorty.db")
 
@@ -68,6 +69,7 @@ class SQLitePool:
 
 async def init_db_pool(pool_size: int | None = None) -> None:
     global _pool
+    ensure_async_sqlite_runtime_supported()
     if pool_size is None:
         pool_size = _env_int("DB_POOL_SIZE", 5, minimum=1)
     settings = get_settings()
@@ -87,6 +89,7 @@ async def close_db_pool() -> None:
 
 @asynccontextmanager
 async def get_connection() -> aiosqlite.Connection:
+    ensure_async_sqlite_runtime_supported()
     if _pool is None:
         settings = get_settings()
         db_path = _sqlite_path(settings.database_url)

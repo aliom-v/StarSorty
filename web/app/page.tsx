@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
 import Header from "./components/Header";
 import RepoResults from "./components/RepoResults";
 import SearchSection from "./components/SearchSection";
@@ -16,6 +16,33 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { filters, operations, repoList, sidebar, statusBanner, summary } =
     useHomePageData(t);
+  const sidebarProps = {
+    t,
+    sidebarOpen,
+    setSidebarOpen,
+    language: filters.language,
+    setLanguage: filters.setLanguage,
+    minStars: filters.minStars,
+    setMinStars: filters.setMinStars,
+    category: filters.category,
+    setCategory: filters.setCategory,
+    subcategory: filters.subcategory,
+    setSubcategory: filters.setSubcategory,
+    selectedTags: filters.selectedTags,
+    handleTagToggle: filters.handleTagToggle,
+    setSelectedTags: filters.setSelectedTags,
+    tagMode: filters.tagMode,
+    setTagMode: filters.setTagMode,
+    categoryCounts: sidebar.categoryCounts,
+    subcategoryCounts: sidebar.subcategoryCounts,
+    tagGroups: sidebar.tagGroupsWithCounts,
+    groupMode: sidebar.groupMode,
+    sourceUser: filters.sourceUser,
+    setSourceUser: filters.setSourceUser,
+    userCounts: sidebar.userCounts,
+    overallTotal: sidebar.overallTotal,
+    unclassifiedCount: sidebar.unclassifiedCount,
+  } satisfies ComponentProps<typeof Sidebar>;
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -32,33 +59,7 @@ export default function Home() {
   return (
     <main className="relative flex h-screen w-full overflow-hidden bg-transparent perspective-lg">
       <aside className="glass-dark z-20 hidden h-full w-80 flex-shrink-0 flex-col border-r border-ink/5 md:flex lg:w-96">
-        <Sidebar
-          t={t}
-          sidebarOpen={sidebarOpen}
-          setSidebarOpen={setSidebarOpen}
-          language={filters.language}
-          setLanguage={filters.setLanguage}
-          minStars={filters.minStars}
-          setMinStars={filters.setMinStars}
-          category={filters.category}
-          setCategory={filters.setCategory}
-          subcategory={filters.subcategory}
-          setSubcategory={filters.setSubcategory}
-          selectedTags={filters.selectedTags}
-          handleTagToggle={filters.handleTagToggle}
-          setSelectedTags={filters.setSelectedTags}
-          tagMode={filters.tagMode}
-          setTagMode={filters.setTagMode}
-          categoryCounts={sidebar.categoryCounts}
-          subcategoryCounts={sidebar.subcategoryCounts}
-          tagGroups={sidebar.tagGroupsWithCounts}
-          groupMode={sidebar.groupMode}
-          sourceUser={filters.sourceUser}
-          setSourceUser={filters.setSourceUser}
-          userCounts={sidebar.userCounts}
-          overallTotal={sidebar.overallTotal}
-          unclassifiedCount={sidebar.unclassifiedCount}
-        />
+        <Sidebar {...sidebarProps} />
       </aside>
 
       {sidebarOpen && (
@@ -70,33 +71,7 @@ export default function Home() {
             className="h-full w-[min(88vw,24rem)] border-r border-ink/5 bg-surface/90 shadow-premium"
             onClick={(event) => event.stopPropagation()}
           >
-            <Sidebar
-              t={t}
-              sidebarOpen={sidebarOpen}
-              setSidebarOpen={setSidebarOpen}
-              language={filters.language}
-              setLanguage={filters.setLanguage}
-              minStars={filters.minStars}
-              setMinStars={filters.setMinStars}
-              category={filters.category}
-              setCategory={filters.setCategory}
-              subcategory={filters.subcategory}
-              setSubcategory={filters.setSubcategory}
-              selectedTags={filters.selectedTags}
-              handleTagToggle={filters.handleTagToggle}
-              setSelectedTags={filters.setSelectedTags}
-              tagMode={filters.tagMode}
-              setTagMode={filters.setTagMode}
-              categoryCounts={sidebar.categoryCounts}
-              subcategoryCounts={sidebar.subcategoryCounts}
-              tagGroups={sidebar.tagGroupsWithCounts}
-              groupMode={sidebar.groupMode}
-              sourceUser={filters.sourceUser}
-              setSourceUser={filters.setSourceUser}
-              userCounts={sidebar.userCounts}
-              overallTotal={sidebar.overallTotal}
-              unclassifiedCount={sidebar.unclassifiedCount}
-            />
+            <Sidebar {...sidebarProps} />
           </aside>
         </div>
       )}
@@ -126,9 +101,12 @@ export default function Home() {
           <div className="space-y-12">
             <SearchSection
               t={t}
+              query={filters.query}
               queryInput={filters.queryInput}
               setQueryInput={filters.setQueryInput}
-              setQuery={filters.setQuery}
+              submitSearch={filters.submitSearch}
+              clearSearch={filters.clearSearch}
+              searchDirty={filters.searchDirty}
               shownCount={summary.shownCount}
               activeFilterCount={filters.activeFilterCount}
               sortMode={filters.sortMode}

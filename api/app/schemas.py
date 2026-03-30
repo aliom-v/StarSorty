@@ -21,6 +21,15 @@ class TaskQueuedResponse(BaseModel):
     message: str | None = None
 
 
+class AuthSessionRequest(BaseModel):
+    password: str = ""
+
+
+class AuthStatusResponse(BaseModel):
+    ok: bool
+    auth_mode: str
+
+
 class TaskStatusResponse(BaseModel):
     task_id: str
     status: str
@@ -138,6 +147,7 @@ class BackgroundClassifyResponse(BaseModel):
 
 
 class BackgroundClassifyStatusResponse(BaseModel):
+    status: str
     running: bool
     started_at: str | None
     finished_at: str | None

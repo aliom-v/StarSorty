@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { buildAdminHeaders } from "../../lib/admin";
+import { adminFetch } from "../../lib/admin";
 import { API_BASE_URL } from "../../lib/apiBase";
 import { getErrorMessage, readApiError } from "../../lib/apiError";
 import type { TFunction } from "../../lib/i18n";
@@ -63,9 +63,9 @@ export default function SettingsSection({
         sync_cron: settings.sync_cron,
         sync_timeout: settings.sync_timeout,
       };
-      const res = await fetch(`${API_BASE_URL}/settings`, {
+      const res = await adminFetch(`${API_BASE_URL}/settings`, {
         method: "PATCH",
-        headers: buildAdminHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       if (!res.ok) {

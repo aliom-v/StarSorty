@@ -119,13 +119,20 @@ def test_sync_status_and_sync_queue(disable_limiters: None, monkeypatch: pytest.
     registered: list[tuple] = []
     task_created = {"done_callback_added": False}
 
-    async def _fake_register_task(task_id: str, task_type: str, **kwargs) -> None:
+    async def _fake_register_task_if_available(
+        task_id: str, task_type: str, **kwargs
+    ) -> bool:
         registered.append((task_id, task_type, kwargs))
+        return True
 
     class _FakeTask:
         def add_done_callback(self, callback) -> None:
             del callback
             task_created["done_callback_added"] = True
+
+    async def _fake_get_active_task(task_type: str):
+        del task_type
+        return None
 
     def _fake_create_observed_task(coro, *, task_id=None, request_id=None, name=None):
         del task_id, request_id, name
@@ -133,7 +140,12 @@ def test_sync_status_and_sync_queue(disable_limiters: None, monkeypatch: pytest.
         return _FakeTask()
 
     monkeypatch.setattr(sync_routes, "get_sync_status", _fake_status)
-    monkeypatch.setattr(sync_routes, "_register_task", _fake_register_task)
+    monkeypatch.setattr(
+        sync_routes,
+        "_register_task_if_available",
+        _fake_register_task_if_available,
+    )
+    monkeypatch.setattr(sync_routes, "get_active_task", _fake_get_active_task)
     monkeypatch.setattr(sync_routes, "create_observed_task", _fake_create_observed_task)
     monkeypatch.setattr(sync_routes.uuid, "uuid4", lambda: "sync-task-id")
 
@@ -149,6 +161,44 @@ def test_sync_status_and_sync_queue(disable_limiters: None, monkeypatch: pytest.
     assert queue_response.status == "queued"
     assert registered == [("sync-task-id", "sync", {"payload": {}})]
     assert task_created["done_callback_added"] is True
+
+
+def test_sync_reuses_existing_active_task(
+    disable_limiters: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _fake_register_task_if_available(
+        task_id: str, task_type: str, **kwargs
+    ) -> bool:
+        del task_id, task_type, kwargs
+        return False
+
+    async def _fake_get_active_task(task_type: str):
+        assert task_type == "sync"
+        return {
+            "task_id": "existing-sync-task",
+            "status": "running",
+        }
+
+    def _unexpected_create_observed_task(*args, **kwargs):
+        raise AssertionError("no new background task should be created")
+
+    monkeypatch.setattr(
+        sync_routes,
+        "_register_task_if_available",
+        _fake_register_task_if_available,
+    )
+    monkeypatch.setattr(sync_routes, "get_active_task", _fake_get_active_task)
+    monkeypatch.setattr(
+        sync_routes, "create_observed_task", _unexpected_create_observed_task
+    )
+    monkeypatch.setattr(sync_routes.uuid, "uuid4", lambda: "sync-task-id")
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+    queue_response = _run(sync_routes.sync(request))
+
+    assert queue_response.task_id == "existing-sync-task"
+    assert queue_response.status == "running"
+    assert queue_response.message == "Sync already running"
 
 
 def test_classify_force_queue_and_background_controls(
@@ -171,6 +221,7 @@ def test_classify_force_queue_and_background_controls(
 
     async def _fake_state() -> dict:
         return {
+            "status": "idle",
             "running": False,
             "started_at": None,
             "finished_at": None,
@@ -183,10 +234,9 @@ def test_classify_force_queue_and_background_controls(
             "task_id": "stale-task-id",
         }
 
-    updated_state: list[dict] = []
-
-    async def _fake_update_state(**updates: object) -> None:
-        updated_state.append(updates)
+    async def _fake_get_active_task(task_type: str):
+        del task_type
+        return None
 
     monkeypatch.setattr(
         classify_routes,
@@ -196,7 +246,7 @@ def test_classify_force_queue_and_background_controls(
     monkeypatch.setattr(classify_routes, "load_taxonomy", lambda path: {"path": path})
     monkeypatch.setattr(classify_routes, "_queue_background_classify_task", _fake_queue)
     monkeypatch.setattr(classify_routes, "_get_classification_state", _fake_state)
-    monkeypatch.setattr(classify_routes, "_update_classification_state", _fake_update_state)
+    monkeypatch.setattr(classify_routes, "get_active_task", _fake_get_active_task)
 
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
     payload = ClassifyRequest(limit=9999, force=True, include_readme=False, preference_user="demo")
@@ -226,16 +276,58 @@ def test_classify_force_queue_and_background_controls(
 
     status_response = _run(classify_routes.classify_status())
     assert status_response.running is False
+    assert status_response.status == "idle"
     assert status_response.task_id is None
 
     classify_routes.classification_stop.clear()
     try:
         stop_response = _run(classify_routes.classify_stop())
-        assert stop_response == {"stopped": True}
-        assert classify_routes.classification_stop.is_set() is True
-        assert updated_state[-1] == {"last_error": "Stopped by user"}
+        assert stop_response == {"stopped": False}
+        assert classify_routes.classification_stop.is_set() is False
     finally:
         classify_routes.classification_stop.clear()
+
+
+def test_classify_status_falls_back_to_active_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_state() -> dict:
+        return {
+            "status": "idle",
+            "running": False,
+            "started_at": None,
+            "finished_at": None,
+            "processed": 0,
+            "failed": 0,
+            "remaining": 0,
+            "last_error": None,
+            "batch_size": 0,
+            "concurrency": 0,
+            "task_id": None,
+        }
+
+    async def _fake_get_active_task(task_type: str):
+        assert task_type == "classify"
+        return {
+            "task_id": "remote-classify-task",
+            "status": "running",
+            "created_at": "2026-03-07T00:00:00+00:00",
+            "started_at": "2026-03-07T00:01:00+00:00",
+            "message": "running elsewhere",
+            "payload": {"limit": 25, "concurrency": 4},
+        }
+
+    monkeypatch.setattr(classify_routes, "_get_classification_state", _fake_state)
+    monkeypatch.setattr(classify_routes, "get_active_task", _fake_get_active_task)
+
+    response = _run(classify_routes.classify_status())
+
+    assert response.running is True
+    assert response.status == "running"
+    assert response.task_id == "remote-classify-task"
+    assert response.batch_size == 25
+    assert response.concurrency == 4
+    assert response.last_error == "running elsewhere"
 
 
 def test_queue_background_classify_task_skips_registration_when_running(
@@ -245,10 +337,15 @@ def test_queue_background_classify_task_skips_registration_when_running(
     original_state = dict(classify_routes.classification_state)
     original_task = app_state.classification_task
 
-    async def _fake_register_task(*args, **kwargs) -> None:
+    async def _fake_register_task_if_available(*args, **kwargs) -> bool:
         registered.append((args, kwargs))
+        return True
 
-    monkeypatch.setattr(classify_routes, "_register_task", _fake_register_task)
+    monkeypatch.setattr(
+        classify_routes,
+        "_register_task_if_available",
+        _fake_register_task_if_available,
+    )
     classify_routes.classification_state.update({"running": True, "task_id": "existing-task"})
 
     try:
@@ -274,14 +371,15 @@ def test_queue_background_classify_task_registers_before_starting(
     original_state = dict(classify_routes.classification_state)
     original_task = app_state.classification_task
 
-    async def _fake_register_task(
+    async def _fake_register_task_if_available(
         task_id: str,
         task_type: str,
         message: str | None = None,
         payload: dict | None = None,
         retry_from_task_id: str | None = None,
-    ) -> None:
+    ) -> bool:
         registered.append((task_id, task_type, message, payload, retry_from_task_id))
+        return True
 
     class _FakeTask:
         pass
@@ -291,7 +389,11 @@ def test_queue_background_classify_task_registers_before_starting(
         coro.close()
         return _FakeTask()
 
-    monkeypatch.setattr(classify_routes, "_register_task", _fake_register_task)
+    monkeypatch.setattr(
+        classify_routes,
+        "_register_task_if_available",
+        _fake_register_task_if_available,
+    )
     monkeypatch.setattr(classify_routes, "create_observed_task", _fake_create_observed_task)
     monkeypatch.setattr(classify_routes.uuid, "uuid4", lambda: "queued-classify-task-id")
     classify_routes.classification_state.update({"running": False, "task_id": None})
@@ -325,12 +427,172 @@ def test_queue_background_classify_task_registers_before_starting(
         assert created_tasks == [
             ("queued-classify-task-id", None, "classify:queued-classify-task-id")
         ]
+        assert classify_routes.classification_state["status"] == "queued"
         assert classify_routes.classification_state["running"] is True
+        assert classify_routes.classification_state["processed"] == 0
+        assert classify_routes.classification_state["failed"] == 0
         assert classify_routes.classification_state["task_id"] == "queued-classify-task-id"
     finally:
         classify_routes.classification_state.clear()
         classify_routes.classification_state.update(original_state)
         app_state.classification_task = original_task
+
+
+def test_classify_stop_marks_requested_state_when_running() -> None:
+    original_state = dict(classify_routes.classification_state)
+    original_task = app_state.classification_task
+    classify_routes.classification_stop.clear()
+    classify_routes.classification_state.update(
+        {
+            "status": "running",
+            "running": True,
+            "last_error": None,
+            "task_id": "running-task-id",
+        }
+    )
+
+    class _FakeTask:
+        def __init__(self) -> None:
+            self.cancel_called = False
+
+        def done(self) -> bool:
+            return False
+
+        def cancel(self) -> None:
+            self.cancel_called = True
+
+    fake_task = _FakeTask()
+    app_state.classification_task = fake_task
+
+    try:
+        response = _run(classify_routes.classify_stop())
+
+        assert response == {"stopped": True}
+        assert classify_routes.classification_stop.is_set() is True
+        assert classify_routes.classification_state["last_error"] == "Stop requested by user"
+        assert fake_task.cancel_called is True
+    finally:
+        app_state.classification_task = original_task
+        classify_routes.classification_stop.clear()
+        classify_routes.classification_state.clear()
+        classify_routes.classification_state.update(original_state)
+
+
+def test_background_classify_loop_marks_stopped_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_state = dict(classify_routes.classification_state)
+    classify_routes.classification_stop.clear()
+    classify_routes.classification_state.clear()
+    classify_routes.classification_state.update(original_state)
+
+    import api.app.main as main_mod
+
+    original_app = main_mod.app
+    status_updates: list[tuple[str, dict[str, object]]] = []
+    invalidated: list[str] = []
+
+    async def _fake_set_task_status(task_id: str, status: str, **updates: object) -> None:
+        assert task_id == "loop-task-id"
+        status_updates.append((status, updates))
+
+    async def _fake_preferences(user_id: str) -> dict:
+        return {"user_id": user_id, "tag_mapping": {}, "rule_priority": {}}
+
+    async def _fake_remaining(force: bool, cursor_full_name: str | None = None) -> int:
+        del force, cursor_full_name
+        return 1
+
+    calls = {"select": 0}
+
+    async def _fake_select(limit: int, force: bool, cursor_full_name: str | None = None):
+        del limit, force, cursor_full_name
+        calls["select"] += 1
+        if calls["select"] == 1:
+            return [_repo_payload("owner/repo-1")]
+        return []
+
+    async def _fake_classify(*args, **kwargs):
+        del args, kwargs
+        classify_routes.classification_stop.set()
+        return 1, 0
+
+    async def _fake_invalidate(prefix: str) -> None:
+        invalidated.append(prefix)
+
+    monkeypatch.setattr(classify_routes, "_set_task_status", _fake_set_task_status)
+    monkeypatch.setattr(
+        classify_routes,
+        "get_settings",
+        lambda: SimpleNamespace(ai_taxonomy_path="taxonomy.json", rules_json="[]"),
+    )
+    monkeypatch.setattr(
+        classify_routes,
+        "load_rules",
+        lambda *args, **kwargs: [{"name": "rule"}],
+    )
+    monkeypatch.setattr(classify_routes, "load_taxonomy", lambda path: {"path": path})
+    monkeypatch.setattr(
+        classify_routes,
+        "_resolve_classify_context",
+        lambda *args, **kwargs: ("rules_only", False, None),
+    )
+    monkeypatch.setattr(classify_routes, "get_user_preferences", _fake_preferences)
+    monkeypatch.setattr(
+        classify_routes,
+        "count_repos_for_classification",
+        _fake_remaining,
+    )
+    monkeypatch.setattr(
+        classify_routes,
+        "select_repos_for_classification",
+        _fake_select,
+    )
+    monkeypatch.setattr(
+        classify_routes,
+        "_classify_repos_concurrent",
+        _fake_classify,
+    )
+    monkeypatch.setattr(classify_routes.cache, "invalidate_prefix", _fake_invalidate)
+    main_mod.app = SimpleNamespace(
+        state=SimpleNamespace(github_client=object(), ai_client=object())
+    )
+
+    try:
+        _run(
+            classify_routes._background_classify_loop(
+                BackgroundClassifyRequest(
+                    limit=1,
+                    force=False,
+                    include_readme=False,
+                    concurrency=1,
+                ),
+                False,
+                "loop-task-id",
+            )
+        )
+
+        final_state = _run(classify_routes._get_classification_state())
+        assert final_state["status"] == "stopped"
+        assert final_state["running"] is False
+        assert final_state["processed"] == 1
+        assert final_state["failed"] == 0
+        assert final_state["remaining"] == 0
+        assert final_state["last_error"] == "Stopped by user"
+        assert final_state["task_id"] is None
+        assert status_updates[0][0] == "running"
+        assert status_updates[-1] == (
+            "stopped",
+            {
+                "finished_at": final_state["finished_at"],
+                "message": "Stopped by user",
+                "result": {"processed": 1, "classified": 1, "failed": 0},
+            },
+        )
+        assert invalidated == ["repos"]
+    finally:
+        classify_routes.classification_stop.clear()
+        classify_routes.classification_state.clear()
+        classify_routes.classification_state.update(original_state)
+        main_mod.app = original_app
 
 
 def test_classify_foreground_returns_summary_and_invalidates_cache(
@@ -390,7 +652,7 @@ def test_classify_foreground_returns_summary_and_invalidates_cache(
     assert captured["select"] == (2, False)
     assert captured["classify"]["kwargs"]["concurrency"] == 1
     assert captured["classify"]["args"][6] is True
-    assert captured["invalidate"] == ["stats", "repos"]
+    assert captured["invalidate"] == ["repos"]
 
 
 def test_settings_patch_validates_and_persists(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -675,6 +937,40 @@ def test_quality_metrics_endpoint_exposes_db_lock_counters(monkeypatch: pytest.M
     assert response["db_lock_conflict_total"] == 3
     assert response["db_lock_retry_total"] == 2
     assert response["db_lock_retry_exhausted_total"] == 1
+
+
+def test_stats_route_reads_sqlite_snapshot_directly(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = {}
+
+    async def _fake_get_repo_stats(*, refresh: bool, use_snapshot: bool) -> dict:
+        captured["args"] = {"refresh": refresh, "use_snapshot": use_snapshot}
+        return {
+            "total": 2,
+            "unclassified": 1,
+            "categories": [{"name": "ai", "count": 1}],
+            "subcategories": [{"category": "ai", "name": "agent", "count": 1}],
+            "tags": [{"name": "Agent", "count": 1}],
+            "users": [{"name": "alice", "count": 1}],
+        }
+
+    monkeypatch.setattr(stats_routes, "get_repo_stats", _fake_get_repo_stats)
+    monkeypatch.setattr(stats_routes.limiter, "enabled", False)
+
+    response_stub = SimpleNamespace(headers={})
+    response = _run(
+        stats_routes.stats(
+            SimpleNamespace(),
+            response_stub,
+            refresh=False,
+            snapshot=True,
+        )
+    )
+
+    assert captured["args"] == {"refresh": False, "use_snapshot": True}
+    assert response.total == 2
+    assert response.unclassified == 1
+    assert response.categories[0].name == "ai"
+    assert response_stub.headers["Cache-Control"] == "no-store"
 
 
 def test_repos_detail_and_override_validation(monkeypatch: pytest.MonkeyPatch) -> None:

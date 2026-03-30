@@ -21,7 +21,7 @@
 
 ### 基础依赖
 
-- Python `3.11` - `3.14`
+- Python `3.11` - `3.13`
 - Node.js `20`
 - npm
 - Docker / Docker Compose（推荐，用于完整联调）
@@ -46,8 +46,10 @@ npm run stop
 
 说明：
 
+- 首次运行前，先执行 `npm run web:install`。
 - `npm run start` 会自动把本地 SQLite 指到仓库内 `data/app.db`。
-- 如果你手动启动后端，请把 `DATABASE_URL` 改成仓库绝对路径，例如 `sqlite:////absolute/path/to/StarSorty/data/app.db`；`.env.example` 里的 `sqlite:////data/app.db` 是 Docker / Compose 默认值。
+- 建议把仓库根目录脚本当作唯一验证入口，避免本地命令和 CI 行为漂移。
+- Python/Docker fallback、前端依赖校验、web smoke 等运行时细节统一写在 `scripts/README.md`。
 
 ### 方式 B：分别启动前后端
 
@@ -61,24 +63,16 @@ pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 4321
 ```
 
+如果直接在宿主机运行后端，把 `DATABASE_URL` 改成仓库内 `data/app.db` 的绝对路径；`.env.example` 中的 `sqlite:////data/app.db` 是 Docker / Compose 默认值。
+
 前端：
 
 ```bash
-cd web
-npm install
-npm run dev
+npm run web:install
+npm run web:dev
 ```
 
-## 目录说明
-
-- `api/`：FastAPI 后端
-- `web/`：Next.js 前端
-- `scheduler/`：定时同步服务
-- `docs/`：项目文档
-- `evaluation/`：压测与离线评估脚本
-- `scripts/`：跨平台开发脚本
-
-更详细说明见：`docs/guides/project-structure.md`
+目录、关键入口与运行关系统一见 `docs/guides/project-structure.md`。
 
 ## 开发原则
 
@@ -90,19 +84,19 @@ npm run dev
 
 ## 提交前检查
 
-### 后端测试
+优先按下面顺序验证：
 
 ```bash
+npm run docs:check
+npm run scripts:test
 npm run api:test
-```
-
-### 前端质量检查
-
-```bash
 npm run web:test
 npm run web:lint
 npm run web:build
+npm run web:smoke
 ```
+
+如果遇到文档坏引用、重复导航页、Python 版本不匹配、Docker fallback、前端依赖半安装或 smoke 失败，先看 `scripts/README.md`。
 
 ### 压测脚本
 
@@ -116,10 +110,12 @@ npm run api:bench
 
 当前 CI 会执行：
 
+- `npm run docs:check`
 - `python -m pytest -q api/tests`
 - `npm run test`（`web/`）
 - `npm run lint`（`web/`）
 - `npm run build`（`web/`）
+- `npm run smoke`（`web/`）
 
 对应配置见：`.github/workflows/ci.yml`
 
@@ -131,6 +127,7 @@ npm run api:bench
 - 新增或修改环境变量：更新 `docs/guides/configuration.md`
 - 修改部署流程：更新 `docs/guides/deployment-operations.md`
 - 修改目录结构或入口文件：更新 `docs/guides/project-structure.md`
+- 修改共享运行态、缓存边界或多 worker 语义：更新 `docs/guides/runtime-consistency.md`
 - 影响用户使用路径：更新 `docs/guides/user-manual.md` 或 `README.md`
 
 ## 提交建议
@@ -163,12 +160,4 @@ PR 描述建议包含：
 - 不要提交真实 token、密钥或生产配置
 - 不要把本地数据库、日志或构建产物作为功能改动的一部分提交
 - 涉及 SQLite 数据结构或迁移时，请明确说明兼容性影响
-- 修改文档导航时，请同步更新 `docs/README.md` 与相关索引页
-
-## 相关阅读
-
-- `README.md`
-- `docs/README.md`
-- `docs/guides/README.md`
-- `docs/guides/project-structure.md`
-- `.github/workflows/ci.yml`
+- 修改文档导航时，请同步更新 `docs/README.md` 与所有直接入口引用

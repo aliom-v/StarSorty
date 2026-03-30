@@ -20,6 +20,14 @@ _FTS_REQUIRED_SQL_FRAGMENTS = (
     "ai_keywords",
     "override_keywords",
 )
+_LOOKUP_TRIGGER_NAMES = (
+    "repo_star_users_ai",
+    "repo_star_users_au",
+    "repo_star_users_ad",
+    "repo_effective_tags_ai",
+    "repo_effective_tags_au",
+    "repo_effective_tags_ad",
+)
 
 
 def is_fts_enabled() -> bool:
@@ -266,6 +274,266 @@ async def _init_repos_fts(conn: aiosqlite.Connection) -> None:
         logger.warning("SQLite FTS5 unavailable, falling back to LIKE search: %s", exc)
 
 
+async def _drop_repo_lookup_triggers(conn: aiosqlite.Connection) -> None:
+    for trigger_name in _LOOKUP_TRIGGER_NAMES:
+        await conn.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+
+
+async def _create_repo_lookup_tables(conn: aiosqlite.Connection) -> None:
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS repo_star_users (
+            repo_id INTEGER NOT NULL,
+            star_user TEXT NOT NULL,
+            PRIMARY KEY (repo_id, star_user),
+            FOREIGN KEY (repo_id) REFERENCES repos(id) ON DELETE CASCADE
+        )
+        """
+    )
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS repo_effective_tags (
+            repo_id INTEGER NOT NULL,
+            tag TEXT NOT NULL,
+            tag_id TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (repo_id, tag, tag_id),
+            FOREIGN KEY (repo_id) REFERENCES repos(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+async def _create_repo_lookup_triggers(conn: aiosqlite.Connection) -> None:
+    await conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS repo_star_users_ai
+        AFTER INSERT ON repos BEGIN
+            DELETE FROM repo_star_users WHERE repo_id = new.id;
+            INSERT INTO repo_star_users(repo_id, star_user)
+            SELECT new.id, star_user.value
+            FROM json_each(
+                CASE
+                    WHEN json_valid(COALESCE(new.star_users, '[]')) THEN COALESCE(new.star_users, '[]')
+                    ELSE '[]'
+                END
+            ) AS star_user
+            WHERE star_user.value IS NOT NULL AND star_user.value != '';
+        END;
+        """
+    )
+    await conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS repo_star_users_au
+        AFTER UPDATE OF star_users ON repos BEGIN
+            DELETE FROM repo_star_users WHERE repo_id = old.id;
+            INSERT INTO repo_star_users(repo_id, star_user)
+            SELECT new.id, star_user.value
+            FROM json_each(
+                CASE
+                    WHEN json_valid(COALESCE(new.star_users, '[]')) THEN COALESCE(new.star_users, '[]')
+                    ELSE '[]'
+                END
+            ) AS star_user
+            WHERE star_user.value IS NOT NULL AND star_user.value != '';
+        END;
+        """
+    )
+    await conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS repo_star_users_ad
+        AFTER DELETE ON repos BEGIN
+            DELETE FROM repo_star_users WHERE repo_id = old.id;
+        END;
+        """
+    )
+    await conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS repo_effective_tags_ai
+        AFTER INSERT ON repos BEGIN
+            DELETE FROM repo_effective_tags WHERE repo_id = new.id;
+            INSERT INTO repo_effective_tags(repo_id, tag, tag_id)
+            SELECT
+                new.id,
+                tag.value,
+                COALESCE(tag_id.value, '')
+            FROM json_each(
+                CASE
+                    WHEN new.override_tags IS NOT NULL AND new.override_tags != ''
+                        THEN CASE WHEN json_valid(new.override_tags) THEN new.override_tags ELSE '[]' END
+                    WHEN json_valid(COALESCE(new.ai_tags, '[]'))
+                        THEN COALESCE(new.ai_tags, '[]')
+                    ELSE '[]'
+                END
+            ) AS tag
+            LEFT JOIN json_each(
+                CASE
+                    WHEN new.override_tag_ids IS NOT NULL AND new.override_tag_ids != ''
+                        THEN CASE WHEN json_valid(new.override_tag_ids) THEN new.override_tag_ids ELSE '[]' END
+                    WHEN json_valid(COALESCE(new.ai_tag_ids, '[]'))
+                        THEN COALESCE(new.ai_tag_ids, '[]')
+                    ELSE '[]'
+                END
+            ) AS tag_id
+                ON tag.key = tag_id.key
+            WHERE tag.value IS NOT NULL AND tag.value != '';
+        END;
+        """
+    )
+    await conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS repo_effective_tags_au
+        AFTER UPDATE OF ai_tags, ai_tag_ids, override_tags, override_tag_ids ON repos BEGIN
+            DELETE FROM repo_effective_tags WHERE repo_id = old.id;
+            INSERT INTO repo_effective_tags(repo_id, tag, tag_id)
+            SELECT
+                new.id,
+                tag.value,
+                COALESCE(tag_id.value, '')
+            FROM json_each(
+                CASE
+                    WHEN new.override_tags IS NOT NULL AND new.override_tags != ''
+                        THEN CASE WHEN json_valid(new.override_tags) THEN new.override_tags ELSE '[]' END
+                    WHEN json_valid(COALESCE(new.ai_tags, '[]'))
+                        THEN COALESCE(new.ai_tags, '[]')
+                    ELSE '[]'
+                END
+            ) AS tag
+            LEFT JOIN json_each(
+                CASE
+                    WHEN new.override_tag_ids IS NOT NULL AND new.override_tag_ids != ''
+                        THEN CASE WHEN json_valid(new.override_tag_ids) THEN new.override_tag_ids ELSE '[]' END
+                    WHEN json_valid(COALESCE(new.ai_tag_ids, '[]'))
+                        THEN COALESCE(new.ai_tag_ids, '[]')
+                    ELSE '[]'
+                END
+            ) AS tag_id
+                ON tag.key = tag_id.key
+            WHERE tag.value IS NOT NULL AND tag.value != '';
+        END;
+        """
+    )
+    await conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS repo_effective_tags_ad
+        AFTER DELETE ON repos BEGIN
+            DELETE FROM repo_effective_tags WHERE repo_id = old.id;
+        END;
+        """
+    )
+
+
+async def _rebuild_repo_lookup_tables(conn: aiosqlite.Connection) -> None:
+    await conn.execute("DELETE FROM repo_star_users")
+    await conn.execute(
+        """
+        INSERT INTO repo_star_users(repo_id, star_user)
+        SELECT repos.id, star_user.value
+        FROM repos, json_each(
+            CASE
+                WHEN json_valid(COALESCE(repos.star_users, '[]')) THEN COALESCE(repos.star_users, '[]')
+                ELSE '[]'
+            END
+        ) AS star_user
+        WHERE star_user.value IS NOT NULL AND star_user.value != ''
+        """
+    )
+    await conn.execute("DELETE FROM repo_effective_tags")
+    await conn.execute(
+        """
+        INSERT INTO repo_effective_tags(repo_id, tag, tag_id)
+        SELECT
+            repos.id,
+            tag.value,
+            COALESCE(tag_id.value, '')
+        FROM repos
+        JOIN json_each(
+            CASE
+                WHEN repos.override_tags IS NOT NULL AND repos.override_tags != ''
+                    THEN CASE WHEN json_valid(repos.override_tags) THEN repos.override_tags ELSE '[]' END
+                WHEN json_valid(COALESCE(repos.ai_tags, '[]'))
+                    THEN COALESCE(repos.ai_tags, '[]')
+                ELSE '[]'
+            END
+        ) AS tag
+        LEFT JOIN json_each(
+            CASE
+                WHEN repos.override_tag_ids IS NOT NULL AND repos.override_tag_ids != ''
+                    THEN CASE WHEN json_valid(repos.override_tag_ids) THEN repos.override_tag_ids ELSE '[]' END
+                WHEN json_valid(COALESCE(repos.ai_tag_ids, '[]'))
+                    THEN COALESCE(repos.ai_tag_ids, '[]')
+                ELSE '[]'
+            END
+        ) AS tag_id
+            ON tag.key = tag_id.key
+        WHERE tag.value IS NOT NULL AND tag.value != ''
+        """
+    )
+
+
+async def _init_repo_lookup_tables(conn: aiosqlite.Connection) -> None:
+    await _create_repo_lookup_tables(conn)
+    await _drop_repo_lookup_triggers(conn)
+    await _create_repo_lookup_triggers(conn)
+
+    repos_total = (await (await conn.execute("SELECT COUNT(*) FROM repos")).fetchone())[0]
+    star_lookup_total = (
+        await (await conn.execute("SELECT COUNT(*) FROM repo_star_users")).fetchone()
+    )[0]
+    expected_star_lookup_total = (
+        await (
+            await conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM repos, json_each(
+                    CASE
+                        WHEN json_valid(COALESCE(repos.star_users, '[]')) THEN COALESCE(repos.star_users, '[]')
+                        ELSE '[]'
+                    END
+                ) AS star_user
+                WHERE star_user.value IS NOT NULL AND star_user.value != ''
+                """
+            )
+        ).fetchone()
+    )[0]
+    expected_tag_lookup_total = (
+        await (
+            await conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM repos
+                JOIN json_each(
+                    CASE
+                        WHEN repos.override_tags IS NOT NULL AND repos.override_tags != ''
+                            THEN CASE WHEN json_valid(repos.override_tags) THEN repos.override_tags ELSE '[]' END
+                        WHEN json_valid(COALESCE(repos.ai_tags, '[]'))
+                            THEN COALESCE(repos.ai_tags, '[]')
+                        ELSE '[]'
+                    END
+                ) AS tag
+                WHERE tag.value IS NOT NULL AND tag.value != ''
+                """
+            )
+        ).fetchone()
+    )[0]
+    tag_lookup_total = (
+        await (await conn.execute("SELECT COUNT(*) FROM repo_effective_tags")).fetchone()
+    )[0]
+
+    if (
+        star_lookup_total != expected_star_lookup_total
+        or tag_lookup_total != expected_tag_lookup_total
+    ):
+        logger.info(
+            "Rebuilding repo lookup tables (repos=%s, stars=%s/%s, tags=%s/%s)",
+            repos_total,
+            star_lookup_total,
+            expected_star_lookup_total,
+            tag_lookup_total,
+            expected_tag_lookup_total,
+        )
+        await _rebuild_repo_lookup_tables(conn)
+
+
 async def _ensure_columns(conn: aiosqlite.Connection) -> None:
     cursor = await conn.execute("PRAGMA table_info(repos)")
     rows = await cursor.fetchall()
@@ -315,6 +583,47 @@ async def _ensure_task_columns(conn: aiosqlite.Connection) -> None:
     for name, ddl in columns:
         if name not in existing:
             await conn.execute(f"ALTER TABLE tasks ADD COLUMN {ddl}")
+
+
+async def _normalize_active_task_uniqueness(conn: aiosqlite.Connection) -> None:
+    for task_type in ("sync", "classify"):
+        rows = await (
+            await conn.execute(
+                """
+                SELECT task_id
+                FROM tasks
+                WHERE task_type = ?
+                  AND status IN ('queued', 'running', 'processing')
+                ORDER BY COALESCE(started_at, created_at) DESC, created_at DESC
+                """,
+                (task_type,),
+            )
+        ).fetchall()
+        if len(rows) <= 1:
+            continue
+        keep_task_id = rows[0]["task_id"]
+        stale_task_ids = [row["task_id"] for row in rows[1:]]
+        placeholders = ",".join("?" for _ in stale_task_ids)
+        await conn.execute(
+            f"""
+            UPDATE tasks
+            SET status = 'failed',
+                finished_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP,
+                message = CASE
+                    WHEN message IS NULL OR message = '' THEN 'Superseded by newer active task'
+                    ELSE message
+                END
+            WHERE task_id IN ({placeholders})
+            """,
+            stale_task_ids,
+        )
+        logger.warning(
+            "Collapsed duplicate active %s tasks, keeping %s and failing %s older tasks",
+            task_type,
+            keep_task_id,
+            len(stale_task_ids),
+        )
 
 
 @_retry_on_lock()
@@ -392,6 +701,36 @@ async def init_db() -> None:
         )
         await conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS runtime_state (
+                state_key TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS runtime_metrics (
+                metric_key TEXT PRIMARY KEY,
+                metric_value INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cache_entries (
+                cache_key TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                namespace_version INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                expires_at REAL NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        await conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS override_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 full_name TEXT NOT NULL,
@@ -418,6 +757,17 @@ async def init_db() -> None:
                 cursor_full_name TEXT,
                 payload TEXT,
                 retry_from_task_id TEXT
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS admin_sessions (
+                session_token_hash TEXT PRIMARY KEY,
+                csrf_token TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
             )
             """
         )
@@ -473,7 +823,9 @@ async def init_db() -> None:
         )
         await _ensure_columns(conn)
         await _ensure_task_columns(conn)
+        await _normalize_active_task_uniqueness(conn)
         await _init_repos_fts(conn)
+        await _init_repo_lookup_tables(conn)
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_full_name ON repos(full_name)"
         )
@@ -502,6 +854,23 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_tasks_status_updated_at ON tasks(status, updated_at)"
         )
         await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires_at ON admin_sessions(expires_at)"
+        )
+        await conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_active_sync_unique
+            ON tasks(task_type)
+            WHERE task_type = 'sync' AND status IN ('queued', 'running', 'processing')
+            """
+        )
+        await conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_active_classify_unique
+            ON tasks(task_type)
+            WHERE task_type = 'classify' AND status IN ('queued', 'running', 'processing')
+            """
+        )
+        await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_feedback_user_created ON user_feedback_events(user_id, created_at DESC)"
         )
         await conn.execute(
@@ -521,6 +890,18 @@ async def init_db() -> None:
         )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_updated_stargazers_full_name ON repos(updated_at DESC, stargazers_count DESC, full_name ASC)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repo_star_users_user_repo ON repo_star_users(star_user, repo_id)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repo_effective_tags_tag_repo ON repo_effective_tags(tag, repo_id)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repo_effective_tags_tag_id_repo ON repo_effective_tags(tag_id, repo_id)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cache_entries_namespace_expires_at ON cache_entries(namespace, expires_at)"
         )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repos_summary_zh ON repos(summary_zh)"

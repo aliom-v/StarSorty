@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { buildAdminHeaders } from "../../lib/admin";
+import { adminFetch } from "../../lib/admin";
 import { API_BASE_URL } from "../../lib/apiBase";
 import { getErrorMessage, readApiError } from "../../lib/apiError";
 import type { TFunction } from "../../lib/i18n";
@@ -31,9 +31,7 @@ export default function FailedReposSection({ t, setMessage }: Props) {
     setLoadingFailedRepos(true);
     setLocalError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/repos/failed`, {
-        headers: buildAdminHeaders(),
-      });
+      const res = await adminFetch(`${API_BASE_URL}/repos/failed`);
       if (res.ok) {
         const data = await res.json();
         setFailedRepos(data.items ?? []);
@@ -51,9 +49,8 @@ export default function FailedReposSection({ t, setMessage }: Props) {
   const handleResetFailed = async () => {
     setMessage(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/repos/failed/reset`, {
+      const res = await adminFetch(`${API_BASE_URL}/repos/failed/reset`, {
         method: "POST",
-        headers: buildAdminHeaders(),
       });
       if (!res.ok) {
         const detail = await readApiError(res, t("unknownError"));

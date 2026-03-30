@@ -5,11 +5,19 @@ from fastapi import APIRouter, Depends, Request
 
 from ..cache import cache
 from ..config import get_settings
-from ..db import get_sync_status, update_sync_status, upsert_repos, prune_star_user, prune_users_not_in
+from ..db import (
+    get_active_task,
+    get_sync_status,
+    prune_star_user,
+    prune_users_not_in,
+    update_sync_status,
+    upsert_repos,
+)
 from ..deps import (
     _handle_task_exception,
     _now_iso,
     _register_task,
+    _register_task_if_available,
     _set_task_status,
     require_admin,
 )
@@ -87,7 +95,6 @@ async def _run_sync_task(task_id: str, app_state: object) -> None:
         result={"count": total, "queued_at": timestamp},
     )
 
-    await cache.invalidate_prefix("stats")
     await cache.invalidate_prefix("repos")
 
     if current.auto_classify_after_sync:
@@ -110,7 +117,16 @@ async def _run_sync_task(task_id: str, app_state: object) -> None:
 @limiter.limit(RATE_LIMIT_HEAVY)
 async def sync(request: Request) -> TaskQueuedResponse:
     task_id = str(uuid.uuid4())
-    await _register_task(task_id, "sync", payload={})
+    created = await _register_task_if_available(task_id, "sync", payload={})
+    if not created:
+        existing = await get_active_task("sync")
+        if existing:
+            return TaskQueuedResponse(
+                task_id=existing["task_id"],
+                status=str(existing.get("status") or "running"),
+                message="Sync already running",
+            )
+        await _register_task(task_id, "sync", payload={})
     bg_task = create_observed_task(
         _run_sync_task(task_id, request.app.state),
         task_id=task_id,

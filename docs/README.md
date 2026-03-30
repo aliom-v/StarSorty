@@ -1,6 +1,6 @@
 # 文档导航
 
-StarSorty 的文档按“入门 → 配置/接口 → 部署 → 规划”组织，优先帮助你快速找到当前需要的材料。
+StarSorty 现在只保留一个文档总入口。跨文档阅读路径统一收口在本页，避免在 `README` 或各个 guide 里重复维护导航。
 
 ## 从哪里开始
 
@@ -10,53 +10,58 @@ StarSorty 的文档按“入门 → 配置/接口 → 部署 → 规划”组织
 2. `guides/configuration.md`
 3. `guides/deployment-operations.md`
 
-### 我想了解系统结构
+### 我想理解当前系统和风险
 
 1. `guides/project-structure.md`
 2. `guides/api-reference.md`
-3. `roadmap/comprehensive-optimization-plan-2026.md`
+3. `guides/runtime-consistency.md`
+4. `guides/engineering-audit.md`
 
-### 我想排查部署或运行问题
+### 我想继续推进后续改造
 
-1. `guides/deployment-operations.md`
-2. `guides/configuration.md`
-3. `../scripts/README.md`
+1. `guides/engineering-audit.md`
+2. `roadmap/current-priorities.md`
+3. `roadmap/optimization-execution-plan.md`
+4. `../CONTRIBUTING.md`
 
-## 文档地图
+## 按文档执行的最短路径
 
-### 总览入口
+### 我想部署一套可用实例
 
-- `../README.md`：项目介绍、快速开始、常用命令
-- `guides/README.md`：使用、开发、配置、运维文档索引
-- `../CONTRIBUTING.md`：本地开发、测试与提交流程
-- `../CHANGELOG.md`：版本变更记录与发布摘要
-- `archive/README.md`：已归档文档索引与历史记录入口
-- `roadmap/README.md`：路线图与规划文档索引
+1. 按 `../README.md` 完成 `.env`、`docker compose up -d --build` 与首次同步
+2. 需要确认变量含义时，看 `guides/configuration.md`
+3. 需要同域 `/api` 反代或运维排障时，看 `guides/deployment-operations.md`
 
-### Guides
+### 我想本地开发并验证改动
 
-- `guides/project-structure.md`：代码结构、关键入口、模块职责
-- `guides/user-manual.md`：首页、详情页、管理台与常见使用流程
-- `guides/api-reference.md`：后端 API、鉴权约定、常见调用示例
-- `guides/configuration.md`：`.env`、动态配置、生产建议
-- `guides/deployment-operations.md`：Docker Compose 部署、备份恢复、排障
-- `../scripts/README.md`：项目脚本入口与跨平台命令说明
+1. 按 `../CONTRIBUTING.md` 准备本地依赖和启动方式
+2. 运行时限制、Python/Docker fallback、前端依赖校验统一看 `../scripts/README.md`
+3. 验证顺序统一使用：
 
-### Roadmap
+   ```bash
+   npm run docs:check
+   npm run scripts:test
+   npm run api:test
+   npm run web:test
+   npm run web:lint
+   npm run web:build
+   npm run web:smoke
+   ```
 
-- `roadmap/comprehensive-optimization-plan-2026.md`：当前有效的优化总方案与阶段目标
-- `archive/version-readiness-plan-2026-03.md`：`0.2.0` 发布收尾记录与执行依据
+## 职责边界
+
+- `../README.md`：项目介绍、快速开始、常用命令，只保留上手入口
+- `../CONTRIBUTING.md`：本地开发、验证与提交流程
+- `guides/`：当前仍然有效的说明型文档
+- `roadmap/`：当前仍会执行的优先级与实施步骤
+- `../scripts/README.md`：脚本和运行时兜底逻辑的权威说明
+- `../archive/tag-id-migration/README.md`：历史迁移资产，仅用于追溯
 
 ## 文档维护约定
 
-- `README.md` 保持“上手入口”定位，避免堆积过多细节。
-- `docs/guides/` 放稳定的说明型文档。
-- `docs/roadmap/` 放计划、阶段目标和长期演进内容。
-- 新增文档时，优先补充本页和对应子目录索引。
-
-## 当前状态
-
-- 当前文档结构已整理为总入口、`guides/` 指南和 `roadmap/` 规划三层。
-- 历史上与当前代码不一致的旧规划文档已移除。
-- 当前建议以 `roadmap/comprehensive-optimization-plan-2026.md` 作为长期主计划。
-- `archive/version-readiness-plan-2026-03.md` 已归档，作为 `0.2.0` 发布收尾记录保留。
+- `README.md` 保持“上手入口”定位，不承载所有细节。
+- `docs/README.md` 是唯一文档索引入口；不要再新增 `guides/README.md`、`roadmap/README.md` 这类重复导航页。
+- `guides/` 文档只写主题说明；不要再附一整套“推荐阅读顺序”“相关阅读”重复导航。
+- `docs/guides/` 只放当前仍然有效的说明型文档。
+- `docs/roadmap/` 只保留当前仍会执行的计划文档。
+- 已过时但仍有追溯价值的材料移动到仓库根目录 `archive/`；没有保留价值的直接删除。

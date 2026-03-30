@@ -43,7 +43,7 @@
 - 🔍 **搜索与筛选**：支持关键词、标签、分类、语言、Star 数等多条件检索。
 - 🧠 **个性化能力**：支持用户偏好映射、搜索反馈、点击反馈与兴趣画像。
 - 📦 **导出与集成**：支持导出 Obsidian ZIP，用于构建个人知识库。
-- 🐳 **自托管部署**：通过 Docker Compose 运行，数据保存在本地 SQLite。
+- 🐳 **自托管部署**：通过 Docker Compose 在单机 VPS 运行，数据保存在本地 SQLite。
 
 ### 当前版本重点
 
@@ -51,9 +51,9 @@
 - 新版分类链路：规则候选 + AI 仲裁 + 回退机制
 - 新版搜索排序：相关度排序与命中原因展示
 - 质量与一致性指标：`/metrics/quality`、`/metrics/consistency`
-- 默认安全基线：生产环境强制 `ADMIN_TOKEN`，公开暴露面已收口
+- 当前安全边界：`APP_ENV=production` 时会强制 `ADMIN_TOKEN` 与显式 CORS；Web 管理台已切到 cookie session + CSRF
 - 用户偏好与训练样本：`/preferences`、`/interest`、`/training/*`
-- 回归保障：API 路由 smoke、权限回归、前端静态 smoke、CI 门禁
+- 回归保障：API 路由 smoke、权限回归、前端构建 smoke、CI 门禁
 
 更完整的接口与功能说明见：`docs/guides/api-reference.md`
 
@@ -63,7 +63,7 @@
 
 StarSorty 使用前后端分离 + 调度器的自托管架构：
 
-- **Web**：Next.js 前端，负责检索、浏览和管理操作
+- **Web**：Next.js 前端，负责检索、浏览和管理操作，Compose 中以 Next server 运行
 - **API**：FastAPI 后端，负责同步、分类、检索、导出和配置
 - **Database**：SQLite 持久化仓库、任务、设置与偏好数据
 - **Scheduler**：定时调用 `/sync`，执行自动同步
@@ -79,7 +79,7 @@ StarSorty 使用前后端分离 + 调度器的自托管架构：
 
 ## 🚀 快速开始
 
-推荐使用 Docker Compose 部署。
+推荐使用 Docker Compose 直接部署到单机 VPS，不再依赖额外的静态托管平台。
 
 ### 1. 克隆仓库
 
@@ -99,7 +99,10 @@ cp .env.example .env
 ```env
 GITHUB_TOKEN=ghp_xxxxxxxxxxxxx
 ADMIN_TOKEN=change_me
+ADMIN_SESSION_TTL_HOURS=12
 CORS_ORIGINS=http://localhost:1234
+API_BASE_URL=http://api:4321
+NEXT_PUBLIC_API_BASE_URL=http://localhost:4321
 
 AI_PROVIDER=custom
 AI_BASE_URL=https://api.deepseek.com/v1
@@ -111,9 +114,19 @@ AI_MODEL=deepseek-chat
 
 - 生产环境请设置 `APP_ENV=production`
 - 生产环境必须配置显式 `CORS_ORIGINS`，不能使用 `*`
+- `API_BASE_URL` 给容器内的 scheduler 和服务端渲染中的 Web 使用，Compose 默认保持 `http://api:4321`
+- `NEXT_PUBLIC_API_BASE_URL` 给浏览器使用；管理台登录依赖 cookie session，优先使用同域反代 `/api`，或至少保持 Web 与 API 处于 same-site 域名下
 - AI 相关配置只从后端 `.env` 读取
 
 完整变量说明见：`docs/guides/configuration.md`
+
+按执行目标补齐变量：
+
+- 只验证容器、`/health` 和首页：默认模板即可启动，但数据为空，`/auth/check` 会因为 `ADMIN_TOKEN` 未配置而返回 `503`。
+- 需要本地管理写操作：配置 `ADMIN_TOKEN`；如果只是受信任的本地开发，也可以保持 `APP_ENV=development` 并临时开启 `ALLOW_UNAUTHENTICATED_ADMIN_IN_DEV=true`。
+- 需要真正同步 GitHub Star：至少提供一个同步目标。可直接配置 `GITHUB_USERNAME`、`GITHUB_TARGET_USERNAME` 或 `GITHUB_USERNAMES`；也可以只配置 `GITHUB_TOKEN`，系统会自动把该 token 对应账号作为同步目标。若已经配置了显式用户名，但还想把 token 对应账号也一并同步，再额外设 `GITHUB_INCLUDE_SELF=true`。
+- 需要 AI 分类：`CLASSIFY_MODE=rules_only` 可直接使用内置规则；`rules_then_ai` 在缺少 AI 配置时会退回规则分类；`ai_only` 必须补齐 `AI_PROVIDER`、`AI_MODEL` 以及对应的密钥或自定义 `AI_BASE_URL`。
+- 如果未配置 `GITHUB_TOKEN`，同步通常仍可运行，但分类阶段若开启 README 抓取，更容易撞到 GitHub 匿名速率限制；首次本地规则分类建议先把 `include_readme` 设成 `false`。
 
 ### 3. 启动服务
 
@@ -126,7 +139,19 @@ docker compose up -d --build
 - Web：`http://localhost:1234`
 - API 文档：`http://localhost:4321/docs`
 
+这套默认编排就是给小型 VPS 准备的：
+
+- `1C1G` 可以跑低频同步和轻量使用
+- `2C2G` 更稳，尤其是首次构建镜像和批量分类时
+- 记得持久化 `data/` 和 `logs/`
+
 ### 4. 初始化数据
+
+执行前确认：
+
+- 当前实例如果 `ADMIN_TOKEN` 为空且未开启本地开发豁免，`POST /sync`、`POST /classify/background`、`PATCH /settings` 等写接口会直接返回 `503`。
+- `POST /sync` 还需要至少一个 GitHub 同步目标，否则任务会失败并显示 `No GitHub usernames configured`。
+- `POST /classify/background` 在 `CLASSIFY_MODE=ai_only` 且 AI 配置不完整时会失败；`rules_only` 和缺少 AI 的 `rules_then_ai` 都可以继续走规则分类。
 
 先同步：
 
@@ -144,11 +169,33 @@ curl -X POST "http://localhost:4321/classify/background" \
   -d '{"limit":50,"concurrency":3}'
 ```
 
+如果当前没有 `GITHUB_TOKEN`，建议首次先避免 README 抓取：
+
+```bash
+curl -X POST "http://localhost:4321/classify/background" \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: <ADMIN_TOKEN>" \
+  -d '{"limit":50,"concurrency":3,"include_readme":false}'
+```
+
+### 5. 验证部署结果
+
+```bash
+curl http://localhost:4321/health
+curl http://localhost:4321/classify/status
+curl http://localhost:1234
+```
+
+如果还需要继续检查：
+
+- 浏览器访问首页、`/admin`、`/settings`
+- 需要反向代理、升级、备份或排障时，看 `docs/guides/deployment-operations.md`
+
 ---
 
 ## 🛠️ 常用操作
 
-> Web 页面中的写操作需要 Admin token。你可以在设置页或管理页录入该 token。
+> Web 页面中的写操作现在会先把 `ADMIN_TOKEN` 交换成浏览器 session cookie。CLI 和运维脚本仍然直接使用 `X-Admin-Token`。
 
 ### 查看同步状态
 
@@ -180,6 +227,8 @@ curl "http://localhost:4321/repos?q=go%20crawler&sort=relevance&limit=20"
 
 ## 💻 本地开发
 
+README 只保留最短开发入口；完整贡献流程、宿主机直启方式和验证要求统一见 `CONTRIBUTING.md` 与 `scripts/README.md`。
+
 ### 一键启停（跨平台）
 
 ```bash
@@ -188,47 +237,18 @@ npm run status
 npm run stop
 ```
 
-说明：
-
+- 首次运行前，先执行 `npm run web:install` 安装前端依赖。
 - `npm run start` / `npm run start:unix` / `npm run start:win` 会自动把本地 SQLite 指到仓库内 `data/app.db`。
-- 如果你直接在宿主机运行 `uvicorn`，请把 `DATABASE_URL` 改成仓库绝对路径，例如 `sqlite:////absolute/path/to/StarSorty/data/app.db`；`.env.example` 里的 `sqlite:////data/app.db` 是 Docker / Compose 默认值。
-
-### 后端
-
-```bash
-cd api
-python -m venv .venv
-pip install -r requirements-dev.txt
-uvicorn app.main:app --reload --port 4321
-```
-
-### 前端
-
-```bash
-cd web
-npm install
-npm run dev
-```
-
-更多开发与脚本说明：
-
-- `scripts/README.md`
-- `docs/guides/project-structure.md`
-- `docs/guides/configuration.md`
+- 建议统一从仓库根目录执行验证；文档引用校验、命令顺序、Python/Docker fallback、前端依赖校验和 smoke 细节统一看 `scripts/README.md`。
+- 需要分别启动前后端、调整宿主机 `DATABASE_URL` 或对齐 CI 流程时，直接看 `CONTRIBUTING.md`。
 
 ---
 
 ## 📚 文档导航
 
-- `docs/README.md`：文档总入口与阅读路径
-- `docs/guides/README.md`：稳定指南索引
-- `docs/roadmap/README.md`：路线图与规划索引
-- `docs/guides/project-structure.md`：项目结构说明
-- `docs/guides/user-manual.md`：用户使用手册
-- `docs/guides/api-reference.md`：后端 API 接口总览与调用约定
-- `docs/guides/configuration.md`：`.env` 与运行时配置参考
-- `docs/guides/deployment-operations.md`：Docker 部署、备份、升级与排障
-- `CHANGELOG.md`：版本变更记录与发布说明
+- `docs/README.md`：唯一文档入口与阅读路径
+- `CONTRIBUTING.md`：本地开发、验证与提交流程
+- 历史迁移资产如确需追溯，可看 `archive/tag-id-migration/README.md`
 
 ---
 

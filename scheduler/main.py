@@ -7,6 +7,13 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
 def _env_float(name: str, default: float, minimum: float | None = None) -> float:
     raw = os.getenv(name)
     if raw is None:
@@ -37,6 +44,7 @@ SYNC_CRON = os.getenv("SYNC_CRON", "0 */6 * * *")
 SYNC_TIMEOUT = _env_float("SYNC_TIMEOUT", 30.0, minimum=0.1)
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
+ALLOW_UNAUTHENTICATED_ADMIN_IN_DEV = _env_bool("ALLOW_UNAUTHENTICATED_ADMIN_IN_DEV", False)
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("scheduler")
@@ -44,6 +52,12 @@ logger = logging.getLogger("scheduler")
 
 def trigger_sync() -> None:
     url = f"{API_BASE_URL.rstrip('/')}/sync"
+    if not ADMIN_TOKEN and not ALLOW_UNAUTHENTICATED_ADMIN_IN_DEV:
+        logger.error(
+            "Skipping sync trigger because ADMIN_TOKEN is not configured and "
+            "ALLOW_UNAUTHENTICATED_ADMIN_IN_DEV is disabled."
+        )
+        return
     try:
         logger.info("Triggering sync: %s", url)
         headers = {"X-Admin-Token": ADMIN_TOKEN} if ADMIN_TOKEN else None

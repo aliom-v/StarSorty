@@ -6,7 +6,7 @@ import {
   evaluateTrackedPollResponse,
   getPollingDelayMs,
   shouldPollBackgroundStatus,
-} from "../app/lib/taskPolling.js";
+} from "../app/lib/taskPolling";
 
 test("shouldPollBackgroundStatus only triggers every fifth tick", () => {
   assert.equal(shouldPollBackgroundStatus(4), false);

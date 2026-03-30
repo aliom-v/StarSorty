@@ -12,10 +12,13 @@
 
 ## 鉴权约定
 
-- 写操作与管理员接口通过请求头 `X-Admin-Token` 鉴权。
-- 当 `ADMIN_TOKEN` 已配置时，未携带或错误的 token 会收到 `401`。
-- 当 `ADMIN_TOKEN` 未配置时，开发环境中的管理员接口不会被保护；生产环境禁止这种配置。
+- CLI、scheduler 和脚本仍可通过请求头 `X-Admin-Token` 鉴权。
+- Web 管理台会先通过 `POST /auth/session` 把 `ADMIN_TOKEN` 交换成 `HttpOnly` session cookie；后续浏览器写操作使用 cookie + `X-CSRF-Token`。
+- 当 `ADMIN_TOKEN` 已配置时，未携带或错误的凭证、过期 session 或缺失 CSRF 的写请求会收到 `401`。
+- 当 `ADMIN_TOKEN` 未配置时，管理员接口默认返回 `503`，不会再默默开放。
+- 仅当显式设置 `ALLOW_UNAUTHENTICATED_ADMIN_IN_DEV=1` 且当前不是 production 环境时，才允许本地开发豁免。
 - 建议无论开发或生产，都始终配置 `ADMIN_TOKEN`。
+- 浏览器管理台推荐同域反代 `/api`，或至少保证 Web 与 API 处于 same-site 域名下，以便 cookie session 正常工作。
 
 示例：
 
@@ -24,12 +27,39 @@ curl -X POST "http://localhost:4321/sync" \
   -H "X-Admin-Token: <ADMIN_TOKEN>"
 ```
 
+### 浏览器管理员会话示例
+
+如果你想在脚本里模拟浏览器管理员会话，而不是直接使用 `X-Admin-Token`，可以按下面顺序：
+
+```bash
+curl -c admin.cookies -X POST "http://localhost:4321/auth/session" \
+  -H "Content-Type: application/json" \
+  -d '{"password":"<ADMIN_TOKEN>"}'
+
+csrf_token=$(awk '$6 == "starsorty_admin_csrf" {print $7}' admin.cookies)
+
+curl -b admin.cookies -X POST "http://localhost:4321/classify/background" \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: ${csrf_token}" \
+  -d '{"limit":20,"concurrency":2}'
+
+curl -b admin.cookies -X DELETE "http://localhost:4321/auth/session" \
+  -H "X-CSRF-Token: ${csrf_token}"
+```
+
+说明：
+
+- `starsorty_admin_session` 是 `HttpOnly` session cookie。
+- `starsorty_admin_csrf` 是浏览器或脚本需要回传到 `X-CSRF-Token` 的值。
+- 生产环境下 session cookie 会带 `Secure`，浏览器侧应通过 HTTPS 访问。
+
 ## 异步任务模型
 
 - `POST /sync`、`POST /classify/background`、`POST /tasks/{task_id}/retry` 都会返回任务 ID。
 - 可通过 `GET /tasks/{task_id}` 轮询任务状态。
-- 分类任务运行状态还可通过 `GET /classify/status` 查看。
+- 分类任务运行状态还可通过 `GET /classify/status` 查看，返回 `status` 字段区分 `idle`、`queued`、`running`、`finished`、`stopped`、`failed`。
 - 当分类仍在执行时，重复触发会收到 `409`。
+- 分类运行态和质量指标现在会持久化到 SQLite；`/stats` 直接读取 SQLite 版本化快照，`/repos` 会把缓存值与失效版本都共享到 SQLite，并保留一层进程内热点缓存。
 
 ## 接口总览
 
@@ -37,8 +67,10 @@ curl -X POST "http://localhost:4321/sync" \
 
 | 方法 | 路径 | 鉴权 | 说明 |
 | --- | --- | --- | --- |
-| `GET` | `/health` | 否 | 基础健康检查；若携带有效管理员 token，会额外返回安全基线信息。 |
-| `GET` | `/auth/check` | 是 | 验证管理员 token 是否有效。 |
+| `GET` | `/health` | 否 | 基础健康检查；若携带有效管理员凭证，会额外返回安全基线信息。 |
+| `GET` | `/auth/check` | 是 | 校验当前管理员身份是否有效。 |
+| `POST` | `/auth/session` | 否 | 使用 `ADMIN_TOKEN` 创建浏览器管理员会话。 |
+| `DELETE` | `/auth/session` | 是 | 注销当前浏览器管理员会话。 |
 
 ### 同步与任务
 
@@ -55,8 +87,16 @@ curl -X POST "http://localhost:4321/sync" \
 | --- | --- | --- | --- |
 | `POST` | `/classify` | 是 | 前台执行分类；`force=true` 时会转为后台任务并返回 `202`。 |
 | `POST` | `/classify/background` | 是 | 后台批量分类。 |
-| `GET` | `/classify/status` | 否 | 查询后台分类运行状态。 |
-| `POST` | `/classify/stop` | 是 | 请求停止当前后台分类任务。 |
+| `GET` | `/classify/status` | 否 | 查询后台分类运行状态；优先看 `status`，`running` 仅表示当前是否仍有活跃任务。 |
+| `POST` | `/classify/stop` | 是 | 请求停止当前后台分类任务；若当前没有本地活跃任务，返回 `{"stopped": false}`。 |
+
+`GET /classify/status` 重点字段说明：
+
+- `status`：`idle`、`queued`、`running`、`finished`、`stopped`、`failed`
+- `running`：当前是否仍有活跃后台分类任务
+- `last_error`：失败原因；人工停止时，终态通常为 `status=stopped` 且 `last_error="Stopped by user"`，停止请求刚提交但任务尚未退出时可能短暂显示 `Stop requested by user`
+- `task_id`：当前活跃任务 ID；任务结束后请优先使用最初拿到的 `task_id` 继续查询 `GET /tasks/{task_id}`
+- 停止请求标志会写入 SQLite，共享于不同 worker；后台分类会在批次边界消费这个停止请求
 
 `POST /classify` 与 `POST /classify/background` 的主要请求体字段：
 
@@ -133,16 +173,25 @@ curl -X POST "http://localhost:4321/sync" \
 | `refresh` | `bool` | `false` | 强制绕过缓存重新计算。 |
 | `snapshot` | `bool` | `true` | 是否优先使用版本化快照。 |
 
+说明：
+
+- `/stats` 现在直接依赖 SQLite 中的 `repo_stats_version + stats_snapshots`
+- 当写路径提升 `repo_stats_version` 后，下次请求会自动重算并刷新快照
+
 `GET /metrics/quality` 当前包含的重点字段：
 
 - `classification_total`、`rule_hit_total`、`ai_fallback_total`、`empty_tag_total`、`uncategorized_total`
 - `search_total`、`search_zero_result_total`
 - `api_request_total`、`api_error_total`、`api_request_latency_ms_total`、`api_request_latency_ms_avg`
-- `task_queued_total`、`task_finished_total`、`task_failed_total`、`task_failure_rate`
+- `task_queued_total`、`task_finished_total`、`task_failed_total`、`task_stopped_total`、`task_failure_rate`
 - `cache_hit_total`、`cache_miss_total`、`cache_hit_rate`
 - `db_lock_conflict_total`：捕获到 SQLite 锁冲突的次数
 - `db_lock_retry_total`：进入退避重试的次数
 - `db_lock_retry_exhausted_total`：达到最大重试次数后仍失败的次数
+
+说明：
+
+- 上述质量指标现在持久化在 SQLite 中，可跨 worker 读取同一份累计值
 
 `PATCH /settings` 可更新的字段：
 
@@ -192,12 +241,16 @@ curl -X POST "http://localhost:4321/sync" \
 
 | 方法 | 路径 | 鉴权 | 说明 |
 | --- | --- | --- | --- |
-| `GET` | `/export/obsidian` | 是 | 导出 Obsidian ZIP 包。 |
+| `GET` | `/export/obsidian` | 是 | 以流式响应导出 Obsidian ZIP 包。 |
 
 支持的查询参数：
 
 - `tags`：逗号分隔的标签过滤器
 - `language`：按语言过滤导出内容
+
+说明：
+
+- 服务端会边生成边输出 ZIP，不再等待整个归档先在内存中组装完成
 
 ## 常见调用示例
 
@@ -232,10 +285,4 @@ curl -X PATCH "http://localhost:4321/repos/openai/openai-python/override" \
 - StarSorty 当前没有显式版本化 API 前缀，升级时请关注变更说明。
 - 管理员接口普遍带有更严格的速率限制。
 - 大批量任务建议优先使用后台接口并配合任务轮询。
-
-## 相关阅读
-
-- `docs/README.md`
-- `docs/guides/project-structure.md`
-- `docs/guides/configuration.md`
-- `docs/guides/deployment-operations.md`
+- 浏览器端管理员登录已切换为 cookie session；`X-Admin-Token` 更适合 CLI、scheduler 与运维脚本。

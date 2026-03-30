@@ -28,6 +28,7 @@ from .state import (
     TASK_STALE_MINUTES,
     _add_quality_metrics,
     classification_stop,
+    initialize_runtime_state,
 )
 
 logger = logging.getLogger("starsorty.api")
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI):
     stale = await reset_stale_tasks(TASK_STALE_MINUTES)
     if stale:
         logger.warning("Reset %s stale tasks at startup", stale)
+    await initialize_runtime_state()
     github_http = httpx.AsyncClient()
     ai_http = httpx.AsyncClient()
     app.state.github_client = GitHubClient(github_http, asyncio.Semaphore(API_SEMAPHORE_LIMIT))

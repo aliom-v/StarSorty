@@ -108,8 +108,12 @@ const RepoResults = ({
           <button
             type="button"
             onClick={onLoadMore}
-            disabled={loadingMore}
-            className="group flex items-center gap-4 rounded-full glass px-12 py-5 text-xs font-black uppercase tracking-widest text-ink transition-all hover:shadow-premium active:scale-95"
+            disabled={loading || loadingMore}
+            className={`group flex items-center gap-4 rounded-full glass px-12 py-5 text-xs font-black uppercase tracking-widest text-ink transition-all ${
+              loading || loadingMore
+                ? "cursor-not-allowed opacity-60 hover:shadow-none active:scale-100"
+                : "hover:shadow-premium active:scale-95"
+            }`}
           >
             {loadingMore ? (
               <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor">
