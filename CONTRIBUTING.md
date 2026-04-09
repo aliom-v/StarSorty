@@ -4,6 +4,8 @@
 
 本文档说明如何在本地开发、验证改动，并提交尽量清晰、可审阅的贡献。
 
+如果你只是想部署、初始化或日常使用实例，优先看 `README.md` 与 `docs/README.md`；本页只覆盖开发与提交流程。
+
 ## 贡献范围
 
 欢迎提交：
@@ -123,6 +125,7 @@ npm run api:bench
 
 如果你的改动影响以下内容，请同步更新文档：
 
+- 新增、删除或重命名 `docs/guides/`、`docs/roadmap/` 文档：更新 `docs/README.md`，保证唯一索引不漏文档
 - 新增或修改 API：更新 `docs/guides/api-reference.md`
 - 新增或修改环境变量：更新 `docs/guides/configuration.md`
 - 修改部署流程：更新 `docs/guides/deployment-operations.md`

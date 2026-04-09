@@ -10,12 +10,21 @@ StarSorty 现在只保留一个文档总入口。跨文档阅读路径统一收�
 2. `guides/configuration.md`
 3. `guides/deployment-operations.md`
 
+### 我想直接使用系统
+
+1. `guides/user-manual.md`
+2. `guides/api-reference.md`
+3. `guides/configuration.md`
+
 ### 我想理解当前系统和风险
 
 1. `guides/project-structure.md`
-2. `guides/api-reference.md`
-3. `guides/runtime-consistency.md`
-4. `guides/engineering-audit.md`
+2. `guides/runtime-consistency.md`
+3. `guides/engineering-audit.md`
+
+### 我想看最近变更
+
+1. `../CHANGELOG.md`
 
 ### 我想继续推进后续改造
 
@@ -35,23 +44,14 @@ StarSorty 现在只保留一个文档总入口。跨文档阅读路径统一收�
 ### 我想本地开发并验证改动
 
 1. 按 `../CONTRIBUTING.md` 准备本地依赖和启动方式
-2. 运行时限制、Python/Docker fallback、前端依赖校验统一看 `../scripts/README.md`
-3. 验证顺序统一使用：
-
-   ```bash
-   npm run docs:check
-   npm run scripts:test
-   npm run api:test
-   npm run web:test
-   npm run web:lint
-   npm run web:build
-   npm run web:smoke
-   ```
+2. 启停方式、验证顺序、Python/Docker fallback、前端依赖校验统一看 `../scripts/README.md`
 
 ## 职责边界
 
 - `../README.md`：项目介绍、快速开始、常用命令，只保留上手入口
+- `../CHANGELOG.md`：版本变化与已合并的文档整理记录
 - `../CONTRIBUTING.md`：本地开发、验证与提交流程
+- `guides/user-manual.md`：页面与管理台的日常使用说明
 - `guides/`：当前仍然有效的说明型文档
 - `roadmap/`：当前仍会执行的优先级与实施步骤
 - `../scripts/README.md`：脚本和运行时兜底逻辑的权威说明

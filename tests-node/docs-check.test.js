@@ -68,3 +68,35 @@ test("validateDocumentation reports missing references and duplicate doc indexes
     `expected missing guides/missing.md error, got: ${result.errors.join("; ")}`
   );
 });
+
+test("validateDocumentation requires docs/README.md to cover active guides and roadmap docs", () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "starsorty-docs-index-"));
+
+  writeFile(rootDir, "README.md", "# Root\n");
+  writeFile(rootDir, "CONTRIBUTING.md", "# Contributing\n");
+  writeFile(
+    rootDir,
+    "docs/README.md",
+    [
+      "# Docs",
+      "",
+      "1. `guides/configuration.md`",
+      "2. `../CONTRIBUTING.md`",
+      "",
+    ].join("\n")
+  );
+  writeFile(rootDir, "docs/guides/configuration.md", "# Configuration\n");
+  writeFile(rootDir, "docs/guides/user-manual.md", "# User Manual\n");
+  writeFile(rootDir, "docs/roadmap/current-priorities.md", "# Roadmap\n");
+
+  const result = validateDocumentation(rootDir);
+
+  assert.ok(
+    result.errors.some((error) => error.includes("docs/guides/user-manual.md")),
+    `expected missing docs/guides/user-manual.md index error, got: ${result.errors.join("; ")}`
+  );
+  assert.ok(
+    result.errors.some((error) => error.includes("docs/roadmap/current-priorities.md")),
+    `expected missing docs/roadmap/current-priorities.md index error, got: ${result.errors.join("; ")}`
+  );
+});

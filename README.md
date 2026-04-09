@@ -227,7 +227,7 @@ curl "http://localhost:4321/repos?q=go%20crawler&sort=relevance&limit=20"
 
 ## 💻 本地开发
 
-README 只保留最短开发入口；完整贡献流程、宿主机直启方式和验证要求统一见 `CONTRIBUTING.md` 与 `scripts/README.md`。
+README 只保留最短开发入口；完整阅读路径看 `docs/README.md`，贡献流程与脚本细节统一见 `CONTRIBUTING.md` 和 `scripts/README.md`。
 
 ### 一键启停（跨平台）
 
@@ -247,7 +247,9 @@ npm run stop
 ## 📚 文档导航
 
 - `docs/README.md`：唯一文档入口与阅读路径
+- `docs/guides/user-manual.md`：页面、管理台与常见操作流程
 - `CONTRIBUTING.md`：本地开发、验证与提交流程
+- `CHANGELOG.md`：最近版本与文档整理记录
 - 历史迁移资产如确需追溯，可看 `archive/tag-id-migration/README.md`
 
 ---

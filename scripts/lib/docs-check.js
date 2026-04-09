@@ -3,6 +3,8 @@ const path = require("node:path");
 
 const ROOT_DOC_FILES = ["README.md", "CONTRIBUTING.md", "CHANGELOG.md", "scripts/README.md"];
 const DOC_DIRECTORIES = ["docs", "archive"];
+const DOC_INDEX_FILE = "docs/README.md";
+const DOC_INDEX_REQUIRED_PREFIXES = ["docs/guides/", "docs/roadmap/"];
 const FORBIDDEN_DOC_FILES = [
   "docs/guides/README.md",
   "docs/roadmap/README.md",
@@ -73,6 +75,27 @@ function listDocumentationFiles(rootDir) {
   }
 
   return Array.from(new Set(files)).sort();
+}
+
+function toRepoRelativePath(rootDir, absolutePath) {
+  const relativePath = path.relative(rootDir, absolutePath);
+  if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return null;
+  }
+
+  return relativePath.split(path.sep).join("/");
+}
+
+function resolveReferenceTargets(rootDir, absoluteFilePath, referenceValue) {
+  const candidateTargets = [];
+  if (referenceValue.startsWith("./") || referenceValue.startsWith("../")) {
+    candidateTargets.push(path.resolve(path.dirname(absoluteFilePath), referenceValue));
+  } else {
+    candidateTargets.push(path.resolve(path.dirname(absoluteFilePath), referenceValue));
+    candidateTargets.push(path.resolve(rootDir, referenceValue));
+  }
+
+  return Array.from(new Set(candidateTargets.map((candidatePath) => path.normalize(candidatePath))));
 }
 
 function stripAnchorAndQuery(reference) {
@@ -264,17 +287,42 @@ function validateDocumentation(rootDir) {
         continue;
       }
 
-      const candidateTargets = [];
-      if (reference.value.startsWith("./") || reference.value.startsWith("../")) {
-        candidateTargets.push(path.resolve(path.dirname(absoluteFilePath), reference.value));
-      } else {
-        candidateTargets.push(path.resolve(path.dirname(absoluteFilePath), reference.value));
-        candidateTargets.push(path.resolve(rootDir, reference.value));
-      }
+      const candidateTargets = resolveReferenceTargets(rootDir, absoluteFilePath, reference.value);
 
       if (!candidateTargets.some((candidatePath) => fs.existsSync(candidatePath))) {
         errors.push(
           `${reference.source}:${reference.line} references missing path \`${reference.value}\``
+        );
+      }
+    }
+  }
+
+  const docsIndexAbsolutePath = path.join(rootDir, DOC_INDEX_FILE);
+  if (fs.existsSync(docsIndexAbsolutePath)) {
+    const docsIndexContent = fs.readFileSync(docsIndexAbsolutePath, "utf8");
+    const indexedDocs = new Set();
+
+    for (const reference of extractPathReferences(DOC_INDEX_FILE, docsIndexContent)) {
+      const candidateTargets = resolveReferenceTargets(rootDir, docsIndexAbsolutePath, reference.value);
+      for (const candidatePath of candidateTargets) {
+        const repoRelativePath = toRepoRelativePath(rootDir, candidatePath);
+        if (repoRelativePath) {
+          indexedDocs.add(repoRelativePath);
+        }
+      }
+    }
+
+    const ignoredIndexTargets = new Set([DOC_INDEX_FILE, ...FORBIDDEN_DOC_FILES]);
+    const requiredIndexedDocs = docFiles.filter(
+      (relativePath) =>
+        DOC_INDEX_REQUIRED_PREFIXES.some((prefix) => relativePath.startsWith(prefix)) &&
+        !ignoredIndexTargets.has(relativePath)
+    );
+
+    for (const relativePath of requiredIndexedDocs) {
+      if (!indexedDocs.has(relativePath)) {
+        errors.push(
+          `${DOC_INDEX_FILE} should reference \`${relativePath}\` so the only documentation index does not omit active docs`
         );
       }
     }

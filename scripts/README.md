@@ -47,7 +47,7 @@ npm run web:smoke
 
 ## 常见失败与处理
 
-- `docs:check` 提示 missing path 或重复索引页：先修正文档里的路径引用，或删除 `docs/guides/README.md`、`docs/roadmap/README.md`、`docs/archive/README.md` 这类重复入口
+- `docs:check` 提示 missing path、重复索引页或 `docs/README.md` 漏掉有效 guide/roadmap 文档：先修正文档里的路径引用，补齐 `docs/README.md` 的入口，或删除 `docs/guides/README.md`、`docs/roadmap/README.md`、`docs/archive/README.md` 这类重复入口
 - API 测试提示 Python `3.14+` 不支持：改用本地 Python `3.11` - `3.13`，或让脚本走 Docker Python 3.11 fallback
 - Docker 已安装但脚本仍提示无法访问 daemon：确认当前 shell 已刷新 `docker` 用户组；必要时重新登录或重开 shell
 - `web:test` 在受限环境里出现 IPC / `listen EPERM`：换到允许本地 IPC 的正常 shell 或 CI runner 再执行
