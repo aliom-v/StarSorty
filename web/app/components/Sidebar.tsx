@@ -64,9 +64,9 @@ const Sidebar = ({
   unclassifiedCount,
 }: SidebarProps) => {
   return (
-    <div className="flex h-full flex-col p-5 lg:p-8">
-      <div className="mb-8 flex flex-shrink-0 items-center justify-between">
-        <h2 className="section-title text-xl font-black md:text-2xl">
+    <div className="flex h-full flex-col p-4">
+      <div className="mb-4 flex flex-shrink-0 items-center justify-between border-b border-ink/10 pb-3">
+        <h2 className="section-title text-base font-semibold md:text-lg">
           {t("tagCloud")}
         </h2>
         {sidebarOpen && (
@@ -83,22 +83,22 @@ const Sidebar = ({
         )}
       </div>
 
-      <div className="custom-scrollbar -mr-4 flex flex-1 flex-col gap-10 overflow-y-auto pr-4">
-        <div className="space-y-4">
+      <div className="custom-scrollbar -mr-3 flex flex-1 flex-col gap-6 overflow-y-auto pr-3">
+        <div className="space-y-3">
           <h3 className="section-kicker px-1">{t("filters")}</h3>
-          <div className="panel-muted space-y-4 p-5">
-            <label className="block space-y-2">
+          <div className="space-y-3 rounded-lg border border-ink/10 bg-surface-muted p-3">
+            <label className="block space-y-1.5">
               <span className="info-label">{t("language")}</span>
               <input
                 type="text"
                 value={language}
                 onChange={(event) => setLanguage(event.target.value)}
                 placeholder={t("language")}
-                className="w-full rounded-[1.1rem] border border-ink/10 bg-surface/80 px-4 py-3 text-sm font-medium text-ink outline-none transition-colors focus:border-moss/40 focus:ring-2 focus:ring-moss/10"
+                className="w-full rounded-md border border-ink/10 bg-surface px-3 py-2 text-sm font-medium text-ink outline-none transition-colors focus:border-moss/40 focus:ring-2 focus:ring-moss/10"
               />
             </label>
 
-            <label className="block space-y-2">
+            <label className="block space-y-1.5">
               <span className="info-label">{t("minStars")}</span>
               <input
                 type="number"
@@ -112,16 +112,16 @@ const Sidebar = ({
                   setMinStars(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
                 }}
                 placeholder="100"
-                className="w-full rounded-[1.1rem] border border-ink/10 bg-surface/80 px-4 py-3 text-sm font-medium text-ink outline-none transition-colors focus:border-moss/40 focus:ring-2 focus:ring-moss/10"
+                className="w-full rounded-md border border-ink/10 bg-surface px-3 py-2 text-sm font-medium text-ink outline-none transition-colors focus:border-moss/40 focus:ring-2 focus:ring-moss/10"
               />
             </label>
 
-            <label className="block space-y-2">
+            <label className="block space-y-1.5">
               <span className="info-label">{t("category")}</span>
               <select
                 value={category ?? ""}
                 onChange={(event) => setCategory(event.target.value || null)}
-                className="w-full rounded-[1.1rem] border border-ink/10 bg-surface/80 px-4 py-3 text-sm font-medium text-ink outline-none transition-colors focus:border-moss/40 focus:ring-2 focus:ring-moss/10"
+                className="w-full rounded-md border border-ink/10 bg-surface px-3 py-2 text-sm font-medium text-ink outline-none transition-colors focus:border-moss/40 focus:ring-2 focus:ring-moss/10"
               >
                 <option value="">{t("all")}</option>
                 {categoryCounts.map((item) => (
@@ -132,12 +132,12 @@ const Sidebar = ({
               </select>
             </label>
 
-            <label className="block space-y-2">
+            <label className="block space-y-1.5">
               <span className="info-label">{t("subcategory")}</span>
               <select
                 value={subcategory ?? ""}
                 onChange={(event) => setSubcategory(event.target.value || null)}
-                className="w-full rounded-[1.1rem] border border-ink/10 bg-surface/80 px-4 py-3 text-sm font-medium text-ink outline-none transition-colors focus:border-moss/40 focus:ring-2 focus:ring-moss/10 disabled:cursor-not-allowed disabled:text-ink/35"
+                className="w-full rounded-md border border-ink/10 bg-surface px-3 py-2 text-sm font-medium text-ink outline-none transition-colors focus:border-moss/40 focus:ring-2 focus:ring-moss/10 disabled:cursor-not-allowed disabled:text-ink/35"
                 disabled={subcategoryCounts.length === 0}
               >
                 <option value="">{t("all")}</option>
@@ -152,25 +152,25 @@ const Sidebar = ({
         </div>
 
         {selectedTags.length > 0 && (
-          <div className="animate-fade-in space-y-4">
+          <div className="animate-fade-in space-y-3">
             <div className="flex items-center justify-between px-1">
               <p className="section-kicker">
                 {t("selectedTags")}
               </p>
               <button
                 type="button"
-                className="text-[10px] font-black uppercase tracking-[0.12em] text-copper transition-all hover:text-copper/60"
+                className="text-[11px] font-semibold text-copper transition-all hover:text-copper/70"
                 onClick={() => setSelectedTags([])}
               >
                 {t("clearTags")}
               </button>
             </div>
-            <div className="flex flex-wrap gap-2.5">
+            <div className="flex flex-wrap gap-1.5">
               {selectedTags.map((tag) => (
                 <button
                   key={tag}
                   type="button"
-                  className="group flex items-center gap-2 rounded-full btn-ios-primary px-4 py-2 text-[11px] font-semibold tracking-[0.04em] shadow-soft active:scale-95"
+                  className="group flex items-center gap-1.5 rounded-md bg-ink px-2 py-1 text-[11px] font-semibold text-surface transition hover:bg-ink/90 active:translate-y-px"
                   onClick={() => handleTagToggle(tag)}
                 >
                   {tag}
@@ -178,11 +178,11 @@ const Sidebar = ({
                 </button>
               ))}
             </div>
-            <div className="tag-cloud-shell flex w-fit items-center gap-1 rounded-full border border-ink/5 bg-ink/[0.03] p-1 shadow-inner">
+            <div className="tag-cloud-shell flex w-fit items-center gap-1 rounded-md border p-1">
               <button
                 type="button"
-                className={`rounded-full px-4 py-1.5 text-[10px] font-black transition-all ${
-                  tagMode === "or" ? "bg-surface text-ink shadow-sm" : "text-ink/40"
+                className={`rounded px-3 py-1 text-[11px] font-semibold transition-all ${
+                  tagMode === "or" ? "bg-surface text-ink shadow-sm" : "text-ink/45"
                 }`}
                 onClick={() => setTagMode("or")}
               >
@@ -190,8 +190,8 @@ const Sidebar = ({
               </button>
               <button
                 type="button"
-                className={`rounded-full px-4 py-1.5 text-[10px] font-black transition-all ${
-                  tagMode === "and" ? "bg-surface text-ink shadow-sm" : "text-ink/40"
+                className={`rounded px-3 py-1 text-[11px] font-semibold transition-all ${
+                  tagMode === "and" ? "bg-surface text-ink shadow-sm" : "text-ink/45"
                 }`}
                 onClick={() => setTagMode("and")}
               >
@@ -201,26 +201,26 @@ const Sidebar = ({
           </div>
         )}
 
-        <div className="space-y-8">
+        <div className="space-y-5">
           {tagGroups.map((group) => (
-            <div key={group.id} className="space-y-4">
+            <div key={group.id} className="space-y-2.5">
               <h3 className="section-kicker px-1">
                 {group.name}
               </h3>
-              <div className="flex flex-wrap gap-2.5">
+              <div className="flex flex-wrap gap-1.5">
                 {group.tagCounts.map((tagItem) => (
                   <button
                     key={tagItem.name}
                     type="button"
-                    className={`tag-cloud-chip rounded-2xl px-3.5 py-2 text-[11px] font-semibold transition-all duration-300 ${
+                    className={`tag-cloud-chip rounded-md border px-2 py-1 text-[11px] font-medium transition-all duration-150 ${
                       selectedTags.includes(tagItem.name)
-                        ? "btn-ios-moss scale-[1.02] text-white"
-                        : "btn-ios-secondary text-ink/70 hover:border-moss/40 hover:text-moss"
+                        ? "border-moss bg-moss text-white"
+                        : "text-ink/70 hover:border-moss/40 hover:bg-moss/10 hover:text-moss"
                     }`}
                     onClick={() => handleTagToggle(tagItem.name)}
                   >
                     {tagItem.name}
-                    <span className={`ml-2 text-[10px] font-black opacity-30 ${selectedTags.includes(tagItem.name) ? "text-white opacity-60" : ""}`}>
+                    <span className={`ml-1.5 text-[10px] font-semibold opacity-45 ${selectedTags.includes(tagItem.name) ? "text-white opacity-70" : ""}`}>
                       {tagItem.count}
                     </span>
                   </button>
@@ -231,13 +231,13 @@ const Sidebar = ({
         </div>
 
         {groupMode && (
-          <div className="space-y-4">
+          <div className="space-y-3">
             <h3 className="section-kicker px-1">
               {t("users")}
             </h3>
-            <div className="tag-cloud-shell overflow-hidden rounded-[2rem] border border-ink/5 bg-ink/[0.03] shadow-inner">
+            <div className="tag-cloud-shell overflow-hidden rounded-lg border">
               <button
-                className={`flex w-full items-center justify-between px-5 py-4 text-sm font-semibold transition-all border-b border-ink/5 active:bg-ink/5 ${
+                className={`flex w-full items-center justify-between border-b border-ink/10 px-3 py-2.5 text-sm font-semibold transition-all active:bg-ink/5 ${
                   sourceUser === null
                     ? "bg-surface text-ink shadow-sm"
                     : "text-ink/60 hover:bg-surface/40"
@@ -250,8 +250,8 @@ const Sidebar = ({
               {userCounts.map((user, idx) => (
                 <button
                   key={user.name}
-                  className={`flex w-full items-center justify-between px-5 py-4 text-sm font-semibold transition-all active:bg-ink/5 ${
-                    idx !== userCounts.length - 1 ? "border-b border-ink/5" : ""
+                  className={`flex w-full items-center justify-between px-3 py-2.5 text-sm font-semibold transition-all active:bg-ink/5 ${
+                    idx !== userCounts.length - 1 ? "border-b border-ink/10" : ""
                   } ${
                     sourceUser === user.name
                       ? "bg-surface text-ink shadow-sm"
@@ -267,15 +267,15 @@ const Sidebar = ({
           </div>
         )}
 
-        <div className="mt-auto space-y-4 border-t border-ink/5 pt-8">
-          <div className="grid grid-cols-1 gap-4">
-            <div className="panel-muted flex items-center justify-between p-5">
+        <div className="mt-auto border-t border-ink/10 pt-4">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-lg border border-ink/10 bg-surface-muted p-3">
               <p className="section-kicker">{t("total")}</p>
-              <p className="text-3xl font-display font-black text-ink leading-none">{overallTotal}</p>
+              <p className="mt-1 font-display text-2xl font-semibold leading-none text-ink">{overallTotal}</p>
             </div>
-            <div className="panel-muted flex items-center justify-between border-moss/10 bg-moss/5 p-5">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-moss/50">{t("unclassified")}</p>
-              <p className="text-3xl font-display font-black text-moss leading-none">{unclassifiedCount}</p>
+            <div className="rounded-lg border border-moss/20 bg-moss/10 p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-moss/70">{t("unclassified")}</p>
+              <p className="mt-1 font-display text-2xl font-semibold leading-none text-moss">{unclassifiedCount}</p>
             </div>
           </div>
         </div>

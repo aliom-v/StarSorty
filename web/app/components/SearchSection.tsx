@@ -28,6 +28,14 @@ const sortLabelKeys: Record<SearchSectionProps["sortMode"], keyof Messages> = {
   relevance: "sortRelevance",
 };
 
+const getConfigHintKey = (message: string): keyof Messages => {
+  if (message.includes("AI_PROVIDER")) return "configHintAiProvider";
+  if (message.includes("GitHub") || message.includes("github")) {
+    return "configHintGithub";
+  }
+  return "configHintGeneric";
+};
+
 const SearchSection = ({
   t,
   query,
@@ -50,130 +58,153 @@ const SearchSection = ({
   const disableRelevanceSort = !query;
 
   return (
-    <div className="animate-fade-up sticky top-0 z-30 -mx-4 mb-5 space-y-4 border-b border-ink/5 bg-sand/70 px-4 py-4 backdrop-blur-2xl dark:border-white/5 dark:bg-sand/42 md:-mx-12 md:mb-6 md:space-y-5 md:px-12 md:py-5 lg:-mx-16 lg:px-16">
-      <form
-        className="group relative mx-auto w-full max-w-6xl"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submitSearch();
-        }}
-      >
-        <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-5 text-ink/20 transition-all duration-500 group-focus-within:scale-110 group-focus-within:text-moss dark:text-ink/35 sm:pl-6">
-          <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </div>
-        <input
-          id="search-input"
-          className="glass h-[3.25rem] w-full rounded-[1.75rem] border-ink/5 pl-14 pr-24 text-[15px] font-medium outline-none transition-all duration-300 focus:bg-surface focus:shadow-premium focus:ring-4 focus:ring-moss/5 dark:border-white/5 dark:bg-surface/52 dark:focus:bg-surface/75 dark:focus:ring-white/5 sm:h-14 sm:pl-16 sm:pr-36 md:h-16 md:rounded-[1.9rem] md:pr-52 md:text-lg"
-          placeholder={t("searchPlaceholder")}
-          value={queryInput}
-          onChange={(event) => setQueryInput(event.target.value)}
-        />
-        <div className="absolute inset-y-1.5 right-1.5 flex items-center gap-2 sm:inset-y-2 sm:right-2 sm:gap-3">
-          {!queryInput && (
-            <div className="hidden select-none items-center gap-1.5 rounded-xl border border-ink/5 bg-ink/[0.03] px-3 py-1.5 text-[10px] font-black text-ink/30 dark:border-transparent dark:bg-white/[0.05] dark:text-ink/45 md:flex">
-              <span className="text-[12px]">⌘</span>
-              <span>K</span>
+    <div className="animate-fade-up sticky top-0 z-30 -mx-4 border-y border-ink/10 bg-sand/95 px-4 py-3 backdrop-blur md:-mx-6 md:px-6 lg:-mx-8 lg:px-8">
+      <div className="mx-auto flex w-full max-w-[118rem] flex-col gap-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <form
+            className="relative min-w-0 flex-1"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitSearch();
+            }}
+          >
+            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-ink/35">
+              <svg className="h-[1.125rem] w-[1.125rem]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
             </div>
-          )}
-          {queryInput && (
-            <button
-              type="button"
-              className="hidden h-10 px-4 text-[11px] font-semibold tracking-[0.06em] text-ink/40 transition-all hover:text-ink/60 active:scale-90 dark:text-ink/50 dark:hover:text-ink/80 sm:block"
-              onClick={clearSearch}
-            >
-              {t("clear")}
-            </button>
-          )}
-          <button
-            type="submit"
-            disabled={disableSearchAction}
-            className={`btn-ios-moss h-10 rounded-[1.1rem] px-4 text-[11px] font-semibold tracking-[0.08em] sm:h-11 sm:rounded-[1.25rem] sm:px-5 md:px-7 ${
-              disableSearchAction
-                ? "cursor-not-allowed opacity-55 hover:shadow-none active:scale-100"
-                : ""
-            }`}
-          >
-            {t("search")}
-          </button>
-        </div>
-      </form>
-
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-3.5 md:flex-row md:items-center md:justify-between">
-        <div className="flex flex-wrap items-center gap-2.5 text-[11px] font-semibold text-subtle sm:gap-3">
-          <span className="pill-muted">{t("showingWithValue", { count: shownCount })}</span>
-          {hasActiveFilters && (
-            <span className="pill-accent">
-              {t("filtersWithValue", { count: activeFilterCount })}
-            </span>
-          )}
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 rounded-full btn-ios-secondary px-4 py-2 text-[11px] font-semibold tracking-[0.06em] text-ink/70 md:hidden"
-            onClick={onOpenFilters}
-          >
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h18M6 12h12m-9 8h6" />
-            </svg>
-            {t("filters")}
-          </button>
-        </div>
-
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center md:justify-end">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <span className="section-kicker px-1 sm:px-0">{t("sortBy")}</span>
-            <div className="flex rounded-[1.25rem] border border-ink/5 bg-ink/[0.03] p-1.5 shadow-inner dark:border-transparent dark:bg-white/[0.05]">
-              {(["stars", "updated", "relevance"] as const).map((mode) => (
+            <input
+              id="search-input"
+              className="h-11 w-full rounded-lg border border-ink/10 bg-surface pl-10 pr-32 text-sm font-medium text-ink shadow-sm outline-none transition focus:border-moss/45 focus:ring-2 focus:ring-moss/10 sm:pr-48"
+              placeholder={t("searchPlaceholder")}
+              value={queryInput}
+              onChange={(event) => setQueryInput(event.target.value)}
+            />
+            <div className="absolute inset-y-1 right-1 flex items-center gap-1.5">
+              {!queryInput && (
+                <div className="hidden select-none items-center gap-1 rounded-md border border-ink/10 bg-surface-muted px-2 py-1 text-[10px] font-semibold text-ink/40 sm:flex">
+                  <span>⌘</span>
+                  <span>K</span>
+                </div>
+              )}
+              {queryInput && (
                 <button
-                  key={mode}
                   type="button"
-                  disabled={mode === "relevance" && disableRelevanceSort}
-                  className={`rounded-xl px-3 py-2 text-[11px] font-semibold tracking-[0.06em] transition-all duration-300 sm:px-4 md:px-5 ${
-                    sortMode === mode
-                      ? "bg-surface text-ink shadow-soft dark:bg-white/[0.1]"
-                      : "text-ink/40 hover:bg-ink/[0.02] hover:text-ink/70 dark:text-ink/55 dark:hover:bg-white/[0.04] dark:hover:text-ink/80"
-                  } ${
-                    mode === "relevance" && disableRelevanceSort
-                      ? "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-ink/40 dark:hover:bg-transparent dark:hover:text-ink/55"
-                      : ""
-                  }`}
-                  onClick={() => setSortMode(mode)}
+                  className="hidden h-8 rounded-md px-2 text-[11px] font-semibold text-ink/52 transition hover:bg-ink/5 hover:text-ink sm:block"
+                  onClick={clearSearch}
                 >
-                  {t(sortLabelKeys[mode])}
+                  {t("clear")}
                 </button>
-              ))}
+              )}
+              <button
+                type="submit"
+                disabled={disableSearchAction}
+                className="btn-ios-moss h-9 px-3 text-xs font-semibold"
+              >
+                {t("search")}
+              </button>
             </div>
-          </div>
+          </form>
 
-          {hasActiveFilters && (
+          <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+            <span className="pill-muted h-8">{t("showingWithValue", { count: shownCount })}</span>
+            {hasActiveFilters && (
+              <span className="pill-accent h-8">
+                {t("filtersWithValue", { count: activeFilterCount })}
+              </span>
+            )}
             <button
               type="button"
-              className="self-start px-1 text-[10px] font-semibold tracking-[0.12em] text-copper transition-all hover:text-copper/70 active:scale-95 sm:self-auto"
-              onClick={clearAllFilters}
+              className="btn-ios-secondary h-8 gap-2 px-3 text-xs font-semibold md:hidden"
+              onClick={onOpenFilters}
             >
-              {t("clearFilters")}
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h18M6 12h12m-9 8h6" />
+              </svg>
+              {t("filters")}
             </button>
-          )}
-        </div>
-      </div>
-
-      {activeError && (
-        <div className="mx-auto w-full max-w-6xl">
-          <div className="feedback-banner feedback-banner-error animate-fade-in">
-            <span className="feedback-icon" aria-hidden="true" />
-            <p className="text-sm font-medium leading-6 text-copper">
-              {t("apiErrorWithValue", { message: activeError })}
-            </p>
+            <div className="flex items-center gap-2">
+              <span className="hidden text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/40 sm:inline">
+                {t("sortBy")}
+              </span>
+              <div className="flex rounded-lg border border-ink/10 bg-surface-muted p-1">
+                {(["stars", "updated", "relevance"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    disabled={mode === "relevance" && disableRelevanceSort}
+                    className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                      sortMode === mode
+                        ? "bg-surface text-ink shadow-sm"
+                        : "text-ink/50 hover:bg-surface/70 hover:text-ink"
+                    } ${
+                      mode === "relevance" && disableRelevanceSort
+                        ? "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-ink/50"
+                        : ""
+                    }`}
+                    onClick={() => setSortMode(mode)}
+                  >
+                    {t(sortLabelKeys[mode])}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {hasActiveFilters && (
+              <button
+                type="button"
+                className="h-8 rounded-md px-2 text-[11px] font-semibold text-copper transition hover:bg-copper/10 hover:text-copper"
+                onClick={clearAllFilters}
+              >
+                {t("clearFilters")}
+              </button>
+            )}
           </div>
         </div>
-      )}
 
-      {loading && !activeError && (
-        <div className="mx-auto h-1.5 w-full max-w-6xl overflow-hidden rounded-full bg-ink/[0.03] shadow-inner">
-          <div className="animate-loading-bar h-full rounded-full bg-moss/40 shadow-[0_0_10px_rgba(47,93,80,0.3)]" />
-        </div>
-      )}
+        {activeError && (
+          <div className="animate-fade-in rounded-lg border border-copper/20 bg-copper/10 p-4 text-copper">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="flex min-w-0 gap-3">
+                <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-sm bg-copper" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-copper">
+                    {t("configNeedsAttention")}
+                  </p>
+                  <p className="mt-1 text-sm font-medium leading-6 text-copper/85">
+                    {t(getConfigHintKey(activeError))}
+                  </p>
+                  <code className="mt-3 block overflow-x-auto rounded-md bg-copper/10 px-3 py-2 text-xs font-semibold leading-5 text-copper">
+                    {activeError}
+                  </code>
+                </div>
+              </div>
+
+              <div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
+                <a
+                  href="/settings/"
+                  className="inline-flex h-8 items-center rounded-md bg-surface px-3 text-xs font-semibold text-copper shadow-sm transition hover:bg-copper/10"
+                >
+                  {t("viewSettings")}
+                </a>
+                <a
+                  href="/admin/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex h-8 items-center rounded-md bg-copper px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-copper/90"
+                >
+                  {t("goToAdmin")}
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {loading && !activeError && (
+          <div className="h-1 w-full overflow-hidden rounded-full bg-ink/[0.06]">
+            <div className="animate-loading-bar h-full rounded-full bg-moss/55" />
+          </div>
+        )}
+      </div>
     </div>
   );
 };

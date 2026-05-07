@@ -71,6 +71,30 @@ const translations = {
       "Start by syncing your GitHub stars to see them here.",
     noReposForFiltersHint:
       "Try adjusting your search or filters to find what you're looking for.",
+    onboardingKicker: "Getting started",
+    onboardingTitle: "Connect your stars before the repo index appears.",
+    onboardingDesc:
+      "StarSorty needs a GitHub source and classification settings before it can build a useful, searchable catalog.",
+    onboardingGithub: "Check the GitHub source",
+    onboardingGithubDesc:
+      "Confirm the username or user list that StarSorty should sync.",
+    onboardingSync: "Run the first sync",
+    onboardingSyncDesc:
+      "Pull starred repositories into the local database, then the list will populate here.",
+    onboardingClassify: "Classify and review",
+    onboardingClassifyDesc:
+      "Use AI classification as a first pass, then refine low-confidence results manually.",
+    onboardingNote:
+      "If this is your first run, start in Admin. Settings is read-only and useful for checking the current server configuration.",
+    nextActions: "Next actions",
+    viewSettings: "View settings",
+    configNeedsAttention: "Configuration needs attention",
+    configHintAiProvider:
+      "AI classification is not configured yet. Add AI_PROVIDER and the matching API key before running classification.",
+    configHintGithub:
+      "GitHub sync is not fully configured yet. Check the GitHub username, token, and sync settings.",
+    configHintGeneric:
+      "The server returned a configuration error. Review the current settings before retrying.",
     clearFilters: "Clear filters",
     noDescription: "No description yet.",
     viewOnGithub: "View on GitHub",
@@ -310,6 +334,30 @@ const translations = {
     noReposForFilters: "当前筛选条件下没有结果，试试清空筛选。",
     noReposHint: "先同步你的 GitHub Star，这里才会出现仓库列表。",
     noReposForFiltersHint: "可以调整搜索词或筛选条件，再试一次。",
+    onboardingKicker: "开始使用",
+    onboardingTitle: "先连接你的 Star，仓库索引才会出现。",
+    onboardingDesc:
+      "StarSorty 需要 GitHub 来源和分类配置，才能生成可搜索、可筛选的本地仓库目录。",
+    onboardingGithub: "检查 GitHub 来源",
+    onboardingGithubDesc:
+      "确认要同步的用户名或用户列表，以及 GitHub Token 是否可用。",
+    onboardingSync: "执行首次同步",
+    onboardingSyncDesc:
+      "把 GitHub Star 拉到本地数据库后，这里会开始出现仓库列表。",
+    onboardingClassify: "分类并复核",
+    onboardingClassifyDesc:
+      "先用 AI 做第一轮分类，再人工修正低置信度或不符合预期的结果。",
+    onboardingNote:
+      "首次运行建议从管理页开始。设置页是只读视图，适合检查当前服务端配置。",
+    nextActions: "下一步",
+    viewSettings: "查看设置",
+    configNeedsAttention: "配置需要处理",
+    configHintAiProvider:
+      "AI 分类还没有配置好。运行分类前，需要补上 AI_PROVIDER 和对应 API Key。",
+    configHintGithub:
+      "GitHub 同步配置还不完整。请检查用户名、Token 和同步设置。",
+    configHintGeneric:
+      "服务端返回了配置错误。请先检查当前设置，再重试操作。",
     clearFilters: "清空筛选",
     noDescription: "暂无描述。",
     viewOnGithub: "在 GitHub 查看",

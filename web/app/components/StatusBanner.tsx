@@ -31,27 +31,27 @@ const StatusBanner = ({
   const isVisible = !!actionMessage || backgroundRunning || pollingPaused;
 
   return (
-    <div className="pointer-events-none fixed left-1/2 top-4 z-[100] w-full max-w-md -translate-x-1/2 px-4 md:top-8">
+    <div className="pointer-events-none fixed left-1/2 top-3 z-[100] w-full max-w-md -translate-x-1/2 px-4">
       <div
-        className={`pointer-events-auto mx-auto rounded-[2rem] glass shadow-premium transition-all duration-700 [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] border-ink/5 ${
+        className={`pointer-events-auto mx-auto rounded-lg border border-ink/10 bg-surface shadow-premium transition-all duration-300 ${
           isVisible
             ? "translate-y-0 scale-100 opacity-100"
             : "-translate-y-16 scale-95 opacity-0"
         }`}
       >
-        <div className="flex items-start justify-between gap-4 px-4 py-3.5 sm:px-5 sm:py-4">
-          <div className="flex min-w-0 items-start gap-3.5">
+        <div className="flex items-start justify-between gap-4 px-4 py-3">
+          <div className="flex min-w-0 items-start gap-3">
             {backgroundRunning ? (
-              <div className="relative mt-1 flex h-3 w-3 shrink-0">
+              <div className="relative mt-1.5 flex h-2.5 w-2.5 shrink-0">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-moss opacity-75" />
-                <span className="relative inline-flex h-3 w-3 rounded-full bg-moss" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-sm bg-moss" />
               </div>
             ) : (
               <div
-                className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${
+                className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-sm ${
                   actionStatus === "error"
-                    ? "bg-copper shadow-[0_0_10px_rgba(184,102,43,0.5)]"
-                    : "bg-moss shadow-[0_0_10px_rgba(47,93,80,0.5)]"
+                    ? "bg-copper"
+                    : "bg-moss"
                 }`}
               />
             )}
@@ -74,7 +74,7 @@ const StatusBanner = ({
             {pollingPaused && (
               <button
                 onClick={handleResumePolling}
-                className="rounded-full btn-ios-secondary px-3 py-1.5 text-[10px] font-semibold tracking-[0.1em] text-copper"
+                className="btn-ios-secondary h-7 px-2.5 text-[10px] font-semibold text-copper"
               >
                 {t("reconnect")}
               </button>
@@ -83,7 +83,7 @@ const StatusBanner = ({
             {(actionMessage || !backgroundRunning) && (
               <button
                 onClick={dismissAction}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-ink/30 transition-colors hover:bg-ink/5 hover:text-ink/55"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-ink/35 transition-colors hover:bg-ink/5 hover:text-ink/60"
                 aria-label={t("dismiss")}
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

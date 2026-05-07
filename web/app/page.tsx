@@ -12,7 +12,7 @@ import { useTheme } from "./lib/theme";
 
 export default function Home() {
   const { t } = useI18n();
-  const { theme, toggleTheme } = useTheme();
+  const { toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { filters, operations, repoList, sidebar, statusBanner, summary } =
     useHomePageData(t);
@@ -57,18 +57,18 @@ export default function Home() {
   }, []);
 
   return (
-    <main className="relative flex h-screen w-full overflow-hidden bg-transparent perspective-lg">
-      <aside className="glass-dark z-20 hidden h-full w-80 flex-shrink-0 flex-col border-r border-ink/5 md:flex lg:w-96">
+    <main className="relative flex h-screen w-full overflow-hidden bg-sand text-ink">
+      <aside className="z-20 hidden h-full w-72 flex-shrink-0 flex-col border-r border-ink/10 bg-surface md:flex xl:w-80">
         <Sidebar {...sidebarProps} />
       </aside>
 
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-40 bg-ink/40 backdrop-blur-sm md:hidden"
+          className="fixed inset-0 z-40 bg-ink/35 md:hidden"
           onClick={() => setSidebarOpen(false)}
         >
           <aside
-            className="h-full w-[min(88vw,24rem)] border-r border-ink/5 bg-surface/90 shadow-premium"
+            className="h-full w-[min(90vw,22rem)] border-r border-ink/10 bg-surface shadow-premium"
             onClick={(event) => event.stopPropagation()}
           >
             <Sidebar {...sidebarProps} />
@@ -76,14 +76,10 @@ export default function Home() {
         </div>
       )}
 
-      <section className="custom-scrollbar relative h-full flex-1 overflow-y-auto bg-surface/20">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.55),transparent_65%)] opacity-80 dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_62%)]" />
-        <div className="pointer-events-none absolute right-[8%] top-28 h-48 w-48 rounded-full bg-moss/10 blur-3xl dark:bg-moss/15" />
-        <div className="pointer-events-none absolute left-[12%] top-44 h-36 w-36 rounded-full bg-copper/10 blur-3xl dark:bg-copper/10" />
-        <div className="relative mx-auto w-full max-w-6xl space-y-16 p-6 md:p-12 lg:p-16">
+      <section className="custom-scrollbar relative h-full flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[118rem] space-y-4 px-4 py-4 sm:px-5 md:space-y-5 md:px-6 lg:px-8">
           <Header
             t={t}
-            theme={theme}
             totalRepos={summary.overallTotal}
             shownCount={summary.shownCount}
             activeFilterCount={filters.activeFilterCount}
@@ -98,7 +94,7 @@ export default function Home() {
             handleBackgroundStop={operations.handleBackgroundStop}
           />
 
-          <div className="space-y-12">
+          <div className="space-y-4">
             <SearchSection
               t={t}
               query={filters.query}

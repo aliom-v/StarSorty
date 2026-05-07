@@ -18,23 +18,42 @@ type RepoResultsProps = {
 };
 
 const SkeletonCard = () => (
-  <div className="rounded-[2.5rem] border border-ink/5 bg-surface/20 p-8 animate-pulse-subtle space-y-8">
+  <div className="animate-pulse-subtle space-y-4 rounded-lg border border-ink/10 bg-surface p-4">
     <div className="flex items-start justify-between gap-6">
-      <div className="flex-1 space-y-4">
-        <div className="h-8 w-1/3 rounded-2xl bg-ink/5" />
+      <div className="flex-1 space-y-3">
+        <div className="h-4 w-40 rounded bg-ink/10" />
+        <div className="h-6 w-1/3 rounded bg-ink/10" />
         <div className="space-y-2">
-          <div className="h-4 w-full rounded-lg bg-ink/5" />
-          <div className="h-4 w-2/3 rounded-lg bg-ink/5" />
+          <div className="h-3.5 w-full rounded bg-ink/10" />
+          <div className="h-3.5 w-2/3 rounded bg-ink/10" />
         </div>
       </div>
-      <div className="h-12 w-24 shrink-0 rounded-full bg-ink/5" />
+      <div className="h-9 w-24 shrink-0 rounded-md bg-ink/10" />
     </div>
     <div className="flex gap-2">
-      <div className="h-8 w-20 rounded-full bg-ink/5" />
-      <div className="h-8 w-24 rounded-full bg-ink/5" />
+      <div className="h-6 w-20 rounded-md bg-ink/10" />
+      <div className="h-6 w-24 rounded-md bg-ink/10" />
     </div>
   </div>
 );
+
+const onboardingSteps = [
+  {
+    key: "github",
+    label: "onboardingGithub",
+    description: "onboardingGithubDesc",
+  },
+  {
+    key: "sync",
+    label: "onboardingSync",
+    description: "onboardingSyncDesc",
+  },
+  {
+    key: "classify",
+    label: "onboardingClassify",
+    description: "onboardingClassifyDesc",
+  },
+] as const;
 
 const RepoResults = ({
   t,
@@ -49,9 +68,9 @@ const RepoResults = ({
   onRepoClick,
 }: RepoResultsProps) => {
   return (
-    <div className="space-y-6 pb-24">
+    <div className="space-y-3 pb-20">
       {loading && repos.length === 0 && (
-        <div className="grid grid-cols-1 gap-6">
+        <div className="grid grid-cols-1 gap-3">
           {[...Array(5)].map((_, index) => (
             <SkeletonCard key={index} />
           ))}
@@ -59,38 +78,106 @@ const RepoResults = ({
       )}
 
       {repos.length === 0 && !loading && (
-        <div className="panel-muted animate-fade-in flex flex-col items-center justify-center rounded-[2.5rem] px-6 py-24 text-center">
-          <div className="glass mb-8 flex h-24 w-24 items-center justify-center rounded-full text-ink/10 shadow-soft">
-            <svg className="h-12 w-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-              />
-            </svg>
-          </div>
-          <h3 className="mb-3 text-2xl font-black tracking-tight text-ink">
-            {hasActiveFilters ? t("noReposForFilters") : t("noRepos")}
-          </h3>
-          <p className="mx-auto mb-8 max-w-sm font-medium text-subtle">
-            {hasActiveFilters
-              ? t("noReposForFiltersHint")
-              : t("noReposHint")}
-          </p>
-          {hasActiveFilters && (
-            <button
-              type="button"
-              className="rounded-full btn-ios-primary px-8 py-3.5 text-xs font-black uppercase tracking-[0.18em]"
-              onClick={clearAllFilters}
-            >
-              {t("clearFilters")}
-            </button>
+        <div className="panel-muted animate-fade-in overflow-hidden">
+          {hasActiveFilters ? (
+            <div className="flex flex-col items-center justify-center px-6 py-14 text-center">
+              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-lg border border-ink/10 bg-surface text-ink/25">
+                <svg className="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
+              </div>
+              <h3 className="mb-2 font-display text-xl font-semibold tracking-normal text-ink">
+                {t("noReposForFilters")}
+              </h3>
+              <p className="mx-auto mb-5 max-w-sm text-sm font-medium leading-6 text-subtle">
+                {t("noReposForFiltersHint")}
+              </p>
+              <button
+                type="button"
+                className="btn-ios-primary h-9 px-4 text-xs font-semibold"
+                onClick={clearAllFilters}
+              >
+                {t("clearFilters")}
+              </button>
+            </div>
+          ) : (
+            <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_22rem]">
+              <div className="px-5 py-6 md:px-6 md:py-7">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-moss/10 text-moss">
+                    <svg className="h-[1.375rem] w-[1.375rem]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h10M4 17h7" />
+                    </svg>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-moss/70">
+                      {t("onboardingKicker")}
+                    </p>
+                    <h3 className="mt-2 font-display text-2xl font-semibold leading-tight text-ink">
+                      {t("onboardingTitle")}
+                    </h3>
+                    <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-soft">
+                      {t("onboardingDesc")}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-6 grid gap-3">
+                  {onboardingSteps.map((step, index) => (
+                    <div key={step.key} className="flex gap-3 rounded-lg bg-surface p-3">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-ink text-xs font-semibold text-surface">
+                        {index + 1}
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-ink">
+                          {t(step.label)}
+                        </p>
+                        <p className="mt-1 text-sm font-medium leading-6 text-subtle">
+                          {t(step.description)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="border-t border-ink/10 bg-surface px-5 py-5 lg:border-l lg:border-t-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink/45">
+                  {t("nextActions")}
+                </p>
+                <div className="mt-4 grid gap-2">
+                  <a
+                    href="/settings/"
+                    className="flex items-center justify-between rounded-lg bg-surface-muted px-3 py-3 text-sm font-semibold text-ink transition hover:bg-moss/10 hover:text-moss"
+                  >
+                    <span>{t("viewSettings")}</span>
+                    <span className="text-ink/35">→</span>
+                  </a>
+                  <a
+                    href="/admin/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-between rounded-lg bg-moss px-3 py-3 text-sm font-semibold text-white transition hover:bg-moss/90"
+                  >
+                    <span>{t("goToAdmin")}</span>
+                    <span className="text-white/70">→</span>
+                  </a>
+                </div>
+                <p className="mt-4 text-xs font-medium leading-5 text-subtle">
+                  {t("onboardingNote")}
+                </p>
+              </div>
+            </div>
           )}
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-6">
+      <div className="grid grid-cols-1 gap-3">
         {repos.map((repo, index) => (
           <RepoCard
             key={repo.full_name}
@@ -104,15 +191,15 @@ const RepoResults = ({
       </div>
 
       {hasMore && (
-        <div className="flex justify-center pt-8">
+        <div className="flex justify-center pt-5">
           <button
             type="button"
             onClick={onLoadMore}
             disabled={loading || loadingMore}
-            className={`group flex items-center gap-4 rounded-full glass px-12 py-5 text-xs font-black uppercase tracking-widest text-ink transition-all ${
+            className={`glass flex h-10 items-center gap-3 rounded-md px-5 text-xs font-semibold text-ink transition-all ${
               loading || loadingMore
-                ? "cursor-not-allowed opacity-60 hover:shadow-none active:scale-100"
-                : "hover:shadow-premium active:scale-95"
+                ? "cursor-not-allowed opacity-60"
+                : "hover:border-moss/25 hover:bg-moss/10 hover:text-moss active:translate-y-px"
             }`}
           >
             {loadingMore ? (
