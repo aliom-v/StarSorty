@@ -1,7 +1,7 @@
 "use client";
 
 import type { Messages, MessageValues } from "../lib/i18n";
-import type { HomeSortMode } from "../lib/homePageTypes";
+import type { HomeDensityMode, HomeGroupMode, HomeSortMode } from "../lib/homePageTypes";
 
 type SearchSectionProps = {
   t: (key: keyof Messages, params?: MessageValues) => string;
@@ -15,6 +15,12 @@ type SearchSectionProps = {
   activeFilterCount: number;
   sortMode: HomeSortMode;
   setSortMode: (mode: HomeSortMode) => void;
+  densityMode: HomeDensityMode;
+  setDensityMode: (mode: HomeDensityMode) => void;
+  groupMode: HomeGroupMode;
+  setGroupMode: (mode: HomeGroupMode) => void;
+  selectedCount: number;
+  clearSelection: () => void;
   activeError: string | null;
   loading: boolean;
   hasActiveFilters: boolean;
@@ -48,6 +54,12 @@ const SearchSection = ({
   activeFilterCount,
   sortMode,
   setSortMode,
+  densityMode,
+  setDensityMode,
+  groupMode,
+  setGroupMode,
+  selectedCount,
+  clearSelection,
   activeError,
   loading,
   hasActiveFilters,
@@ -149,6 +161,37 @@ const SearchSection = ({
                 ))}
               </div>
             </div>
+            <div className="flex items-center gap-2">
+              <span className="hidden text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/40 sm:inline">
+                {t("view")}
+              </span>
+              <div className="flex rounded-lg border border-ink/10 bg-surface-muted p-1">
+                {(["comfortable", "compact"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                      densityMode === mode
+                        ? "bg-surface text-ink shadow-sm"
+                        : "text-ink/50 hover:bg-surface/70 hover:text-ink"
+                    }`}
+                    onClick={() => setDensityMode(mode)}
+                  >
+                    {mode === "compact" ? t("compactDensity") : t("comfortableDensity")}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <select
+              className="h-8 rounded-md border border-ink/10 bg-surface-muted px-2 text-[11px] font-semibold text-ink/65 outline-none transition focus:border-moss/45 focus:ring-2 focus:ring-moss/10"
+              value={groupMode}
+              onChange={(event) => setGroupMode(event.target.value as HomeGroupMode)}
+              aria-label={t("groupBy")}
+            >
+              <option value="none">{t("groupNone")}</option>
+              <option value="category">{t("groupCategory")}</option>
+              <option value="language">{t("groupLanguage")}</option>
+            </select>
             {hasActiveFilters && (
               <button
                 type="button"
@@ -156,6 +199,15 @@ const SearchSection = ({
                 onClick={clearAllFilters}
               >
                 {t("clearFilters")}
+              </button>
+            )}
+            {selectedCount > 0 && (
+              <button
+                type="button"
+                className="h-8 rounded-md bg-ink px-3 text-[11px] font-semibold text-surface transition hover:bg-ink/90"
+                onClick={clearSelection}
+              >
+                {t("selectedCountWithValue", { count: selectedCount })}
               </button>
             )}
           </div>

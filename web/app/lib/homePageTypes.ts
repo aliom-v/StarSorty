@@ -2,6 +2,10 @@ export type HomeTagMode = "or" | "and";
 
 export type HomeSortMode = "relevance" | "stars" | "updated";
 
+export type HomeDensityMode = "comfortable" | "compact";
+
+export type HomeGroupMode = "none" | "category" | "language";
+
 export type HomeActionStatus = "success" | "error" | null;
 
 export type HomeRepo = {
@@ -23,6 +27,7 @@ export type HomeRepo = {
   keywords?: string[];
   search_score?: number | null;
   match_reasons?: string[];
+  ai_confidence?: number | null;
   pushed_at?: string | null;
   updated_at?: string | null;
   starred_at?: string | null;

@@ -2,7 +2,7 @@
 
 import RepoCard from "./RepoCard";
 import type { Messages, MessageValues } from "../lib/i18n";
-import type { HomeRepo } from "../lib/homePageTypes";
+import type { HomeDensityMode, HomeGroupMode, HomeRepo } from "../lib/homePageTypes";
 
 type RepoResultsProps = {
   t: (key: keyof Messages, params?: MessageValues) => string;
@@ -12,6 +12,11 @@ type RepoResultsProps = {
   hasMore: boolean;
   loadingMore: boolean;
   hasActiveFilters: boolean;
+  densityMode: HomeDensityMode;
+  groupMode: HomeGroupMode;
+  selectedRepoNames: Set<string>;
+  onToggleSelect: (repo: HomeRepo) => void;
+  onSelectGroup: (repos: HomeRepo[]) => void;
   clearAllFilters: () => void;
   onLoadMore: () => void;
   onRepoClick: (repo: HomeRepo) => void;
@@ -63,6 +68,11 @@ const RepoResults = ({
   hasMore,
   loadingMore,
   hasActiveFilters,
+  densityMode,
+  groupMode,
+  selectedRepoNames,
+  onToggleSelect,
+  onSelectGroup,
   clearAllFilters,
   onLoadMore,
   onRepoClick,
@@ -177,18 +187,59 @@ const RepoResults = ({
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-3">
-        {repos.map((repo, index) => (
-          <RepoCard
-            key={repo.full_name}
-            repo={repo}
-            index={index}
-            queryActive={!!query}
-            onRepoClick={onRepoClick}
-            t={t}
-          />
-        ))}
-      </div>
+      {(() => {
+        const groups = repos.reduce<Record<string, HomeRepo[]>>((acc, repo) => {
+          const key =
+            groupMode === "category"
+              ? repo.category || t("unknown")
+              : groupMode === "language"
+                ? repo.language || t("unknown")
+                : "";
+          if (!acc[key]) acc[key] = [];
+          acc[key].push(repo);
+          return acc;
+        }, {});
+        const entries = groupMode === "none" ? [["", repos] as const] : Object.entries(groups);
+
+        return (
+          <div className="space-y-4">
+            {entries.map(([groupName, groupRepos]) => (
+              <section key={groupName || "all"} className="space-y-2">
+                {groupMode !== "none" && (
+                  <div className="flex items-center justify-between rounded-lg border border-ink/10 bg-surface-muted px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="section-kicker">{groupName}</span>
+                      <span className="pill-muted">{groupRepos.length}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onSelectGroup(groupRepos)}
+                      className="h-7 rounded-md px-2 text-[11px] font-semibold text-moss transition hover:bg-moss/10"
+                    >
+                      {t("selectGroup")}
+                    </button>
+                  </div>
+                )}
+                <div className="grid grid-cols-1 gap-3">
+                  {groupRepos.map((repo, index) => (
+                    <RepoCard
+                      key={repo.full_name}
+                      repo={repo}
+                      index={index}
+                      queryActive={!!query}
+                      density={densityMode}
+                      selected={selectedRepoNames.has(repo.full_name)}
+                      onToggleSelect={onToggleSelect}
+                      onRepoClick={onRepoClick}
+                      t={t}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        );
+      })()}
 
       {hasMore && (
         <div className="flex justify-center pt-5">

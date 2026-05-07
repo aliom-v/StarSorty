@@ -33,6 +33,9 @@ type RepoCardProps = {
   repo: Repo;
   index: number;
   queryActive: boolean;
+  density: "comfortable" | "compact";
+  selected: boolean;
+  onToggleSelect: (repo: Repo) => void;
   onRepoClick: (repo: Repo) => void;
   t: (key: keyof Messages, params?: MessageValues) => string;
 };
@@ -68,6 +71,9 @@ const RepoCard = memo(function RepoCard({
   repo,
   index,
   queryActive,
+  density,
+  selected,
+  onToggleSelect,
   onRepoClick,
   t,
 }: RepoCardProps) {
@@ -78,13 +84,27 @@ const RepoCard = memo(function RepoCard({
 
   return (
     <article
-      className={`group animate-fade-up rounded-lg border border-ink/10 bg-surface p-4 shadow-soft transition hover:border-moss/25 hover:bg-moss/5 card-3d-effect stagger-${
+      className={`group animate-fade-up rounded-lg border ${
+        selected ? "border-moss/45 bg-moss/10" : "border-ink/10 bg-surface"
+      } ${density === "compact" ? "p-3" : "p-4"} shadow-soft transition hover:border-moss/25 hover:bg-moss/5 card-3d-effect stagger-${
         (index % 5) + 1
       }`}
     >
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onToggleSelect(repo)}
+              className={`flex h-5 w-5 items-center justify-center rounded border text-[10px] font-bold transition ${
+                selected
+                  ? "border-moss bg-moss text-white"
+                  : "border-ink/15 bg-surface-muted text-transparent hover:border-moss/40"
+              }`}
+              aria-label={selected ? t("deselectRepo") : t("selectRepo")}
+            >
+              ✓
+            </button>
             <span className="truncate text-xs font-semibold text-subtle">{repo.owner}</span>
             <span className="h-1 w-1 rounded-full bg-ink/20" />
             {repo.language && <span className="pill-muted">{repo.language}</span>}
@@ -113,13 +133,13 @@ const RepoCard = memo(function RepoCard({
             </span>
           </div>
 
-          {displayDescription ? (
+          {density !== "compact" && displayDescription ? (
             <p className="mt-2 line-clamp-2 max-w-5xl text-sm font-medium leading-6 text-soft">
               {displayDescription}
             </p>
-          ) : (
+          ) : density !== "compact" ? (
             <p className="mt-2 text-sm font-medium italic text-subtle">{t("noDescription")}</p>
-          )}
+          ) : null}
 
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs font-semibold text-subtle">
             <div className="flex items-center gap-1.5 text-moss">
@@ -138,7 +158,7 @@ const RepoCard = memo(function RepoCard({
             )}
           </div>
 
-          {repo.tags && repo.tags.length > 0 && (
+          {density !== "compact" && repo.tags && repo.tags.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1.5">
               {repo.tags.slice(0, 7).map((repoTag) => (
                 <span key={repoTag} className="pill-muted">

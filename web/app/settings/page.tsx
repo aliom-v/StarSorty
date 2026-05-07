@@ -50,46 +50,46 @@ export default function SettingsPage() {
   }, [loadSettings]);
 
   return (
-    <main className="min-h-screen px-4 py-8 md:px-12 md:py-12 bg-transparent">
-      <div className="mx-auto max-w-4xl space-y-12 animate-fade-in">
-        <header className="hero-surface soft-elevated relative overflow-hidden rounded-[2.5rem] p-7 md:p-8">
-          <div className="hero-orb hero-orb-moss" />
-          <div className="hero-orb hero-orb-copper" />
-          <div className="relative flex flex-col gap-8 md:flex-row md:items-end md:justify-between">
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-8 bg-copper rounded-full" />
-              <p className="section-kicker text-copper">
-                {t("settings")}
+    <main className="min-h-screen px-4 py-6 md:px-8 md:py-8 bg-transparent">
+      <div className="mx-auto max-w-[118rem] space-y-5 animate-fade-in">
+        <header className="rounded-lg border border-ink/10 bg-surface p-5 shadow-soft">
+          <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <span className="rounded-md bg-ink px-2 py-1 font-display text-sm font-semibold leading-none text-surface">
+                  StarSorty
+                </span>
+                <p className="section-kicker text-copper">
+                  {t("settings")}
+                </p>
+              </div>
+              <h1 className="section-title text-2xl font-semibold md:text-3xl">
+                {t("settingsPageTitle")}
+              </h1>
+              <p className="max-w-3xl text-sm font-medium leading-6 text-soft">
+                {t("settingsPageSubtitle")}
               </p>
             </div>
-            <h1 className="section-title text-4xl font-extrabold md:text-5xl">
-              {t("settingsPageTitle")}
-            </h1>
-            <p className="max-w-2xl text-base leading-relaxed text-soft md:text-lg">
-              {t("settingsPageSubtitle")}
-            </p>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-             <Link
-              href="/"
-              className="flex items-center gap-2 rounded-full btn-ios-secondary px-6 py-2.5 text-xs font-semibold tracking-[0.08em]"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-              </svg>
-              {t("back")}
-            </Link>
-            <Link
-              href="/admin/"
-              className="flex items-center gap-2 rounded-full btn-ios-primary px-6 py-2.5 text-xs font-semibold tracking-[0.08em]"
-            >
-              {t("goToAdmin")}
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-              </svg>
-            </Link>
-          </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <Link
+                href="/"
+                className="flex items-center gap-2 rounded-full btn-ios-secondary px-6 py-2.5 text-xs font-semibold tracking-[0.08em]"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                {t("back")}
+              </Link>
+              <Link
+                href="/admin/"
+                className="flex items-center gap-2 rounded-full btn-ios-primary px-6 py-2.5 text-xs font-semibold tracking-[0.08em]"
+              >
+                {t("goToAdmin")}
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </Link>
+            </div>
           </div>
         </header>
 
@@ -117,10 +117,23 @@ export default function SettingsPage() {
           </section>
         ) : (
           <div className="admin-section">
-            <h2 className="panel-title mb-8">
-              {t("currentConfig")}
-            </h2>
-            <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
+            <div className="panel-header flex-wrap items-start">
+              <div>
+                <h2 className="panel-title">
+                  {t("currentConfig")}
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-soft">
+                  {t("settingsSnapshotDesc")}
+                </p>
+              </div>
+              <Link
+                href="/admin/"
+                className="btn-ios-secondary h-9 px-3 text-xs font-semibold"
+              >
+                {t("goToAdmin")}
+              </Link>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               <div className="info-tile space-y-2 p-6">
                 <span className="info-label">
                   {t("githubMode")}

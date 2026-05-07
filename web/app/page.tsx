@@ -9,11 +9,15 @@ import StatusBanner from "./components/StatusBanner";
 import { useI18n } from "./lib/i18n";
 import { useHomePageData } from "./lib/useHomePageData";
 import { useTheme } from "./lib/theme";
+import type { HomeDensityMode, HomeGroupMode, HomeRepo } from "./lib/homePageTypes";
 
 export default function Home() {
   const { t } = useI18n();
   const { toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [densityMode, setDensityMode] = useState<HomeDensityMode>("comfortable");
+  const [resultGroupMode, setResultGroupMode] = useState<HomeGroupMode>("none");
+  const [selectedRepoNames, setSelectedRepoNames] = useState<Set<string>>(() => new Set());
   const { filters, operations, repoList, sidebar, statusBanner, summary } =
     useHomePageData(t);
   const sidebarProps = {
@@ -55,6 +59,26 @@ export default function Home() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
+
+  const toggleRepoSelection = (repo: HomeRepo) => {
+    setSelectedRepoNames((current) => {
+      const next = new Set(current);
+      if (next.has(repo.full_name)) {
+        next.delete(repo.full_name);
+      } else {
+        next.add(repo.full_name);
+      }
+      return next;
+    });
+  };
+
+  const selectGroup = (repos: HomeRepo[]) => {
+    setSelectedRepoNames((current) => {
+      const next = new Set(current);
+      repos.forEach((repo) => next.add(repo.full_name));
+      return next;
+    });
+  };
 
   return (
     <main className="relative flex h-screen w-full overflow-hidden bg-sand text-ink">
@@ -107,6 +131,12 @@ export default function Home() {
               activeFilterCount={filters.activeFilterCount}
               sortMode={filters.sortMode}
               setSortMode={filters.setSortMode}
+              densityMode={densityMode}
+              setDensityMode={setDensityMode}
+              groupMode={resultGroupMode}
+              setGroupMode={setResultGroupMode}
+              selectedCount={selectedRepoNames.size}
+              clearSelection={() => setSelectedRepoNames(new Set())}
               activeError={repoList.activeError}
               loading={repoList.loading}
               hasActiveFilters={filters.hasActiveFilters}
@@ -122,6 +152,11 @@ export default function Home() {
               hasMore={repoList.hasMore}
               loadingMore={repoList.loadingMore}
               hasActiveFilters={filters.hasActiveFilters}
+              densityMode={densityMode}
+              groupMode={resultGroupMode}
+              selectedRepoNames={selectedRepoNames}
+              onToggleSelect={toggleRepoSelection}
+              onSelectGroup={selectGroup}
               clearAllFilters={filters.clearAllFilters}
               onLoadMore={repoList.loadNextPage}
               onRepoClick={repoList.handleRepoClick}

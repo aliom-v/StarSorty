@@ -62,6 +62,11 @@ export default function RepoDetailClient({
   const [message, setMessage] = useState<string | null>(null);
   const [messageStatus, setMessageStatus] = useState<"success" | "error">("success");
   const [fetchingReadme, setFetchingReadme] = useState(false);
+  const [savingOverride, setSavingOverride] = useState(false);
+  const [overrideCategory, setOverrideCategory] = useState("");
+  const [overrideSubcategory, setOverrideSubcategory] = useState("");
+  const [overrideTagIds, setOverrideTagIds] = useState("");
+  const [overrideNote, setOverrideNote] = useState("");
   const repoRequestTrackerRef = useRef(createRequestTracker());
   const historyRequestTrackerRef = useRef(createRequestTracker());
   const aiConfidencePercent =
@@ -118,6 +123,16 @@ export default function RepoDetailClient({
   }, [encodedFullName, fullName]);
 
   useEffect(() => {
+    setOverrideCategory(repo?.override_category || repo?.category || repo?.ai_category || "");
+    setOverrideSubcategory(repo?.override_subcategory || repo?.subcategory || repo?.ai_subcategory || "");
+    setOverrideTagIds(
+      (repo?.override_tag_ids?.length ? repo.override_tag_ids : repo?.tag_ids || repo?.ai_tag_ids || [])
+        .join(", ")
+    );
+    setOverrideNote(repo?.override_note || "");
+  }, [repo]);
+
+  useEffect(() => {
     if (!fullName) {
       repoRequestTrackerRef.current.reset();
       historyRequestTrackerRef.current.reset();
@@ -171,6 +186,49 @@ export default function RepoDetailClient({
     }
   };
 
+  const handleSaveOverride = async () => {
+    if (!fullName) return;
+    const category = overrideCategory.trim();
+    const subcategory = overrideSubcategory.trim();
+    const tagIds = overrideTagIds
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const note = overrideNote.trim();
+    if (!category || !subcategory) {
+      setMessageStatus("error");
+      setMessage(t("overrideRequired"));
+      return;
+    }
+    setSavingOverride(true);
+    setMessage(null);
+    setMessageStatus("success");
+    try {
+      const res = await adminFetch(`${API_BASE_URL}/repos/${encodedFullName}/override`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category,
+          subcategory,
+          tag_ids: tagIds,
+          note: note || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const detail = await readApiError(res, t("overrideSaveFailed"));
+        throw new Error(detail);
+      }
+      setMessageStatus("success");
+      setMessage(t("overrideSaved"));
+      await Promise.all([loadRepo(), loadHistory()]);
+    } catch (err) {
+      setMessageStatus("error");
+      setMessage(getErrorMessage(err, t("overrideSaveFailed")));
+    } finally {
+      setSavingOverride(false);
+    }
+  };
+
   if (!fullName) {
     return (
       <main className="min-h-screen px-6 py-12">
@@ -203,15 +261,15 @@ export default function RepoDetailClient({
   }
 
   return (
-    <main className="min-h-screen px-4 py-8 md:px-12 md:py-12 bg-transparent">
-      <div className="mx-auto max-w-5xl space-y-10 animate-fade-in">
-        <header className="hero-surface soft-elevated relative overflow-hidden rounded-[2.5rem] p-7 md:p-8">
-          <div className="hero-orb hero-orb-moss" />
-          <div className="hero-orb hero-orb-copper" />
-          <div className="relative flex flex-col gap-8 md:flex-row md:items-end md:justify-between">
-          <div className="space-y-4 flex-1 min-w-0">
+    <main className="min-h-screen px-4 py-6 md:px-8 md:py-8 bg-transparent">
+      <div className="mx-auto max-w-[118rem] space-y-5 animate-fade-in">
+        <header className="rounded-lg border border-ink/10 bg-surface p-5 shadow-soft">
+          <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+            <div className="space-y-4 flex-1 min-w-0">
              <div className="flex items-center gap-2">
-              <span className="h-2 w-8 bg-copper rounded-full" />
+              <span className="rounded-md bg-ink px-2 py-1 font-display text-sm font-semibold leading-none text-surface">
+                StarSorty
+              </span>
               <p className="section-kicker text-copper">
                 {t("repoDetails")}
               </p>
@@ -229,34 +287,34 @@ export default function RepoDetailClient({
             <h1 className="section-title text-3xl font-extrabold break-words md:text-4xl">
               {repo?.name || fullName}
             </h1>
-            <p className="max-w-3xl text-base leading-relaxed text-soft md:text-lg">
+            <p className="max-w-4xl text-sm font-medium leading-6 text-soft">
               {repo?.description || t("noDescription")}
             </p>
           </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <Link
-              href="/"
-              className="flex items-center gap-2 rounded-full btn-ios-secondary px-5 py-2.5 text-xs font-semibold tracking-[0.08em]"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-              </svg>
-              {t("back")}
-            </Link>
-            {repo?.html_url && (
-              <a
-                href={repo.html_url}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-2 rounded-full btn-ios-primary px-5 py-2.5 text-xs font-semibold tracking-[0.08em]"
+            <div className="flex items-center gap-3 shrink-0">
+              <Link
+                href="/"
+                className="flex items-center gap-2 rounded-full btn-ios-secondary px-5 py-2.5 text-xs font-semibold tracking-[0.08em]"
               >
-                {t("viewOnGithub")}
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                 </svg>
-              </a>
-            )}
-          </div>
+                {t("back")}
+              </Link>
+              {repo?.html_url && (
+                <a
+                  href={repo.html_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-2 rounded-full btn-ios-primary px-5 py-2.5 text-xs font-semibold tracking-[0.08em]"
+                >
+                  {t("viewOnGithub")}
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                </a>
+              )}
+            </div>
           </div>
         </header>
 
@@ -309,9 +367,9 @@ export default function RepoDetailClient({
         )}
 
         {repo && (
-          <div className="grid gap-8">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              <div className="md:col-span-2 space-y-8">
+          <div className="grid gap-5">
+            <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_25rem]">
+              <div className="space-y-5">
                  <section className="panel p-8">
                   <div className="panel-header">
                     <h2 className="panel-title">
@@ -394,9 +452,64 @@ export default function RepoDetailClient({
                     </div>
                   )}
                 </section>
+
+                <section className="panel p-8">
+                  <div className="panel-header flex-wrap items-start">
+                    <div>
+                      <h2 className="panel-title">{t("manualReview")}</h2>
+                      <p className="mt-2 text-sm leading-6 text-soft">
+                        {t("manualReviewDesc")}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSaveOverride}
+                      disabled={savingOverride}
+                      className="btn-ios-moss h-9 px-4 text-xs font-semibold"
+                    >
+                      {savingOverride ? t("saving") : t("saveOverride")}
+                    </button>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className="block space-y-2">
+                      <span className="info-label">{t("category")}</span>
+                      <input
+                        className="form-input mt-0"
+                        value={overrideCategory}
+                        onChange={(event) => setOverrideCategory(event.target.value)}
+                      />
+                    </label>
+                    <label className="block space-y-2">
+                      <span className="info-label">{t("subcategory")}</span>
+                      <input
+                        className="form-input mt-0"
+                        value={overrideSubcategory}
+                        onChange={(event) => setOverrideSubcategory(event.target.value)}
+                      />
+                    </label>
+                    <label className="block space-y-2 md:col-span-2">
+                      <span className="info-label">{t("tagIds")}</span>
+                      <input
+                        className="form-input mt-0"
+                        value={overrideTagIds}
+                        onChange={(event) => setOverrideTagIds(event.target.value)}
+                        placeholder="ai.llm, dev.backend"
+                      />
+                    </label>
+                    <label className="block space-y-2 md:col-span-2">
+                      <span className="info-label">{t("overrideNote")}</span>
+                      <textarea
+                        className="form-textarea mt-0"
+                        rows={3}
+                        value={overrideNote}
+                        onChange={(event) => setOverrideNote(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                </section>
               </div>
 
-              <aside className="space-y-8">
+              <aside className="space-y-5">
                 <section className="panel p-8">
                   <h2 className="section-kicker mb-6">
                     {t("status")}
@@ -509,6 +622,40 @@ export default function RepoDetailClient({
                             <span key={tag} className="pill-accent">
                               {tag}
                             </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {repo.ai_reason && (
+                      <div className="info-tile bg-surface/60 p-3.5 dark:bg-white/[0.06]">
+                        <span className="info-label text-moss/45">{t("aiReason")}</span>
+                        <p className="mt-2 text-sm leading-6 text-moss/85">
+                          {repo.ai_reason}
+                        </p>
+                      </div>
+                    )}
+                    {repo.ai_rule_candidates && repo.ai_rule_candidates.length > 0 && (
+                      <div>
+                        <span className="info-label mb-2 text-moss/45">{t("ruleCandidates")}</span>
+                        <div className="space-y-2">
+                          {repo.ai_rule_candidates.slice(0, 3).map((candidate, index) => (
+                            <div
+                              key={`${candidate.rule_id || "candidate"}-${index}`}
+                              className="rounded-md bg-surface/60 px-3 py-2 text-xs leading-5 text-moss/80 dark:bg-white/[0.06]"
+                            >
+                              <span className="font-semibold text-moss">
+                                {candidate.rule_id || t("unknown")}
+                              </span>
+                              <span>
+                                {" "}
+                                {candidate.category || t("unknown")} / {candidate.subcategory || t("unknown")}
+                              </span>
+                              {candidate.evidence?.length ? (
+                                <p className="mt-1 text-[11px] text-moss/60">
+                                  {candidate.evidence.join(" · ")}
+                                </p>
+                              ) : null}
+                            </div>
                           ))}
                         </div>
                       </div>

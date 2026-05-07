@@ -11,6 +11,7 @@ import AdminAuth from "./components/AdminAuth";
 import SyncSection from "./components/SyncSection";
 import ClassifySection from "./components/ClassifySection";
 import FailedReposSection from "./components/FailedReposSection";
+import ReviewQueueSection from "./components/ReviewQueueSection";
 import ExportSection from "./components/ExportSection";
 import SettingsSection from "./components/SettingsSection";
 import PersonalizationSection from "./components/PersonalizationSection";
@@ -170,14 +171,15 @@ export default function AdminPage() {
 
   return (
     <main className="min-h-screen px-6 py-10 lg:px-12">
-      <section className="mx-auto max-w-4xl space-y-6">
-        <header className="hero-surface soft-elevated relative overflow-hidden rounded-[2.5rem] p-8">
-          <div className="hero-orb hero-orb-moss" />
-          <div className="hero-orb hero-orb-copper" />
-          <div className="relative flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+      <section className="mx-auto max-w-[118rem] space-y-5">
+        <header className="rounded-lg border border-ink/10 bg-surface p-5 shadow-soft">
+          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="section-kicker text-copper">{t("admin")}</p>
-              <h1 className="mt-3 section-title text-3xl font-semibold">
+              <span className="rounded-md bg-ink px-2 py-1 font-display text-sm font-semibold leading-none text-surface">
+                StarSorty
+              </span>
+              <p className="mt-3 section-kicker text-copper">{t("admin")}</p>
+              <h1 className="mt-2 section-title text-2xl font-semibold">
                 {t("adminPageTitle")}
               </h1>
               <p className="mt-2 text-sm text-soft">{t("adminPageSubtitle")}</p>
@@ -208,24 +210,27 @@ export default function AdminPage() {
           </div>
         )}
 
-        <SyncSection t={t} setMessage={setMessage} />
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_25rem]">
+          <div className="space-y-5">
+            <ReviewQueueSection t={t} setMessage={setMessage} />
+            <ClassifySection t={t} setMessage={setMessage} />
+            <FailedReposSection t={t} setMessage={setMessage} />
+            <PersonalizationSection t={t} setMessage={setMessage} />
+          </div>
 
-        <ClassifySection t={t} setMessage={setMessage} />
-
-        <FailedReposSection t={t} setMessage={setMessage} />
-
-        <PersonalizationSection t={t} setMessage={setMessage} />
-
-        <ExportSection t={t} setMessage={setMessage} />
-
-        <SettingsSection
-          t={t}
-          settings={settings}
-          setSettings={setSettings}
-          setMessage={setMessage}
-          saving={saving}
-          setSaving={setSaving}
-        />
+          <aside className="space-y-5">
+            <SyncSection t={t} setMessage={setMessage} />
+            <ExportSection t={t} setMessage={setMessage} />
+            <SettingsSection
+              t={t}
+              settings={settings}
+              setSettings={setSettings}
+              setMessage={setMessage}
+              saving={saving}
+              setSaving={setSaving}
+            />
+          </aside>
+        </div>
 
         <div className="subtle-panel flex flex-wrap items-center gap-3">
           <Link
