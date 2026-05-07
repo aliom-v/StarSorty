@@ -258,6 +258,31 @@ def test_should_fetch_readme_when_repo_context_is_thin(monkeypatch) -> None:
     )
 
 
+def test_manual_override_preference_can_remap_classification_and_tags() -> None:
+    taxonomy = _minimal_taxonomy()
+    result = {
+        "category": "dev",
+        "subcategory": "frontend",
+        "tag_ids": ["ai.llm"],
+        "tags": ["LLM"],
+        "confidence": 0.7,
+    }
+
+    remapped = classify_routes._apply_tag_mapping_to_result(
+        result,
+        {
+            "classification:dev/frontend": "classification:ai/agent",
+            "ai.llm": "ai.agent",
+        },
+        taxonomy,
+    )
+
+    assert remapped["category"] == "ai"
+    assert remapped["subcategory"] == "agent"
+    assert remapped["tag_ids"] == ["ai.agent"]
+    assert remapped["tags"] == ["ai.agent"]
+
+
 def test_default_rules_avoid_known_false_positives_and_keep_positive_cases() -> None:
     rules_path = Path(__file__).resolve().parents[1] / "config" / "rules.json"
     taxonomy_path = Path(__file__).resolve().parents[1] / "config" / "taxonomy.yaml"

@@ -96,6 +96,17 @@ class RepoListResponse(BaseModel):
     pagination_limited: bool = False
 
 
+class ReviewQueueItem(BaseModel):
+    repo: RepoOut
+    review_reason: str
+
+
+class ReviewQueueResponse(BaseModel):
+    total: int
+    items: List[ReviewQueueItem]
+    confidence_threshold: float
+
+
 class OverrideRequest(BaseModel):
     category: Optional[str] = None
     subcategory: Optional[str] = None

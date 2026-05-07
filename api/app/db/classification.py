@@ -213,6 +213,70 @@ async def count_repos_for_classification(force: bool, after_full_name: Optional[
     return int(row[0] or 0)
 
 
+async def list_low_confidence_review_repos(
+    confidence_threshold: float = 0.62,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    normalized_threshold = max(0.0, min(1.0, float(confidence_threshold)))
+    effective_limit = max(1, min(200, int(limit)))
+    async with get_connection() as conn:
+        rows = await (await conn.execute(
+            """
+            SELECT
+                full_name, name, owner, html_url, description, language,
+                stargazers_count, forks_count, topics, pushed_at, updated_at, starred_at,
+                star_users,
+                category, subcategory, ai_confidence, ai_tags, ai_tag_ids, ai_provider, ai_model,
+                ai_reason, ai_decision_source, ai_rule_candidates, ai_updated_at,
+                override_category, override_subcategory, override_tags, override_tag_ids,
+                override_note, readme_summary, readme_fetched_at,
+                summary_zh, ai_keywords, override_summary_zh, override_keywords,
+                CASE
+                    WHEN NULLIF(category, '') IS NULL THEN 'missing_classification'
+                    WHEN ai_decision_source = 'manual_review' THEN 'manual_review'
+                    WHEN ai_confidence IS NULL THEN 'missing_confidence'
+                    WHEN ai_confidence < ? THEN 'low_confidence'
+                    WHEN ai_decision_source = 'rules_fallback' THEN 'rule_fallback'
+                    ELSE 'ambiguous_rule_candidates'
+                END AS review_reason
+            FROM repos
+            WHERE NULLIF(override_category, '') IS NULL
+              AND (
+                NULLIF(category, '') IS NULL
+                OR ai_confidence IS NULL
+                OR ai_confidence < ?
+                OR ai_decision_source IN ('manual_review', 'rules_fallback')
+                OR (
+                    ai_rule_candidates IS NOT NULL
+                    AND ai_rule_candidates != ''
+                    AND json_valid(ai_rule_candidates)
+                    AND json_array_length(ai_rule_candidates) > 1
+                    AND ai_confidence < 0.82
+                )
+              )
+            ORDER BY
+                CASE
+                    WHEN NULLIF(category, '') IS NULL THEN 0
+                    WHEN ai_decision_source = 'manual_review' THEN 1
+                    WHEN ai_confidence IS NULL THEN 2
+                    ELSE 3
+                END ASC,
+                COALESCE(ai_confidence, 0.0) ASC,
+                stargazers_count DESC,
+                full_name ASC
+            LIMIT ?
+            """,
+            (normalized_threshold, normalized_threshold, effective_limit),
+        )).fetchall()
+    return [
+        {
+            "repo": _row_to_repo(row),
+            "review_reason": row["review_reason"],
+        }
+        for row in rows
+    ]
+
+
 @_retry_on_lock()
 async def increment_classify_fail_count(full_names: List[str]) -> None:
     if not full_names:

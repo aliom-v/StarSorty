@@ -91,6 +91,111 @@ async def update_user_preferences(
     }
 
 
+def _normalize_preference_token(value: Any) -> str:
+    token = str(value or "").strip().lower()
+    return re.sub(r"\s+", " ", token)
+
+
+def _classification_key(category: Any, subcategory: Any) -> str:
+    category_token = _normalize_preference_token(category)
+    subcategory_token = _normalize_preference_token(subcategory)
+    if not category_token and not subcategory_token:
+        return ""
+    return f"classification:{category_token or 'uncategorized'}/{subcategory_token or 'other'}"
+
+
+@_retry_on_lock()
+async def record_manual_override_preference(full_name: str) -> Dict[str, Any]:
+    async with get_connection() as conn:
+        row = await (await conn.execute(
+            """
+            SELECT
+                category,
+                subcategory,
+                ai_tag_ids,
+                override_category,
+                override_subcategory,
+                override_tag_ids
+            FROM repos
+            WHERE full_name = ?
+            """,
+            (full_name,),
+        )).fetchone()
+        if not row:
+            return {}
+
+        preference_row = await (await conn.execute(
+            """
+            SELECT tag_mapping_json, rule_priority_json, updated_at
+            FROM user_preferences
+            WHERE user_id = ?
+            """,
+            ("global",),
+        )).fetchone()
+        current_mapping = (
+            _safe_json_dict(preference_row["tag_mapping_json"])
+            if preference_row
+            else {}
+        )
+        current_priority = (
+            _safe_json_dict(preference_row["rule_priority_json"])
+            if preference_row
+            else {}
+        )
+        current_updated_at = (
+            preference_row["updated_at"]
+            if preference_row and "updated_at" in preference_row.keys()
+            else None
+        )
+
+        updated_mapping = dict(current_mapping)
+        ai_tag_ids = _load_json_list(row["ai_tag_ids"])
+        override_tag_ids = _load_json_list(row["override_tag_ids"])
+        if ai_tag_ids and override_tag_ids:
+            for index, source_tag_id in enumerate(ai_tag_ids):
+                target_tag_id = override_tag_ids[min(index, len(override_tag_ids) - 1)]
+                source = _normalize_preference_token(source_tag_id)
+                target = _normalize_preference_token(target_tag_id)
+                if source and target and source != target:
+                    updated_mapping[source] = target
+
+        before_key = _classification_key(row["category"], row["subcategory"])
+        after_key = _classification_key(row["override_category"], row["override_subcategory"])
+        if before_key and after_key and before_key != after_key:
+            updated_mapping[before_key] = after_key
+
+        if updated_mapping == current_mapping:
+            return {
+                "tag_mapping": current_mapping,
+                "rule_priority": current_priority,
+                "updated_at": current_updated_at,
+            }
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+        await conn.execute(
+            """
+            INSERT INTO user_preferences (user_id, tag_mapping_json, rule_priority_json, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                tag_mapping_json = excluded.tag_mapping_json,
+                rule_priority_json = excluded.rule_priority_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                "global",
+                json.dumps(updated_mapping, ensure_ascii=False),
+                json.dumps(current_priority, ensure_ascii=False),
+                timestamp,
+            ),
+        )
+        await conn.commit()
+    return {
+        "tag_mapping": updated_mapping,
+        "rule_priority": current_priority,
+        "updated_at": timestamp,
+    }
+
+
 def _extract_interest_terms(payload: Dict[str, Any]) -> Dict[str, float]:
     terms: Dict[str, float] = {}
     tags = payload.get("tags")

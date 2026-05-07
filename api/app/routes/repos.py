@@ -9,7 +9,9 @@ from ..db import (
     get_repo,
     get_user_interest_profile,
     list_override_history,
+    list_low_confidence_review_repos,
     list_repos,
+    record_manual_override_preference,
     record_readme_fetch,
     reset_classify_fail_count,
     update_override,
@@ -29,6 +31,8 @@ from ..schemas import (
     OverrideRequest,
     OverrideResponse,
     ReadmeResponse,
+    ReviewQueueItem,
+    ReviewQueueResponse,
     RepoListResponse,
     RepoOut,
     ResetFailedResponse,
@@ -43,6 +47,19 @@ from ..state import (
 logger = logging.getLogger("starsorty.api")
 
 router = APIRouter()
+
+
+def _repo_payload_for_response(repo: object) -> dict:
+    if isinstance(repo, RepoBase):
+        return repo.model_dump()
+    if isinstance(repo, dict):
+        return repo
+    model_dump = getattr(repo, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump()
+        if isinstance(dumped, dict):
+            return dumped
+    raise TypeError("Review queue repo must be a RepoBase or mapping")
 
 
 @router.get("/repos", response_model=RepoListResponse)
@@ -169,6 +186,32 @@ async def reset_failed_repos() -> ResetFailedResponse:
     return ResetFailedResponse(reset_count=count)
 
 
+@router.get(
+    "/repos/review/low-confidence",
+    response_model=ReviewQueueResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def low_confidence_review_queue(
+    confidence_threshold: float = Query(default=0.62, ge=0.0, le=1.0),
+    limit: int = Query(default=30, ge=1, le=200),
+) -> ReviewQueueResponse:
+    threshold = float(confidence_threshold)
+    effective_limit = int(limit)
+    rows = await list_low_confidence_review_repos(threshold, effective_limit)
+    items = [
+        ReviewQueueItem(
+            repo=RepoOut(**_repo_payload_for_response(item["repo"])),
+            review_reason=str(item.get("review_reason") or "low_confidence"),
+        )
+        for item in rows
+    ]
+    return ReviewQueueResponse(
+        total=len(items),
+        items=items,
+        confidence_threshold=threshold,
+    )
+
+
 @router.get("/repos/{full_name:path}", response_model=RepoOut)
 async def repo_detail(full_name: str) -> RepoOut:
     repo = await get_repo(full_name)
@@ -218,6 +261,10 @@ async def repo_override(full_name: str, payload: OverrideRequest) -> OverrideRes
         if not await get_repo(full_name):
             raise HTTPException(status_code=404, detail="Repo not found")
         return OverrideResponse(updated=False)
+    try:
+        await record_manual_override_preference(full_name)
+    except Exception:
+        logger.warning("Failed to update manual override preferences for %s", full_name)
     await cache.invalidate_prefix("repos")
     return OverrideResponse(updated=True)
 

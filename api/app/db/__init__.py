@@ -35,6 +35,7 @@ from .classification import (  # noqa: F401
     increment_classify_fail_count,
     reset_classify_fail_count,
     get_failed_repos,
+    list_low_confidence_review_repos,
 )
 from .override import update_override, list_override_history  # noqa: F401
 from .stats import get_repo_stats  # noqa: F401
@@ -47,6 +48,7 @@ from .runtime_guard import (  # noqa: F401
 from .user import (  # noqa: F401
     get_user_preferences,
     update_user_preferences,
+    record_manual_override_preference,
     record_user_feedback_event,
     get_user_interest_profile,
     list_training_samples,

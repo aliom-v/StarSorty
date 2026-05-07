@@ -178,6 +178,11 @@ def _resolve_tag_mapping(
         return {}
     tag_mapping: Dict[str, str] = {}
     for source, target in mapping_raw.items():
+        source_raw = str(source).strip().lower()
+        target_raw = str(target).strip().lower()
+        if source_raw.startswith("classification:") and target_raw.startswith("classification:"):
+            tag_mapping[source_raw] = target_raw
+            continue
         source_ids = normalize_tags_to_ids([str(source)], taxonomy)
         target_ids = normalize_tags_to_ids([str(target)], taxonomy)
         if not source_ids or not target_ids:
@@ -189,6 +194,19 @@ def _resolve_tag_mapping(
 def _apply_tag_mapping_to_result(result: Dict[str, object], mapping: Dict[str, str], taxonomy: dict) -> Dict[str, object]:
     if not mapping:
         return result
+    updated = dict(result)
+    classification_key = (
+        f"classification:{str(result.get('category') or '').strip().lower() or 'uncategorized'}"
+        f"/{str(result.get('subcategory') or '').strip().lower() or 'other'}"
+    )
+    mapped_classification = mapping.get(classification_key)
+    if mapped_classification and mapped_classification.startswith("classification:"):
+        _, value = mapped_classification.split(":", 1)
+        mapped_category, _, mapped_subcategory = value.partition("/")
+        if mapped_category.strip():
+            updated["category"] = mapped_category.strip()
+        if mapped_subcategory.strip():
+            updated["subcategory"] = mapped_subcategory.strip()
     tag_ids = [str(v) for v in (result.get("tag_ids") or []) if str(v).strip()]
     if not tag_ids:
         tag_ids = normalize_tags_to_ids([str(v) for v in (result.get("tags") or [])], taxonomy)
@@ -202,7 +220,6 @@ def _apply_tag_mapping_to_result(result: Dict[str, object], mapping: Dict[str, s
         remapped.append(mapped)
     tag_id_to_name = taxonomy.get("tag_id_to_name") or {}
     mapped_tags = [tag_id_to_name.get(tag_id, tag_id) for tag_id in remapped]
-    updated = dict(result)
     updated["tag_ids"] = remapped
     updated["tags"] = mapped_tags
     return updated
@@ -325,6 +342,7 @@ async def _classify_repo_once(
     include_readme: bool,
     github_client: GitHubClient,
     ai_client: AIClient,
+    preference: dict | None = None,
 ) -> bool:
     if isinstance(repo, RepoBase):
         repo_data = repo.model_dump()
@@ -359,10 +377,10 @@ async def _classify_repo_once(
         rules,
         classify_mode,
         use_ai,
-        preference={},
+        preference=preference or {},
     )
     outcome = await engine.classify_repo(repo_data, ai_client, ai_retries=2)
-    result = outcome.result
+    result = _apply_tag_mapping_to_result(outcome.result, _tag_mapping, data)
     provider = result.get("provider") if outcome.source == "ai" else "rules"
     model = result.get("model") if outcome.source == "ai" else "rules"
     if outcome.source == "manual_review":

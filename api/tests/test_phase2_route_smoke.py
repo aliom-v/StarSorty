@@ -769,7 +769,14 @@ def test_repos_query_override_and_readme_paths(
     disable_limiters: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured = {"list": None, "cache_set": None, "quality": None, "override": None, "record": []}
+    captured = {
+        "list": None,
+        "cache_set": None,
+        "quality": None,
+        "override": None,
+        "record": [],
+        "preference": None,
+    }
 
     async def _fake_cache_get(key: str):
         del key
@@ -799,6 +806,20 @@ def test_repos_query_override_and_readme_paths(
         captured["override"] = (full_name, updates)
         return True
 
+    async def _fake_record_manual_override_preference(full_name: str) -> dict:
+        captured["preference"] = full_name
+        return {}
+
+    async def _fake_review_queue(confidence_threshold: float, limit: int) -> list[dict]:
+        captured["review"] = (confidence_threshold, limit)
+        repo = _repo_payload()
+        repo["ai_confidence"] = 0.41
+        repo["ai_reason"] = "ambiguous rule evidence"
+        repo["ai_rule_candidates"] = [
+            {"rule_id": "one", "score": 0.54, "evidence": ["name@name"]},
+        ]
+        return [{"repo": SimpleNamespace(model_dump=lambda: repo), "review_reason": "low_confidence"}]
+
     async def _fake_invalidate(prefix: str) -> None:
         captured.setdefault("invalidate", []).append(prefix)
 
@@ -817,8 +838,14 @@ def test_repos_query_override_and_readme_paths(
     monkeypatch.setattr(repos_routes.cache, "invalidate_prefix", _fake_invalidate)
     monkeypatch.setattr(repos_routes, "get_user_interest_profile", _fake_interest)
     monkeypatch.setattr(repos_routes, "list_repos", _fake_list_repos)
+    monkeypatch.setattr(repos_routes, "list_low_confidence_review_repos", _fake_review_queue)
     monkeypatch.setattr(repos_routes, "_add_quality_metrics", _fake_quality)
     monkeypatch.setattr(repos_routes, "update_override", _fake_update_override)
+    monkeypatch.setattr(
+        repos_routes,
+        "record_manual_override_preference",
+        _fake_record_manual_override_preference,
+    )
     monkeypatch.setattr(repos_routes, "get_repo", _fake_get_repo)
     monkeypatch.setattr(repos_routes, "record_readme_fetch", _fake_record_readme_fetch)
 
@@ -862,6 +889,24 @@ def test_repos_query_override_and_readme_paths(
         "owner/repo",
         {"category": "ai", "tags": ["tag-a", "tag-b"], "tag_ids": ["id-a"], "note": "memo"},
     )
+    assert captured["preference"] == "owner/repo"
+
+    review_dependency_calls = _dependency_calls(
+        repos_routes.router,
+        "/repos/review/low-confidence",
+    )
+    assert require_admin in review_dependency_calls
+    review_response = _run(
+        repos_routes.low_confidence_review_queue(
+            confidence_threshold=0.5,
+            limit=10,
+        )
+    )
+    assert review_response.total == 1
+    assert review_response.confidence_threshold == 0.5
+    assert review_response.items[0].repo.full_name == "owner/repo"
+    assert review_response.items[0].review_reason == "low_confidence"
+    assert captured["review"] == (0.5, 10)
 
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(github_client=_FakeGitHubClient())))
     readme_response = _run(repos_routes.repo_readme("owner/repo", request))

@@ -131,3 +131,23 @@ def test_failed_repos_route_requires_admin_and_returns_items(
     response = asyncio.run(repos_routes.list_failed_repos_endpoint(min_fail_count=5))
     assert response.total == 1
     assert response.items[0].full_name == "owner/repo"
+
+
+def test_low_confidence_review_queue_requires_admin(
+    admin_token_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_queue(confidence_threshold: float, limit: int):
+        del confidence_threshold, limit
+        return []
+
+    monkeypatch.setattr(repos_routes, "list_low_confidence_review_repos", _fake_queue)
+
+    dependency_calls = _dependency_calls(repos_routes.router, "/repos/review/low-confidence")
+    assert require_admin in dependency_calls
+
+    response = asyncio.run(
+        repos_routes.low_confidence_review_queue(confidence_threshold=0.62, limit=30)
+    )
+    assert response.total == 0
+    assert response.items == []

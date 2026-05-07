@@ -116,6 +116,7 @@ curl -b admin.cookies -X DELETE "http://localhost:4321/auth/session" \
 | `GET` | `/repos` | 否 | 多条件检索仓库列表。 |
 | `GET` | `/repos/failed` | 是 | 查看分类失败次数较高的仓库。 |
 | `POST` | `/repos/failed/reset` | 是 | 清空失败计数。 |
+| `GET` | `/repos/review/low-confidence` | 是 | 查看低置信度、规则回退、需要人工复核的分类队列。 |
 | `GET` | `/repos/{full_name}` | 否 | 查看单仓库详情。 |
 | `PATCH` | `/repos/{full_name}/override` | 是 | 覆盖分类结果、标签或备注。 |
 | `GET` | `/repos/{full_name}/overrides` | 否 | 查看人工修改历史。 |
@@ -153,6 +154,17 @@ curl -b admin.cookies -X DELETE "http://localhost:4321/auth/session" \
 - `tags`
 - `tag_ids`
 - `note`
+
+人工覆盖成功后，服务端会写入覆盖历史与训练样本，并把可推断的标签/分类映射沉淀到 `global` 偏好中，供后续分类使用。
+
+`GET /repos/review/low-confidence` 支持的查询参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `confidence_threshold` | `float` | `0.62` | 低于该置信度的仓库进入复核队列。 |
+| `limit` | `int` | `30` | 返回数量，上限 `200`。 |
+
+响应项包含 `repo` 与 `review_reason`。`repo` 复用 `RepoOut`，因此可展示 `ai_confidence`、`ai_reason`、`ai_rule_candidates`、`readme_summary` 等证据字段。
 
 ### 分类体系、统计与配置
 
