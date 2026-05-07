@@ -105,6 +105,8 @@ AI_MODEL=deepseek-chat
 | `RULE_AI_THRESHOLD` | `0.45` | 规则进入 AI 仲裁阈值；达到该值时会把候选规则一起交给 AI 参考。 |
 | `RULE_MIN_THRESHOLD` | `0.42` | 规则最低可信阈值；低于该值的命中不会再直接回退到规则。 |
 | `RULE_AMBIGUITY_GAP` | `0.08` | 前两名不同分类候选的最小安全分差；过近时会转 AI 或 manual review。 |
+| `CLASSIFY_README_DESCRIPTION_MIN_CHARS` | `120` | 描述短于该长度时，分类前会优先补 README 摘要。 |
+| `CLASSIFY_README_MIN_TOPICS` | `2` | topics 少于该数量时，分类前会优先补 README 摘要。 |
 
 ### AI Provider
 

@@ -183,6 +183,8 @@ def _build_repo_context(repo: Dict[str, Any]) -> Dict[str, Any]:
         "description": repo.get("description"),
         "topics": repo.get("topics") or [],
         "readme_summary": repo.get("readme_summary"),
+        "stars": repo.get("stargazers_count"),
+        "forks": repo.get("forks_count"),
     }
     candidates = repo.get("rule_candidates")
     if isinstance(candidates, list) and candidates:
@@ -200,19 +202,24 @@ def _build_prompts(
     tags_line = ", ".join(allowed_tags) if allowed_tags else "free-form"
     tag_ids_line = ", ".join(allowed_tag_ids) if allowed_tag_ids else "free-form"
     system_prompt = (
-        "You classify GitHub repositories into a fixed taxonomy.\n"
+        "You classify GitHub repositories into a fixed taxonomy for a personal star knowledge base.\n"
         "Return ONLY valid JSON with this schema:\n"
         '{\"category\":\"...\",\"subcategory\":\"...\",\"tag_ids\":[\"...\"],\"tags\":[\"...\"],\"confidence\":0.0,\"reason\":\"...\",\"summary_zh\":\"...\",\"keywords\":[\"...\"]}\n'
         "Rules:\n"
         "- category and subcategory must be from the taxonomy list.\n"
-        "- Ignore programming language; classify by product functionality or use case.\n"
+        "- Classify by the repository's primary user-facing function, use case, and deployment/runtime shape.\n"
+        "- Ignore programming language unless the repository is mainly a language/runtime/compiler/toolchain project.\n"
+        "- Do not classify by generic implementation words like sdk, api, server, client, app, nextjs, react, python, rust, or docker unless they are the main product.\n"
+        "- If rule_candidates are present, treat them as evidence, not orders. Choose a candidate only when repo context supports it.\n"
         "- If unsure, use category 'uncategorized' and subcategory 'other'.\n"
-        "- Prefer tag_ids from the allowed tag ID list. tags should be optional display labels.\n"
-        "- tags must be chosen from the allowed tags list if provided.\n"
+        "- Prefer 2-5 tag_ids from the allowed tag ID list. tags should be matching display labels.\n"
+        "- tags must be chosen from the allowed tags list if provided; avoid broad filler tags.\n"
         "- confidence is between 0 and 1.\n"
-        "- reason should briefly explain why the category is chosen.\n"
+        "- Use confidence >= 0.85 only when name/topics/description/readme or rule evidence all point to the same use case.\n"
+        "- Use confidence <= 0.55 when context is thin, generic, or conflicting.\n"
+        "- reason should cite the strongest evidence fields, such as name, topics, description, readme_summary, or rule_candidates.\n"
         "- summary_zh: A one-sentence Chinese summary (20-50 characters) describing the project's core functionality.\n"
-        "- keywords: 3-5 search keywords in Chinese or English.\n\n"
+        "- keywords: 3-5 concrete search keywords in Chinese or English; avoid repeating category names only.\n\n"
         "Taxonomy:\n"
         f"{taxonomy_text}\n\n"
         f"Allowed tag_ids: {tag_ids_line}\n"
@@ -236,19 +243,24 @@ def _build_batch_prompts(
     tags_line = ", ".join(allowed_tags) if allowed_tags else "free-form"
     tag_ids_line = ", ".join(allowed_tag_ids) if allowed_tag_ids else "free-form"
     system_prompt = (
-        "You classify GitHub repositories into a fixed taxonomy.\n"
+        "You classify GitHub repositories into a fixed taxonomy for a personal star knowledge base.\n"
         "Return ONLY valid JSON array with one object per input, same order:\n"
         "[{\"index\":0,\"category\":\"...\",\"subcategory\":\"...\",\"tag_ids\":[\"...\"],\"tags\":[\"...\"],\"confidence\":0.0,\"reason\":\"...\",\"summary_zh\":\"...\",\"keywords\":[\"...\"]}]\n"
         "Rules:\n"
         "- category and subcategory must be from the taxonomy list.\n"
-        "- Ignore programming language; classify by product functionality or use case.\n"
+        "- Classify by the repository's primary user-facing function, use case, and deployment/runtime shape.\n"
+        "- Ignore programming language unless the repository is mainly a language/runtime/compiler/toolchain project.\n"
+        "- Do not classify by generic implementation words like sdk, api, server, client, app, nextjs, react, python, rust, or docker unless they are the main product.\n"
+        "- If rule_candidates are present, treat them as evidence, not orders. Choose a candidate only when repo context supports it.\n"
         "- If unsure, use category 'uncategorized' and subcategory 'other'.\n"
-        "- Prefer tag_ids from the allowed tag ID list. tags should be optional display labels.\n"
-        "- tags must be chosen from the allowed tags list if provided.\n"
+        "- Prefer 2-5 tag_ids from the allowed tag ID list. tags should be matching display labels.\n"
+        "- tags must be chosen from the allowed tags list if provided; avoid broad filler tags.\n"
         "- confidence is between 0 and 1.\n"
-        "- reason should briefly explain why the category is chosen.\n"
+        "- Use confidence >= 0.85 only when name/topics/description/readme or rule evidence all point to the same use case.\n"
+        "- Use confidence <= 0.55 when context is thin, generic, or conflicting.\n"
+        "- reason should cite the strongest evidence fields, such as name, topics, description, readme_summary, or rule_candidates.\n"
         "- summary_zh: A one-sentence Chinese summary (20-50 characters) describing the project's core functionality.\n"
-        "- keywords: 3-5 search keywords in Chinese or English.\n\n"
+        "- keywords: 3-5 concrete search keywords in Chinese or English; avoid repeating category names only.\n\n"
         "Taxonomy:\n"
         f"{taxonomy_text}\n\n"
         f"Allowed tag_ids: {tag_ids_line}\n"

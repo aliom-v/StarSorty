@@ -53,6 +53,8 @@ from ..state import (
     CLASSIFY_BATCH_SIZE_MAX,
     CLASSIFY_CONCURRENCY_MAX,
     CLASSIFY_ENGINE_V2_ENABLED,
+    CLASSIFY_README_DESCRIPTION_MIN_CHARS,
+    CLASSIFY_README_MIN_TOPICS,
     CLASSIFY_REMAINING_REFRESH_EVERY,
     DEFAULT_CLASSIFY_BATCH_SIZE,
     DEFAULT_CLASSIFY_CONCURRENCY,
@@ -244,7 +246,15 @@ def _parse_timestamp(value: str | None) -> datetime | None:
 
 def _should_fetch_readme(repo_data: dict) -> bool:
     description = (repo_data.get("description") or "").strip()
-    if len(description) >= 20:
+    topics = repo_data.get("topics") or []
+    if not isinstance(topics, list):
+        topics = []
+    topic_count = len([topic for topic in topics if str(topic).strip()])
+    has_enough_description = (
+        len(description) >= CLASSIFY_README_DESCRIPTION_MIN_CHARS
+    )
+    has_enough_topics = topic_count >= CLASSIFY_README_MIN_TOPICS
+    if has_enough_description and has_enough_topics:
         return False
     if repo_data.get("readme_summary"):
         return False

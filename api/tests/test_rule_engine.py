@@ -4,6 +4,7 @@ from pathlib import Path
 from api.app.classification.decision import DecisionPolicy, decide_route
 from api.app.classification.engine import ClassificationEngine
 from api.app.classification.rule_matcher import RuleCandidate, rank_rule_candidates
+from api.app.routes import classify as classify_routes
 from api.app.rules import load_rules
 from api.app.taxonomy import load_taxonomy
 from api.app.taxonomy_schema import build_taxonomy_schema
@@ -236,6 +237,25 @@ def test_classification_engine_weak_rule_signal_does_not_seed_ai_or_rule_fallbac
     assert prepared.pending_ai.top_candidate is None
     assert prepared.pending_ai.allow_rule_fallback is False
     assert "rule_candidates" not in prepared.pending_ai.ai_input
+
+
+def test_should_fetch_readme_when_repo_context_is_thin(monkeypatch) -> None:
+    monkeypatch.setattr(classify_routes, "CLASSIFY_README_DESCRIPTION_MIN_CHARS", 120)
+    monkeypatch.setattr(classify_routes, "CLASSIFY_README_MIN_TOPICS", 2)
+
+    assert classify_routes._should_fetch_readme(
+        {
+            "description": "A GitHub star management application with AI summaries.",
+            "topics": ["github"],
+        }
+    )
+    assert not classify_routes._should_fetch_readme(
+        {
+            "description": "A self-hosted GitHub star management system with API, scheduler, admin UI, "
+            "AI-assisted classification, searchable taxonomy, and deployment documentation.",
+            "topics": ["github", "stars", "ai"],
+        }
+    )
 
 
 def test_default_rules_avoid_known_false_positives_and_keep_positive_cases() -> None:
