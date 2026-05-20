@@ -50,6 +50,7 @@ npm run stop
 
 - 首次运行前，先执行 `npm run web:install`。
 - `npm run start` 会自动把本地 SQLite 指到仓库内 `data/app.db`。
+- 如果不确定本地环境状态，先跑 `npm run doctor`，细节统一看 `scripts/README.md`。
 - 建议把仓库根目录脚本当作唯一验证入口，避免本地命令和 CI 行为漂移。
 - Python/Docker fallback、前端依赖校验、web smoke 等运行时细节统一写在 `scripts/README.md`。
 
@@ -100,9 +101,7 @@ npm run web:build
 npm run web:smoke
 ```
 
-如果遇到文档坏引用、重复导航页、Python 版本不匹配、Docker fallback、前端依赖半安装或 smoke 失败，先看 `scripts/README.md`。
-
-清理和重置命令也统一看 `scripts/README.md`，不要手工删一堆目录。
+如果遇到文档坏引用、重复导航页、Python 版本不匹配、Docker fallback、前端依赖半安装、`doctor` 告警、清理或重置需求，先看 `scripts/README.md`。
 
 ### 压测脚本
 

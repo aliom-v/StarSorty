@@ -22,6 +22,16 @@ npm run web:install
 - `npm run web:install`：从仓库根目录安装 `web` 依赖，供 `web:dev` / `web:lint` / `web:build` / `npm run start` 复用。
 - 本地宿主机 API 统一使用仓库根目录 `.venv`，创建命令是 `python -m venv .venv`，随后激活并安装 `api/requirements-dev.txt`。
 
+## 诊断
+
+```bash
+npm run doctor
+```
+
+- `npm run doctor`：一次性检查根 `.venv`、`web/node_modules`、`data/app.db`、`origin/main` 和 API 端口状态。
+- 这个命令只在硬失败时返回非 `0`：缺少根 `.venv`、缺少 `web/node_modules`、`origin/main` 与本地 `HEAD` 不同步、远端刷新失败，或者 API 端口 4321 被占用。
+- `data/app.db` 缺失只会被标记为信息，不会单独把环境判成失败；本地库可以由显式重置流程重新创建。
+
 ## 清理与重置
 
 ```bash
@@ -29,6 +39,7 @@ npm run clean:dry-run
 npm run clean
 npm run clean:deps
 npm run reset:data
+npm run reset:data:dry-run
 npm run clean:all
 ```
 
@@ -36,6 +47,7 @@ npm run clean:all
 - `npm run clean`：清理缓存、日志、临时运行态和 Next.js 生成物，但保留 `.env`、`.venv`、`data/app.db` 和 `web/node_modules`。
 - `npm run clean:deps`：额外清理 `web/node_modules` 和旧的 API 子目录虚拟环境，但保留根 `.venv`。
 - `npm run reset:data`：只删除 `data/app.db`，用于明确重建本地数据库。
+- `npm run reset:data:dry-run`：先确认 `data/app.db` 是唯一会被删掉的目标。
 - `npm run clean:all`：同时执行依赖清理和数据重置，适合彻底整理本地工作区。
 
 ## 验证与回归

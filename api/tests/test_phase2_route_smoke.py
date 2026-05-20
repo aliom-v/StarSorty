@@ -1105,6 +1105,22 @@ def test_repos_override_rejects_unknown_tag_inputs(monkeypatch: pytest.MonkeyPat
             )
         )
 
+    with pytest.raises(HTTPException, match="Unknown tag"):
+        _run(
+            repos_routes.repo_override(
+                "owner/repo",
+                OverrideRequest(tag_ids=["ai.llm", "missing-tag"]),
+            )
+        )
+
+    with pytest.raises(HTTPException, match="Unknown tag"):
+        _run(
+            repos_routes.repo_override(
+                "owner/repo",
+                OverrideRequest(tags=["LLM", "missing-tag"]),
+            )
+        )
+
 
 def test_task_status_returns_404_for_missing_task(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _missing_task(task_id: str):

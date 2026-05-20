@@ -4,7 +4,12 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const { buildCleanupPlan, executeCleanupPlan } = require("../scripts/lib/clean-workspace");
+const {
+  buildCleanupPlan,
+  executeCleanupPlan,
+  formatCleanupSummary,
+  parseCleanupFlags,
+} = require("../scripts/lib/clean-workspace");
 
 function touch(filePath, content = "") {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -89,5 +94,31 @@ test("data reset only removes app.db when requested", () => {
   const result = executeCleanupPlan(plan);
   assert.ok(result.removed.some((entry) => entry.relativePath === "data/app.db"));
   assert.ok(!fs.existsSync(path.join(root, "data", "app.db")));
+  assert.ok(fs.existsSync(path.join(root, "data", "keep.txt")));
+});
+
+test("dry-run data reset keeps the destructive target explicit", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "starsorty-reset-data-preview-"));
+
+  touch(path.join(root, "data", "app.db"), "sqlite");
+  touch(path.join(root, "data", "keep.txt"), "keep");
+
+  const flags = parseCleanupFlags(["--data", "--dry-run"]);
+  const plan = buildCleanupPlan(root, flags);
+  const summary = formatCleanupSummary(plan, flags);
+
+  assert.deepEqual(flags, {
+    dryRun: true,
+    includeDeps: false,
+    includeData: true,
+  });
+  assert.deepEqual(relPaths(plan), ["data/app.db"]);
+  assert.match(summary, /includes data reset/);
+  assert.match(summary, /data\/app\.db/);
+
+  const result = executeCleanupPlan(plan, { dryRun: true });
+  assert.equal(result.removed.length, 0);
+  assert.equal(result.wouldRemove.length, 1);
+  assert.ok(fs.existsSync(path.join(root, "data", "app.db")));
   assert.ok(fs.existsSync(path.join(root, "data", "keep.txt")));
 });
