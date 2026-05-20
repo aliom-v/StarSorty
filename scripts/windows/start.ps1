@@ -31,11 +31,11 @@ function Ensure-Started($name, $port, $cmd, $url) {
   }
 }
 
-$apiPython = Join-Path $root "api\\.venv\\Scripts\\python.exe"
+$apiPython = Join-Path $root ".venv\\Scripts\\python.exe"
 $webNextCmd = Join-Path $root "web\\node_modules\\.bin\\next.cmd"
 
 if (-not (Test-Path $apiPython)) {
-  Write-Host "Missing API venv. Run: cd api; python -m venv .venv; .venv\\Scripts\\Activate.ps1; pip install -r requirements-dev.txt"
+  Write-Host "Missing root Python venv. Run: cd $root; python -m venv .venv; .\\.venv\\Scripts\\Activate.ps1; pip install -r api\\requirements-dev.txt"
   exit 1
 }
 

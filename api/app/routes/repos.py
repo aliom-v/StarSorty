@@ -87,7 +87,12 @@ def _build_override_tag_updates(payload: OverrideRequest, fields: set[str]) -> D
         taxonomy = load_taxonomy(get_settings().ai_taxonomy_path)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    normalized_tag_ids, _unknown = normalize_tag_ids(_clean_tag_values(source_values), taxonomy)
+    normalized_tag_ids, unknown = normalize_tag_ids(_clean_tag_values(source_values), taxonomy)
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown tag values: {', '.join(sorted(set(unknown)))}",
+        )
     normalized_tags = tag_ids_to_labels(normalized_tag_ids, taxonomy)
     return {"tags": normalized_tags, "tag_ids": normalized_tag_ids}
 

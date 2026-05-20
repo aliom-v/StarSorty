@@ -14,6 +14,7 @@ from api.app import export as export_mod
 from api.app import rules as rules_mod
 from api.app import taxonomy as taxonomy_mod
 from api.app.db import helpers as helpers_db
+from api.app.db import override as override_db
 from api.app.db import repos as repos_db
 from api.app.db.runtime_guard import get_async_sqlite_runtime_issue
 from api.app.db import schema as schema_db
@@ -120,6 +121,7 @@ def db_connection_factory(tmp_path, monkeypatch):
     get_connection = _build_get_connection(db_path)
 
     monkeypatch.setattr(schema_db, "get_connection", get_connection)
+    monkeypatch.setattr(override_db, "get_connection", get_connection)
     monkeypatch.setattr(search_db, "get_connection", get_connection)
     monkeypatch.setattr(repos_db, "get_connection", get_connection)
     monkeypatch.setattr(stats_db, "get_connection", get_connection)
@@ -332,6 +334,75 @@ def test_repo_lookup_tables_power_tag_and_user_filters(db_connection_factory) ->
     assert [item.full_name for item in user_page.items] == ["owner/repo-1"]
     assert any(item["name"] == "RAG" and item["count"] == 1 for item in stats_payload["tags"])
     assert any(item["name"] == "alice" and item["count"] == 1 for item in stats_payload["users"])
+
+
+def test_manual_override_tag_updates_keep_lookup_history_and_training_consistent(
+    db_connection_factory,
+) -> None:
+    row = _repo_row(index=3, stars=300, token="override")
+    row["ai_tags"] = json.dumps(["Agent"])
+    row["ai_tag_ids"] = json.dumps(["ai.agent"])
+    row["override_tags"] = None
+    row["override_tag_ids"] = None
+    _run(_insert_repos(db_connection_factory, [row]))
+
+    _run(
+        override_db.update_override(
+            "owner/repo-3",
+            {
+                "tags": ["LLM", "后台服务"],
+                "tag_ids": ["ai.llm", "dev.backend"],
+                "note": "manual review",
+            },
+        )
+    )
+
+    async def _fetch_effective_tags() -> list[tuple[str, str]]:
+        async with db_connection_factory() as conn:
+            rows = await (
+                await conn.execute(
+                    """
+                    SELECT ret.tag, ret.tag_id
+                    FROM repo_effective_tags ret
+                    JOIN repos ON repos.id = ret.repo_id
+                    WHERE repos.full_name = ?
+                    ORDER BY ret.id ASC
+                    """,
+                    ("owner/repo-3",),
+                )
+            ).fetchall()
+        return [(row["tag"], row["tag_id"]) for row in rows]
+
+    async def _fetch_history_and_training() -> tuple[list[str], list[str]]:
+        async with db_connection_factory() as conn:
+            history = await (
+                await conn.execute(
+                    "SELECT tags FROM override_history WHERE full_name = ? ORDER BY id DESC LIMIT 1",
+                    ("owner/repo-3",),
+                )
+            ).fetchone()
+            sample = await (
+                await conn.execute(
+                    "SELECT after_tag_ids FROM training_samples WHERE full_name = ? ORDER BY id DESC LIMIT 1",
+                    ("owner/repo-3",),
+                )
+            ).fetchone()
+        return json.loads(history["tags"]), json.loads(sample["after_tag_ids"])
+
+    assert _run(_fetch_effective_tags()) == [
+        ("LLM", "ai.llm"),
+        ("后台服务", "dev.backend"),
+    ]
+    assert [item.full_name for item in _run(search_db.list_repos(tag="ai.llm")).items] == ["owner/repo-3"]
+    assert [item.full_name for item in _run(search_db.list_repos(tag="后台服务")).items] == ["owner/repo-3"]
+    assert _run(_fetch_history_and_training()) == (
+        ["LLM", "后台服务"],
+        ["ai.llm", "dev.backend"],
+    )
+
+    _run(override_db.update_override("owner/repo-3", {"tags": None, "tag_ids": None}))
+
+    assert _run(_fetch_effective_tags()) == [("Agent", "ai.agent")]
 
 
 def test_taxonomy_cache_reloads_on_file_change(tmp_path, monkeypatch):

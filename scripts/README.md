@@ -5,6 +5,7 @@
 ## 结构
 
 - `run-platform.js`：跨平台入口（自动按系统分发）
+- `clean-workspace.js`：清理生成物与可选重置本地数据
 - `windows/`：PowerShell 脚本
 - `unix/`：macOS/Linux Bash 脚本
 
@@ -19,6 +20,23 @@ npm run web:install
 
 - `npm run start`：在宿主机启动本地开发栈，API 会默认把 SQLite 数据写到仓库内 `data/app.db`，不依赖容器内 `/data/app.db`。
 - `npm run web:install`：从仓库根目录安装 `web` 依赖，供 `web:dev` / `web:lint` / `web:build` / `npm run start` 复用。
+- 本地宿主机 API 统一使用仓库根目录 `.venv`，创建命令是 `python -m venv .venv`，随后激活并安装 `api/requirements-dev.txt`。
+
+## 清理与重置
+
+```bash
+npm run clean:dry-run
+npm run clean
+npm run clean:deps
+npm run reset:data
+npm run clean:all
+```
+
+- `npm run clean:dry-run`：先查看默认会删除哪些生成物，不做实际删除。
+- `npm run clean`：清理缓存、日志、临时运行态和 Next.js 生成物，但保留 `.env`、`.venv`、`data/app.db` 和 `web/node_modules`。
+- `npm run clean:deps`：额外清理 `web/node_modules` 和旧的 API 子目录虚拟环境，但保留根 `.venv`。
+- `npm run reset:data`：只删除 `data/app.db`，用于明确重建本地数据库。
+- `npm run clean:all`：同时执行依赖清理和数据重置，适合彻底整理本地工作区。
 
 ## 验证与回归
 

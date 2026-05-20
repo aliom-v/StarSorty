@@ -240,6 +240,7 @@ npm run stop
 - 首次运行前，先执行 `npm run web:install` 安装前端依赖。
 - `npm run start` / `npm run start:unix` / `npm run start:win` 会自动把本地 SQLite 指到仓库内 `data/app.db`。
 - 建议统一从仓库根目录执行验证；文档引用校验、命令顺序、Python/Docker fallback、前端依赖校验和 smoke 细节统一看 `scripts/README.md`。
+- 清理和重置命令统一看 `scripts/README.md`，默认清理不会碰 `.env`、`.venv` 或本地数据库。
 - 需要分别启动前后端、调整宿主机 `DATABASE_URL` 或对齐 CI 流程时，直接看 `CONTRIBUTING.md`。
 
 ---

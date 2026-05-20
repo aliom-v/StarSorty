@@ -1062,6 +1062,50 @@ def test_repos_detail_and_override_validation(monkeypatch: pytest.MonkeyPatch) -
         _run(repos_routes.repo_override("missing/repo", OverrideRequest()))
 
 
+def test_repos_override_rejects_unknown_tag_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _get_repo(full_name: str):
+        del full_name
+        return _repo_payload()
+
+    async def _update_override(*args, **kwargs) -> bool:
+        raise AssertionError("update_override should not run for invalid taxonomy inputs")
+
+    monkeypatch.setattr(
+        repos_routes,
+        "get_settings",
+        lambda: SimpleNamespace(ai_taxonomy_path="/fake/taxonomy.yaml"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        repos_routes,
+        "load_taxonomy",
+        lambda path: {
+            "tag_id_to_name": {"ai.llm": "LLM"},
+            "tag_name_to_id": {"llm": "ai.llm"},
+            "legacy_tag_map": {"llm": "ai.llm"},
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(repos_routes, "get_repo", _get_repo)
+    monkeypatch.setattr(repos_routes, "update_override", _update_override)
+
+    with pytest.raises(HTTPException, match="Unknown tag"):
+        _run(
+            repos_routes.repo_override(
+                "owner/repo",
+                OverrideRequest(tag_ids=["missing-tag"]),
+            )
+        )
+
+    with pytest.raises(HTTPException, match="Unknown tag"):
+        _run(
+            repos_routes.repo_override(
+                "owner/repo",
+                OverrideRequest(tags=["missing-tag"]),
+            )
+        )
+
+
 def test_task_status_returns_404_for_missing_task(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _missing_task(task_id: str):
         del task_id

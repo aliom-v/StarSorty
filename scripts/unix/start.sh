@@ -40,8 +40,8 @@ start_service() {
   fi
 }
 
-if [[ ! -x "$ROOT/api/.venv/bin/python" ]]; then
-  echo "Missing API venv: cd api && python -m venv .venv && source .venv/bin/activate && pip install -r requirements-dev.txt"
+if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
+  echo "Missing root Python venv: cd '$ROOT' && python -m venv .venv && source .venv/bin/activate && pip install -r api/requirements-dev.txt"
   exit 1
 fi
 
@@ -53,7 +53,7 @@ fi
 start_service \
   "API" \
   "$API_PORT" \
-  "cd '$ROOT/api' && DATABASE_URL='$LOCAL_DATABASE_URL' '$ROOT/api/.venv/bin/python' -m uvicorn app.main:app --reload --host 127.0.0.1 --port $API_PORT" \
+  "cd '$ROOT/api' && DATABASE_URL='$LOCAL_DATABASE_URL' '$ROOT/.venv/bin/python' -m uvicorn app.main:app --reload --host 127.0.0.1 --port $API_PORT" \
   "$RUNTIME_DIR/api.pid" \
   "$LOG_DIR/api.dev.log"
 

@@ -58,12 +58,14 @@ npm run stop
 后端：
 
 ```bash
-cd api
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements-dev.txt
+pip install -r api/requirements-dev.txt
+cd api
 uvicorn app.main:app --reload --port 4321
 ```
+
+如果你要重新建本地 Python 环境，统一从仓库根目录执行上面的 `python -m venv .venv`，不要再单独维护旧的 API 子目录环境。
 
 如果直接在宿主机运行后端，把 `DATABASE_URL` 改成仓库内 `data/app.db` 的绝对路径；`.env.example` 中的 `sqlite:////data/app.db` 是 Docker / Compose 默认值。
 
@@ -99,6 +101,8 @@ npm run web:smoke
 ```
 
 如果遇到文档坏引用、重复导航页、Python 版本不匹配、Docker fallback、前端依赖半安装或 smoke 失败，先看 `scripts/README.md`。
+
+清理和重置命令也统一看 `scripts/README.md`，不要手工删一堆目录。
 
 ### 压测脚本
 

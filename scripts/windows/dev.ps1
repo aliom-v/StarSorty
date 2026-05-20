@@ -1,13 +1,13 @@
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
-$apiPython = Join-Path $root "api\\.venv\\Scripts\\python.exe"
+$apiPython = Join-Path $root ".venv\\Scripts\\python.exe"
 $webNextCmd = Join-Path $root "web\\node_modules\\.bin\\next.cmd"
 $databaseDir = Join-Path $root "data"
 $databasePath = ((Join-Path $databaseDir "app.db") -replace "\\", "/")
 $databaseUrl = "sqlite:///$databasePath"
 
 if (-not (Test-Path $apiPython)) {
-  Write-Host "Missing API venv. Run: cd api; python -m venv .venv; .venv\\Scripts\\Activate.ps1; pip install -r requirements-dev.txt"
+  Write-Host "Missing root Python venv. Run: cd $root; python -m venv .venv; .\\.venv\\Scripts\\Activate.ps1; pip install -r api\\requirements-dev.txt"
   exit 1
 }
 
