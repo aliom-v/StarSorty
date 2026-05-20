@@ -104,6 +104,35 @@ def _classification_key(category: Any, subcategory: Any) -> str:
     return f"classification:{category_token or 'uncategorized'}/{subcategory_token or 'other'}"
 
 
+def _iter_safe_tag_mapping_pairs(
+    ai_tag_ids: List[str],
+    override_tag_ids: List[str],
+) -> List[tuple[str, str]]:
+    source_tokens: List[str] = []
+    target_tokens: List[str] = []
+    for value in ai_tag_ids:
+        token = _normalize_preference_token(value)
+        if token:
+            source_tokens.append(token)
+    for value in override_tag_ids:
+        token = _normalize_preference_token(value)
+        if token:
+            target_tokens.append(token)
+    if not source_tokens or not target_tokens:
+        return []
+    if len(source_tokens) != len(target_tokens):
+        return []
+    if len(set(source_tokens)) != len(source_tokens):
+        return []
+    if len(set(target_tokens)) != len(target_tokens):
+        return []
+    return [
+        (source, target)
+        for source, target in zip(source_tokens, target_tokens)
+        if source != target
+    ]
+
+
 @_retry_on_lock()
 async def record_manual_override_preference(full_name: str) -> Dict[str, Any]:
     async with get_connection() as conn:
@@ -151,13 +180,8 @@ async def record_manual_override_preference(full_name: str) -> Dict[str, Any]:
         updated_mapping = dict(current_mapping)
         ai_tag_ids = _load_json_list(row["ai_tag_ids"])
         override_tag_ids = _load_json_list(row["override_tag_ids"])
-        if ai_tag_ids and override_tag_ids:
-            for index, source_tag_id in enumerate(ai_tag_ids):
-                target_tag_id = override_tag_ids[min(index, len(override_tag_ids) - 1)]
-                source = _normalize_preference_token(source_tag_id)
-                target = _normalize_preference_token(target_tag_id)
-                if source and target and source != target:
-                    updated_mapping[source] = target
+        for source, target in _iter_safe_tag_mapping_pairs(ai_tag_ids, override_tag_ids):
+            updated_mapping[source] = target
 
         before_key = _classification_key(row["category"], row["subcategory"])
         after_key = _classification_key(row["override_category"], row["override_subcategory"])

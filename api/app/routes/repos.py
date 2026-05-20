@@ -16,6 +16,7 @@ from ..db import (
     reset_classify_fail_count,
     update_override,
 )
+from ..config import get_settings
 from ..deps import (
     _normalize_preference_user,
     _normalized_optional,
@@ -37,6 +38,8 @@ from ..schemas import (
     RepoOut,
     ResetFailedResponse,
 )
+from ..taxonomy import load_taxonomy
+from ..taxonomy_schema import normalize_tag_ids, tag_ids_to_labels
 from ..state import (
     REPOS_PAGE_LIMIT_MAX,
     SEARCH_RANKER_V2_ENABLED,
@@ -60,6 +63,33 @@ def _repo_payload_for_response(repo: object) -> dict:
         if isinstance(dumped, dict):
             return dumped
     raise TypeError("Review queue repo must be a RepoBase or mapping")
+
+
+def _clean_tag_values(values: Optional[List[str]]) -> List[str]:
+    return [str(value).strip() for value in values or [] if str(value).strip()]
+
+
+def _build_override_tag_updates(payload: OverrideRequest, fields: set[str]) -> Dict[str, object]:
+    if "tags" not in fields and "tag_ids" not in fields:
+        return {}
+
+    tags_value = payload.tags if "tags" in fields else None
+    tag_ids_value = payload.tag_ids if "tag_ids" in fields else None
+    if tags_value is None and tag_ids_value is None:
+        return {"tags": None, "tag_ids": None}
+
+    # Prefer explicit tags when they are provided; otherwise derive both fields from tag_ids.
+    source_values = tags_value if tags_value is not None else tag_ids_value
+    if source_values is None:
+        return {"tags": None, "tag_ids": None}
+
+    try:
+        taxonomy = load_taxonomy(get_settings().ai_taxonomy_path)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    normalized_tag_ids, _unknown = normalize_tag_ids(_clean_tag_values(source_values), taxonomy)
+    normalized_tags = tag_ids_to_labels(normalized_tag_ids, taxonomy)
+    return {"tags": normalized_tags, "tag_ids": normalized_tag_ids}
 
 
 @router.get("/repos", response_model=RepoListResponse)
@@ -238,16 +268,7 @@ async def repo_override(full_name: str, payload: OverrideRequest) -> OverrideRes
         if payload.subcategory is not None and not str(payload.subcategory).strip():
             raise HTTPException(status_code=400, detail="subcategory cannot be empty")
         updates["subcategory"] = payload.subcategory
-    if "tags" in fields:
-        if payload.tags is None:
-            updates["tags"] = None
-        else:
-            updates["tags"] = [tag for tag in payload.tags if str(tag).strip()]
-    if "tag_ids" in fields:
-        if payload.tag_ids is None:
-            updates["tag_ids"] = None
-        else:
-            updates["tag_ids"] = [tag for tag in payload.tag_ids if str(tag).strip()]
+    updates.update(_build_override_tag_updates(payload, fields))
     if "note" in fields:
         if payload.note is not None and not str(payload.note).strip():
             raise HTTPException(status_code=400, detail="note cannot be empty")

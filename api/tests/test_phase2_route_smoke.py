@@ -810,6 +810,23 @@ def test_repos_query_override_and_readme_paths(
         captured["preference"] = full_name
         return {}
 
+    monkeypatch.setattr(
+        repos_routes,
+        "get_settings",
+        lambda: SimpleNamespace(ai_taxonomy_path="/fake/taxonomy.yaml"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        repos_routes,
+        "load_taxonomy",
+        lambda path: {
+            "tag_id_to_name": {"id-a": "Tag A", "id-b": "Tag B"},
+            "tag_name_to_id": {"tag a": "id-a", "tag b": "id-b"},
+            "legacy_tag_map": {},
+        },
+        raising=False,
+    )
+
     async def _fake_review_queue(confidence_threshold: float, limit: int) -> list[dict]:
         captured["review"] = (confidence_threshold, limit)
         repo = _repo_payload()
@@ -881,13 +898,18 @@ def test_repos_query_override_and_readme_paths(
     override_response = _run(
         repos_routes.repo_override(
             "owner/repo",
-            OverrideRequest(category="ai", tags=["tag-a", "", "tag-b"], tag_ids=["id-a", ""], note="memo"),
+            OverrideRequest(category="ai", tag_ids=["id-a", "", "id-b"], note="memo"),
         )
     )
     assert override_response.updated is True
     assert captured["override"] == (
         "owner/repo",
-        {"category": "ai", "tags": ["tag-a", "tag-b"], "tag_ids": ["id-a"], "note": "memo"},
+        {
+            "category": "ai",
+            "tags": ["Tag A", "Tag B"],
+            "tag_ids": ["id-a", "id-b"],
+            "note": "memo",
+        },
     )
     assert captured["preference"] == "owner/repo"
 
