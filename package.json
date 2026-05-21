@@ -25,6 +25,7 @@
     "reset:data": "node scripts/clean-workspace.js --data",
     "reset:data:dry-run": "node scripts/clean-workspace.js --data --dry-run",
     "clean:all": "node scripts/clean-workspace.js --all",
+    "smoke:e2e": "node scripts/e2e-smoke.js",
     "web:install": "npm --prefix web install",
     "web:dev": "node scripts/run-web-command.js dev",
     "web:build": "node scripts/run-web-command.js build",

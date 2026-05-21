@@ -96,6 +96,7 @@ npm run docs:check
 git diff --check
 npm run scripts:test
 npm run api:test
+npm run smoke:e2e
 npm run web:test
 npm run web:lint
 npm run web:build
@@ -119,6 +120,7 @@ npm run api:bench
 - `npm run docs:check`
 - `git diff --check`
 - `python -m pytest -q api/tests`
+- `npm run smoke:e2e`
 - `npm run test`（`web/`）
 - `npm run lint`（`web/`）
 - `npm run build`（`web/`）

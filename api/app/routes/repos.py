@@ -247,6 +247,14 @@ async def low_confidence_review_queue(
     )
 
 
+@router.get("/repos/{full_name:path}/overrides", response_model=OverrideHistoryResponse)
+async def repo_override_history(full_name: str) -> OverrideHistoryResponse:
+    if not await get_repo(full_name):
+        raise HTTPException(status_code=404, detail="Repo not found")
+    items = await list_override_history(full_name)
+    return OverrideHistoryResponse(items=items)
+
+
 @router.get("/repos/{full_name:path}", response_model=RepoOut)
 async def repo_detail(full_name: str) -> RepoOut:
     repo = await get_repo(full_name)
@@ -293,14 +301,6 @@ async def repo_override(full_name: str, payload: OverrideRequest) -> OverrideRes
         logger.warning("Failed to update manual override preferences for %s", full_name)
     await cache.invalidate_prefix("repos")
     return OverrideResponse(updated=True)
-
-
-@router.get("/repos/{full_name:path}/overrides", response_model=OverrideHistoryResponse)
-async def repo_override_history(full_name: str) -> OverrideHistoryResponse:
-    if not await get_repo(full_name):
-        raise HTTPException(status_code=404, detail="Repo not found")
-    items = await list_override_history(full_name)
-    return OverrideHistoryResponse(items=items)
 
 
 @router.post(

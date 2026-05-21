@@ -58,6 +58,7 @@ npm run clean:all
 npm run docs:check
 npm run scripts:test
 npm run api:test
+npm run smoke:e2e
 npm run web:test
 npm run web:lint
 npm run web:build
@@ -71,6 +72,7 @@ npm run web:smoke
 - Docker fallback 会复用一个持久化 Docker volume 作为 pip 下载缓存，加速重复执行 `npm run api:test` / `npm run api:bench`。
 - `npm run web:test`：运行前端纯逻辑回归测试，覆盖首页分页/轮询与详情页请求顺序保护。
 - `npm run web:dev` / `npm run web:lint` / `npm run web:build`：在真正执行前会校验 `web/node_modules/.bin` 是否完整，避免半残安装直接炸掉。
+- `npm run smoke:e2e`：启动 API 和 Web，先跑搜索，再打开详情页并提交一次手动 override，确认搜索、详情和 override 的关键路径能串起来。
 - `npm run web:smoke`：启动生产模式 Next 服务，检查首页、管理页、设置页以及动态详情路由是否已经正确构建。
 - `npm run api:bench`：只在需要确认性能回归时再运行，不属于日常提交流程必跑项。
 - 压测报告默认输出到 `evaluation/benchmarks/latest-report.json`。

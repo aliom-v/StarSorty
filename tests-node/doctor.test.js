@@ -16,12 +16,13 @@ function touch(filePath, content = "") {
   fs.writeFileSync(filePath, content);
 }
 
-test("package json exposes the doctor and reset preview commands", () => {
+test("package json exposes the doctor, smoke, and reset preview commands", () => {
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")
   );
 
   assert.equal(packageJson.scripts.doctor, "node scripts/doctor.js");
+  assert.equal(packageJson.scripts["smoke:e2e"], "node scripts/e2e-smoke.js");
   assert.equal(
     packageJson.scripts["reset:data:dry-run"],
     "node scripts/clean-workspace.js --data --dry-run"
