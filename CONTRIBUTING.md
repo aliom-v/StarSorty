@@ -93,6 +93,7 @@ npm run web:dev
 
 ```bash
 npm run docs:check
+git diff --check
 npm run scripts:test
 npm run api:test
 npm run web:test
@@ -116,6 +117,7 @@ npm run api:bench
 当前 CI 会执行：
 
 - `npm run docs:check`
+- `git diff --check`
 - `python -m pytest -q api/tests`
 - `npm run test`（`web/`）
 - `npm run lint`（`web/`）

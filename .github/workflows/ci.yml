@@ -11,6 +11,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  diff-check:
+    name: Git Diff Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check diff hygiene
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git fetch origin "$GITHUB_BASE_REF" --depth=1
+            base_ref="origin/$GITHUB_BASE_REF"
+            git diff --check "$(git merge-base HEAD "$base_ref")" HEAD
+          else
+            before_sha="$(node -e 'const fs=require("fs"); const e=JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")); process.stdout.write(e.before || "")')"
+            if [ -z "$before_sha" ] || [ "$before_sha" = "0000000000000000000000000000000000000000" ]; then
+              before_sha="$(git hash-object -t tree /dev/null)"
+            fi
+            git diff --check "$before_sha" HEAD
+          fi
+
   docs-check:
     name: Docs Check
     runs-on: ubuntu-latest

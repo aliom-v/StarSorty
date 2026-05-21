@@ -366,7 +366,7 @@ def test_manual_override_tag_updates_keep_lookup_history_and_training_consistent
                     FROM repo_effective_tags ret
                     JOIN repos ON repos.id = ret.repo_id
                     WHERE repos.full_name = ?
-                    ORDER BY ret.id ASC
+                    ORDER BY ret.tag_id ASC, ret.tag ASC
                     """,
                     ("owner/repo-3",),
                 )
