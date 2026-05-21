@@ -1,4 +1,5 @@
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -142,3 +143,143 @@ def test_repo_namespace_invalidation_does_not_evict_unrelated_local_keys(
 
     assert _run(cache_a.get("misc:demo")) == {"total": 3}
     assert _run(cache_a.get("repos:demo")) is None
+
+
+def test_expired_shared_cache_entries_can_be_cleaned_in_batches(
+    db_connection_factory,
+) -> None:
+    del db_connection_factory
+
+    now = time.time()
+    _run(
+        cache_store_mod.store_shared_cache_entry(
+            "repos:expired:one",
+            namespace="repos",
+            namespace_version=1,
+            payload={"items": [{"full_name": "old/one"}]},
+            expires_at=now - 10,
+            enforce_limits=False,
+        )
+    )
+    _run(
+        cache_store_mod.store_shared_cache_entry(
+            "repos:expired:two",
+            namespace="repos",
+            namespace_version=1,
+            payload={"items": [{"full_name": "old/two"}]},
+            expires_at=now - 5,
+            enforce_limits=False,
+        )
+    )
+    _run(
+        cache_store_mod.store_shared_cache_entry(
+            "repos:fresh",
+            namespace="repos",
+            namespace_version=1,
+            payload={"items": [{"full_name": "new/repo"}]},
+            expires_at=now + 60,
+            enforce_limits=False,
+        )
+    )
+
+    metrics = _run(cache_store_mod.get_shared_cache_metrics(now=now))
+    assert metrics["entry_count"] == 3
+    assert metrics["expired_count"] == 2
+    assert metrics["approx_payload_bytes"] > 0
+
+    deleted = _run(
+        cache_store_mod.cleanup_expired_shared_cache_entries(
+            namespace="repos",
+            now=now,
+            limit=1,
+        )
+    )
+
+    assert deleted == 1
+    metrics = _run(cache_store_mod.get_shared_cache_metrics(now=now))
+    assert metrics["entry_count"] == 2
+    assert metrics["expired_count"] == 1
+
+    deleted = _run(
+        cache_store_mod.cleanup_expired_shared_cache_entries(
+            namespace="repos",
+            now=now,
+            limit=10,
+        )
+    )
+
+    assert deleted == 1
+    assert _run(cache_store_mod.load_shared_cache_entry("repos:fresh")) is not None
+
+
+def test_shared_cache_limits_prune_oldest_entries_and_bytes(
+    db_connection_factory,
+) -> None:
+    del db_connection_factory
+
+    now = time.time()
+    for key in ("repos:one", "repos:two", "repos:three"):
+        _run(
+            cache_store_mod.store_shared_cache_entry(
+                key,
+                namespace="repos",
+                namespace_version=1,
+                payload={"blob": key * 10},
+                expires_at=now + 60,
+                enforce_limits=False,
+            )
+        )
+
+    deleted = _run(
+        cache_store_mod.enforce_shared_cache_limits(
+            "repos",
+            max_entries=2,
+            max_bytes=10_000,
+            now=now,
+        )
+    )
+
+    assert deleted == 1
+    assert _run(cache_store_mod.load_shared_cache_entry("repos:one")) is None
+    assert _run(cache_store_mod.load_shared_cache_entry("repos:two")) is not None
+    assert _run(cache_store_mod.load_shared_cache_entry("repos:three")) is not None
+
+    deleted = _run(
+        cache_store_mod.enforce_shared_cache_limits(
+            "repos",
+            max_entries=10,
+            max_bytes=80,
+            now=now,
+        )
+    )
+
+    assert deleted >= 1
+    metrics = _run(cache_store_mod.get_shared_cache_metrics(namespace="repos", now=now))
+    assert metrics["entry_count"] <= 1
+    assert metrics["approx_payload_bytes"] <= 80 or metrics["entry_count"] == 0
+
+
+def test_cache_records_local_shared_and_miss_sources(
+    db_connection_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_connection_factory
+
+    sources: list[str] = []
+
+    async def _capture_cache_metric(source: str) -> None:
+        sources.append(source)
+
+    monkeypatch.setattr(cache_mod, "_record_cache_metric", _capture_cache_metric)
+
+    cache_a = cache_mod.SimpleCache()
+    cache_b = cache_mod.SimpleCache()
+    payload = {"total": 1, "items": [{"full_name": "owner/repo"}]}
+
+    _run(cache_a.set("repos:source", payload, ttl=60))
+
+    assert _run(cache_a.get("repos:source")) == payload
+    assert _run(cache_b.get("repos:source")) == payload
+    assert _run(cache_b.get("repos:missing")) is None
+
+    assert sources == ["local", "shared", "miss"]

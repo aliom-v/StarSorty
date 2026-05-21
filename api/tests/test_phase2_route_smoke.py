@@ -1006,6 +1006,90 @@ def test_quality_metrics_endpoint_exposes_db_lock_counters(monkeypatch: pytest.M
     assert response["db_lock_retry_exhausted_total"] == 1
 
 
+def test_cache_metrics_endpoint_reports_size_and_hit_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_cache_metrics() -> dict:
+        return {
+            "entry_count": 3,
+            "expired_count": 1,
+            "approx_payload_bytes": 512,
+            "namespaces": [
+                {
+                    "namespace": "repos",
+                    "entry_count": 3,
+                    "expired_count": 1,
+                    "approx_payload_bytes": 512,
+                    "oldest_expires_at": 1.0,
+                    "newest_expires_at": 2.0,
+                    "last_updated_at": "2026-05-21 00:00:00",
+                    "namespace_version": 7,
+                }
+            ],
+        }
+
+    async def _fake_quality_metrics() -> dict:
+        return {
+            "cache_hit_total": 8,
+            "cache_local_hit_total": 5,
+            "cache_shared_hit_total": 3,
+            "cache_miss_total": 2,
+            "cache_hit_rate": 0.8,
+            "cache_local_hit_rate": 0.5,
+            "cache_shared_hit_rate": 0.3,
+        }
+
+    monkeypatch.setattr(stats_routes, "get_shared_cache_metrics", _fake_cache_metrics)
+    monkeypatch.setattr(stats_routes, "_get_quality_metrics", _fake_quality_metrics)
+
+    response = _run(stats_routes.cache_metrics_endpoint())
+
+    assert response.entry_count == 3
+    assert response.expired_count == 1
+    assert response.namespaces[0].namespace == "repos"
+    assert response.cache_local_hit_total == 5
+    assert response.cache_shared_hit_rate == 0.3
+    dependency_calls = _dependency_calls(stats_routes.router, "/metrics/cache")
+    assert require_admin in dependency_calls
+
+
+def test_cache_cleanup_endpoint_deletes_expired_cache_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def _fake_cleanup(*, namespace: str | None, limit: int) -> int:
+        captured["cleanup"] = {"namespace": namespace, "limit": limit}
+        return 4
+
+    async def _fake_cache_metrics() -> dict:
+        return {
+            "entry_count": 2,
+            "expired_count": 0,
+            "approx_payload_bytes": 128,
+            "namespaces": [],
+        }
+
+    async def _fake_quality_metrics() -> dict:
+        return {
+            "cache_hit_total": 1,
+            "cache_miss_total": 1,
+            "cache_hit_rate": 0.5,
+        }
+
+    monkeypatch.setattr(stats_routes, "cleanup_expired_shared_cache_entries", _fake_cleanup)
+    monkeypatch.setattr(stats_routes, "get_shared_cache_metrics", _fake_cache_metrics)
+    monkeypatch.setattr(stats_routes, "_get_quality_metrics", _fake_quality_metrics)
+
+    response = _run(stats_routes.cache_cleanup_endpoint(namespace="repos", limit=50))
+
+    assert response.deleted_count == 4
+    assert response.metrics.entry_count == 2
+    assert captured["cleanup"] == {"namespace": "repos", "limit": 50}
+    dependency_calls = _dependency_calls(stats_routes.router, "/metrics/cache/cleanup")
+    assert require_admin in dependency_calls
+
+
 def test_stats_route_reads_sqlite_snapshot_directly(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = {}
 

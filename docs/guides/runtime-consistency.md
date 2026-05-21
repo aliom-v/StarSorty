@@ -76,6 +76,9 @@
 - `repos` 命名空间的失效版本仍会写入 SQLite `app_settings`
 - 任一 worker 执行 `invalidate_prefix("repos")` 后，其他 worker 的旧缓存会在下次读取时自动判旧失效
 - 冷 worker 在本地 miss 时，可以直接复用 SQLite 中已有的 `/repos` 缓存值
+- `cache_entries` 会按命名空间执行过期清理和条目数 / payload 字节数上限裁剪
+- 管理员可通过 `GET /metrics/cache` 查看共享缓存规模、本地命中、共享命中和 miss 计数
+- 管理员可通过 `POST /metrics/cache/cleanup?namespace=repos&limit=1000` 批量删除过期共享缓存条目
 
 这意味着：
 
@@ -146,5 +149,5 @@
 
 当前还值得继续推进的只有两类工作：
 
-1. 为 `/repos` 共享缓存补充尺寸治理、过期清理和热点观测
+1. 观察 `GET /metrics/cache` 中的缓存体量、过期条目和共享命中占比
 2. 如果后续访问量继续上升，再评估是否把 SQLite 共享缓存迁移到专门的缓存服务

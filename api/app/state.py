@@ -114,6 +114,8 @@ QUALITY_METRIC_DEFAULTS = {
     "task_failed_total": 0,
     "task_stopped_total": 0,
     "cache_hit_total": 0,
+    "cache_local_hit_total": 0,
+    "cache_shared_hit_total": 0,
     "cache_miss_total": 0,
     "db_lock_conflict_total": 0,
     "db_lock_retry_total": 0,
@@ -174,10 +176,11 @@ def _derive_quality_metrics(data: dict[str, int]) -> dict[str, float | int]:
     search_total = max(1, int(data.get("search_total", 0)))
     api_request_total = max(1, int(data.get("api_request_total", 0)))
     task_queued_total = max(1, int(data.get("task_queued_total", 0)))
-    cache_total = max(
-        1,
-        int(data.get("cache_hit_total", 0)) + int(data.get("cache_miss_total", 0)),
-    )
+    cache_hit_total = int(data.get("cache_hit_total", 0))
+    cache_local_hit_total = int(data.get("cache_local_hit_total", 0))
+    cache_shared_hit_total = int(data.get("cache_shared_hit_total", 0))
+    cache_miss_total = int(data.get("cache_miss_total", 0))
+    cache_total = max(1, cache_hit_total + cache_miss_total)
     derived["rule_hit_rate"] = data.get("rule_hit_total", 0) / classification_total
     derived["ai_fallback_rate"] = data.get("ai_fallback_total", 0) / classification_total
     derived["empty_tag_rate"] = data.get("empty_tag_total", 0) / classification_total
@@ -188,7 +191,9 @@ def _derive_quality_metrics(data: dict[str, int]) -> dict[str, float | int]:
         data.get("api_request_latency_ms_total", 0) / api_request_total
     )
     derived["task_failure_rate"] = data.get("task_failed_total", 0) / task_queued_total
-    derived["cache_hit_rate"] = data.get("cache_hit_total", 0) / cache_total
+    derived["cache_hit_rate"] = cache_hit_total / cache_total
+    derived["cache_local_hit_rate"] = cache_local_hit_total / cache_total
+    derived["cache_shared_hit_rate"] = cache_shared_hit_total / cache_total
     return derived
 
 

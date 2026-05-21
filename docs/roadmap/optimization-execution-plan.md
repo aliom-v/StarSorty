@@ -1,6 +1,6 @@
 # 当前优化执行计划
 
-更新时间：`2026-03-28`
+更新时间：`2026-05-21`
 
 本文档只负责把当前优先级展开成可执行步骤。事实和边界统一看 `../guides/engineering-audit.md`；优先级顺序统一看 `current-priorities.md`。
 
@@ -36,12 +36,14 @@
 
 把“能跨 worker 复用”的缓存，补成“可控、可观察、可清理”的缓存。
 
+状态：已落地首轮治理。
+
 工作项：
 
-1. 给 `cache_entries` 增加过期清理入口，至少支持按过期时间批量删除
-2. 增加共享缓存体量观测，例如条目数、总字节数、最近命中来源
-3. 给 `/repos` 共享缓存增加简单上限策略，避免缓存值无限增长
-4. 把缓存巡检与清理步骤写进运维文档
+1. `cache_entries` 已增加过期清理入口：`POST /metrics/cache/cleanup?namespace=repos&limit=1000`
+2. `GET /metrics/cache` 已暴露条目数、过期条目、近似 payload 字节数、本地命中、共享命中和 miss 计数
+3. `/repos` 共享缓存已增加命名空间条目数和 payload 字节数上限，避免缓存值无限增长
+4. 缓存巡检与清理步骤已写入 `../guides/runtime-consistency.md`
 
 验收：
 

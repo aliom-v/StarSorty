@@ -319,6 +319,36 @@ class StatsResponse(BaseModel):
     users: List[StatsItem]
 
 
+class CacheNamespaceMetrics(BaseModel):
+    namespace: str
+    entry_count: int
+    expired_count: int
+    approx_payload_bytes: int
+    oldest_expires_at: float | None = None
+    newest_expires_at: float | None = None
+    last_updated_at: str | None = None
+    namespace_version: int
+
+
+class CacheMetricsResponse(BaseModel):
+    entry_count: int
+    expired_count: int
+    approx_payload_bytes: int
+    namespaces: List[CacheNamespaceMetrics]
+    cache_hit_total: int = 0
+    cache_local_hit_total: int = 0
+    cache_shared_hit_total: int = 0
+    cache_miss_total: int = 0
+    cache_hit_rate: float = 0.0
+    cache_local_hit_rate: float = 0.0
+    cache_shared_hit_rate: float = 0.0
+
+
+class CacheCleanupResponse(BaseModel):
+    deleted_count: int
+    metrics: CacheMetricsResponse
+
+
 class ConsistencyFtsResponse(BaseModel):
     enabled: bool
     repos_total: int

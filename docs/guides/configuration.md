@@ -144,6 +144,9 @@ AI_MODEL=deepseek-chat
 | `REPO_UPSERT_BATCH_SIZE` | `200` | 同步阶段 `repos` 表单批 upsert 大小，减小单次事务锁持有时间。 |
 | `TAXONOMY_CACHE_TTL_SECONDS` | `300` | taxonomy 进程内缓存 TTL。 |
 | `RULES_CACHE_TTL_SECONDS` | `300` | rules 进程内缓存 TTL。 |
+| `SHARED_CACHE_MAX_ENTRIES_PER_NAMESPACE` | `500` | SQLite 共享缓存每个命名空间最多保留的条目数。 |
+| `SHARED_CACHE_MAX_BYTES_PER_NAMESPACE` | `5242880` | SQLite 共享缓存每个命名空间最多保留的近似 payload 字节数。 |
+| `SHARED_CACHE_CLEANUP_BATCH_SIZE` | `100` | 单次共享缓存过期清理或裁剪的最大批量。 |
 
 ### 限流
 

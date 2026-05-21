@@ -7,15 +7,18 @@ from typing import Any, Optional
 logger = logging.getLogger("starsorty.cache")
 
 
-async def _record_cache_metric(hit: bool) -> None:
+async def _record_cache_metric(source: str) -> None:
     try:
         from .state import _add_quality_metrics
     except Exception:
         return
-    await _add_quality_metrics(
-        cache_hit_total=1 if hit else 0,
-        cache_miss_total=0 if hit else 1,
-    )
+    normalized = str(source or "miss").strip().lower()
+    if normalized == "local":
+        await _add_quality_metrics(cache_hit_total=1, cache_local_hit_total=1)
+    elif normalized == "shared":
+        await _add_quality_metrics(cache_hit_total=1, cache_shared_hit_total=1)
+    else:
+        await _add_quality_metrics(cache_miss_total=1)
 
 
 class SimpleCache:
@@ -26,7 +29,7 @@ class SimpleCache:
         self._lock = asyncio.Lock()
 
     async def get(self, key: str) -> Optional[Any]:
-        hit = False
+        source = "miss"
         value: Optional[Any] = None
         entry: _CacheEntry | None = None
         namespace = _cache_namespace_for_key(key)
@@ -47,7 +50,7 @@ class SimpleCache:
                 entry = None
         if entry is not None:
             value = entry.value
-            hit = True
+            source = "local"
         elif namespace is not None:
             if namespace_version is None:
                 namespace_version = await _try_get_shared_cache_namespace_version(
@@ -74,10 +77,10 @@ class SimpleCache:
                         async with self._lock:
                             self._cache[key] = entry
                         value = shared_value
-                        hit = True
+                        source = "shared"
                     else:
                         await _try_delete_shared_cache_entry(key)
-        await _record_cache_metric(hit)
+        await _record_cache_metric(source)
         return value
 
     async def set(self, key: str, value: Any, ttl: int = 60) -> None:
