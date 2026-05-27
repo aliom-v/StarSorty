@@ -57,3 +57,12 @@ scripts/test_ai.ps1
 CLAUDE.md
 
 .omx/
+
+# pyproject.toml build artifacts
+*.egg
+.eggs/
+wheelhouse/
+MANIFEST
+
+# Docker compose override
+docker-compose.override.yml
