@@ -63,7 +63,24 @@ async def lifespan(app: FastAPI):
         await close_db_pool()
 
 
-app = FastAPI(title="StarSorty API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(
+    title="StarSorty API",
+    description="自托管 GitHub Star 智能管理系统 API — AI 自动分类、生成摘要、构建私人代码知识库",
+    version="0.2.0",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    openapi_tags=[
+        {"name": "health", "description": "健康检查与系统状态"},
+        {"name": "repos", "description": "仓库管理与同步"},
+        {"name": "classify", "description": "AI 分类与规则引擎"},
+        {"name": "stats", "description": "统计与报告"},
+        {"name": "admin", "description": "管理员认证与会话"},
+    ],
+    contact={"name": "StarSorty", "url": "https://github.com/aliom-v/StarSorty"},
+    license_info={"name": "MIT"},
+)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 

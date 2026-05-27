@@ -229,6 +229,25 @@ curl "http://localhost:4321/repos?q=go%20crawler&sort=relevance&limit=20"
 
 README 只保留最短开发入口；完整阅读路径看 `docs/README.md`，贡献流程与脚本细节统一见 `CONTRIBUTING.md` 和 `scripts/README.md`。
 
+### 后端开发（Python）
+
+```bash
+# 推荐：使用 pyproject.toml 安装
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+uvicorn app.main:app --reload --port 4321
+```
+
+安装后可直接运行测试和 lint：
+
+```bash
+python -m pytest -q api/tests
+bandit -r api/ -c pyproject.toml
+ruff check api/
+mypy api/
+```
+
 ### 一键启停（跨平台）
 
 ```bash

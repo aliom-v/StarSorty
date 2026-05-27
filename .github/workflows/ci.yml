@@ -87,6 +87,24 @@ jobs:
       - name: Run pytest
         run: python -m pytest -q api/tests
 
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install bandit
+        run: pip install bandit
+
+      - name: Run bandit security scan
+        run: bandit -r api/ -c pyproject.toml
+
   web-quality:
     name: Web Lint & Build
     runs-on: ubuntu-latest

@@ -59,6 +59,13 @@ npm run stop
 后端：
 
 ```bash
+# 方式 1：使用 pyproject.toml（推荐）
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+uvicorn app.main:app --reload --port 4321
+
+# 方式 2：使用 requirements-dev.txt
 python -m venv .venv
 source .venv/bin/activate
 pip install -r api/requirements-dev.txt
@@ -120,6 +127,7 @@ npm run api:bench
 - `npm run docs:check`
 - `git diff --check`
 - `python -m pytest -q api/tests`
+- `bandit -r api/ -c pyproject.toml`（安全扫描）
 - `npm run smoke:e2e`
 - `npm run test`（`web/`）
 - `npm run lint`（`web/`）
