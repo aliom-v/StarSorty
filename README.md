@@ -263,6 +263,24 @@ npm run stop
 - 清理和重置命令统一看 `scripts/README.md`，默认清理不会碰 `.env`、`.venv` 或本地数据库。
 - 需要分别启动前后端、调整宿主机 `DATABASE_URL` 或对齐 CI 流程时，直接看 `CONTRIBUTING.md`。
 
+### 数据库备份
+
+推荐使用 SQLite 定期备份脚本保护数据：
+
+```bash
+# 手动备份
+./scripts/backup_db.sh ./data/app.db ./backups
+
+# 定时备份（每天凌晨3点，保留7天）
+crontab -e
+# 添加：0 3 * * * /path/to/StarSorty/scripts/backup_db.sh /path/to/data/app.db /path/to/backups
+```
+
+备份脚本特性：
+- 使用 `sqlite3 .backup` 保证数据一致性
+- 自动压缩为 `.gz` 格式
+- 自动清理超过 7 天的旧备份
+
 ---
 
 ## 📚 文档导航
@@ -271,7 +289,7 @@ npm run stop
 - `docs/guides/user-manual.md`：页面、管理台与常见操作流程
 - `CONTRIBUTING.md`：本地开发、验证与提交流程
 - `CHANGELOG.md`：最近版本与文档整理记录
-- 历史迁移资产如确需追溯，可看 `archive/tag-id-migration/README.md`
+- 历史迁移资产已归档清理，如确需追溯可查看 Git 历史记录。
 
 ---
 
